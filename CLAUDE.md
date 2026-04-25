@@ -67,4 +67,5 @@ Write comments only when the *why* is not obvious from the code itself. Do not r
 ## Formatting and Lints
 
 - All code must pass `cargo fmt` and `cargo clippy -- -D warnings` without modification.
+- After every code change, run `cargo fmt --check && cargo clippy -- -D warnings` before reporting work as done. Never skip this, not even for small edits.
 - Do not suppress clippy lints with `#[allow(...)]` without a comment explaining the reason.
