@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+Always read `LESSONS-LEARNED.md` at the start of every session and follow the guidance it contains.
+
 ## Language and Edition
 
 - Rust, edition 2024
