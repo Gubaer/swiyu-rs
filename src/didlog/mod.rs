@@ -1,3 +1,5 @@
+pub mod scid;
+
 use serde_json::{json, Map, Value};
 use std::fmt;
 
