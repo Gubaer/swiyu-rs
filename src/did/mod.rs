@@ -1,11 +1,17 @@
 use std::fmt;
 use std::str::FromStr;
 
-#[allow(non_camel_case_types)]
+/// A DID (Decentralized Identifier) according to the [did:tdw v0.3][did-tdw-v0-3] specification,
+/// as used in the Swiss Trust Infrastructure for the Swiss E-ID.
+///
+/// [did-tdw-v0-3]: https://identity.foundation/didwebvh/v0.3/
 #[derive(Debug, Clone, PartialEq)]
-pub struct DID_TDW {
+pub struct DID {
+    /// The Self-Certifying Identifier (SCID) component of the DID, if present.
     scid: Option<String>,
+    /// The domain component of the DID.
     domain: String,
+    /// The optional path component, as a `:`-separated list of path segments.
     path: Option<String>,
 }
 
@@ -49,8 +55,7 @@ fn is_valid_path(path: &str) -> bool {
     !path.is_empty() && path.split(':').all(|seg| !seg.is_empty())
 }
 
-#[allow(non_camel_case_types)]
-impl DID_TDW {
+impl DID {
     pub fn try_new(scid: Option<String>, domain: String, path: Option<String>) -> DIDResult<Self> {
         if !is_valid_domain(&domain) {
             return Err(DIDError::InvalidDomain);
@@ -114,8 +119,7 @@ impl DID_TDW {
     }
 }
 
-#[allow(non_camel_case_types)]
-impl fmt::Display for DID_TDW {
+impl fmt::Display for DID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let scid = self.scid.as_deref().unwrap_or("{SCID}");
         write!(f, "did:tdw:{scid}:{}", self.domain)?;
@@ -126,12 +130,11 @@ impl fmt::Display for DID_TDW {
     }
 }
 
-#[allow(non_camel_case_types)]
-impl FromStr for DID_TDW {
+impl FromStr for DID {
     type Err = DIDError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        DID_TDW::parse(s)
+        DID::parse(s)
     }
 }
 
@@ -141,7 +144,7 @@ mod tests {
 
     #[test]
     fn parse_simple() {
-        let did = DID_TDW::parse("did:tdw:abc123:example.com").unwrap();
+        let did = DID::parse("did:tdw:abc123:example.com").unwrap();
         assert_eq!(did.scid(), Some("abc123"));
         assert_eq!(did.domain(), "example.com");
         assert_eq!(did.path(), None);
@@ -149,7 +152,7 @@ mod tests {
 
     #[test]
     fn parse_with_path() {
-        let did = DID_TDW::parse("did:tdw:abc123:example.com:dids:issuer").unwrap();
+        let did = DID::parse("did:tdw:abc123:example.com:dids:issuer").unwrap();
         assert_eq!(did.scid(), Some("abc123"));
         assert_eq!(did.domain(), "example.com");
         assert_eq!(did.path(), Some("dids:issuer"));
@@ -158,7 +161,7 @@ mod tests {
     #[test]
     fn parse_with_encoded_port() {
         // Ports are percent-encoded in the domain segment per the did:tdw spec.
-        let did = DID_TDW::parse("did:tdw:abc123:example.com%3A3000:path").unwrap();
+        let did = DID::parse("did:tdw:abc123:example.com%3A3000:path").unwrap();
         assert_eq!(did.domain(), "example.com%3A3000");
         assert_eq!(did.path(), Some("path"));
     }
@@ -166,7 +169,7 @@ mod tests {
     #[test]
     fn parse_wrong_method() {
         assert_eq!(
-            DID_TDW::parse("did:web:example.com").unwrap_err(),
+            DID::parse("did:web:example.com").unwrap_err(),
             DIDError::MissingPrefix
         );
     }
@@ -174,7 +177,7 @@ mod tests {
     #[test]
     fn parse_missing_domain() {
         assert_eq!(
-            DID_TDW::parse("did:tdw:abc123").unwrap_err(),
+            DID::parse("did:tdw:abc123").unwrap_err(),
             DIDError::MissingDomain
         );
     }
@@ -182,7 +185,7 @@ mod tests {
     #[test]
     fn parse_invalid_domain_empty_segment() {
         assert_eq!(
-            DID_TDW::parse("did:tdw:abc123:example..com").unwrap_err(),
+            DID::parse("did:tdw:abc123:example..com").unwrap_err(),
             DIDError::InvalidDomain
         );
     }
@@ -190,7 +193,7 @@ mod tests {
     #[test]
     fn parse_invalid_domain_trailing_dot() {
         assert_eq!(
-            DID_TDW::parse("did:tdw:abc123:example.com.").unwrap_err(),
+            DID::parse("did:tdw:abc123:example.com.").unwrap_err(),
             DIDError::InvalidDomain
         );
     }
@@ -198,21 +201,21 @@ mod tests {
     #[test]
     fn parse_invalid_path_empty_segment() {
         assert_eq!(
-            DID_TDW::parse("did:tdw:abc123:example.com:dids::issuer").unwrap_err(),
+            DID::parse("did:tdw:abc123:example.com:dids::issuer").unwrap_err(),
             DIDError::InvalidPath
         );
     }
 
     #[test]
     fn new_valid() {
-        let did = DID_TDW::try_new(Some("abc".into()), "example.com".into(), None).unwrap();
+        let did = DID::try_new(Some("abc".into()), "example.com".into(), None).unwrap();
         assert_eq!(did.to_string(), "did:tdw:abc:example.com");
     }
 
     #[test]
     fn new_invalid_domain() {
         assert_eq!(
-            DID_TDW::try_new(None, "example..com".into(), None).unwrap_err(),
+            DID::try_new(None, "example..com".into(), None).unwrap_err(),
             DIDError::InvalidDomain
         );
     }
@@ -220,7 +223,7 @@ mod tests {
     #[test]
     fn new_invalid_path() {
         assert_eq!(
-            DID_TDW::try_new(None, "example.com".into(), Some(":bad".into())).unwrap_err(),
+            DID::try_new(None, "example.com".into(), Some(":bad".into())).unwrap_err(),
             DIDError::InvalidPath
         );
     }
@@ -232,13 +235,13 @@ mod tests {
             "did:tdw:abc123:example.com:dids:issuer",
             "did:tdw:abc123:example.com%3A3000:path",
         ] {
-            assert_eq!(DID_TDW::parse(s).unwrap().to_string(), s);
+            assert_eq!(DID::parse(s).unwrap().to_string(), s);
         }
     }
 
     #[test]
     fn from_str() {
-        let did: DID_TDW = "did:tdw:abc123:example.com".parse().unwrap();
+        let did: DID = "did:tdw:abc123:example.com".parse().unwrap();
         assert_eq!(did.domain(), "example.com");
     }
 }
