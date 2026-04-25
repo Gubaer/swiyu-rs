@@ -110,6 +110,8 @@ impl Service {
 /// A DID Document as defined by the W3C DID 1.0 data model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DIDDoc {
+    /// The JSON-LD context(s).
+    context: Value,
     /// The DID that identifies this document's subject. Required.
     id: String,
     /// Alternative URIs or DIDs by which the subject is also known.
@@ -136,6 +138,7 @@ impl DIDDoc {
     /// Creates a minimal DIDDoc with the given `id` and all optional fields empty.
     pub fn new(id: String) -> Self {
         Self {
+            context: json!(["https://www.w3.org/ns/did/v1"]),
             id,
             also_known_as: Vec::new(),
             controller: Vec::new(),
@@ -158,9 +161,10 @@ impl DIDDoc {
             DIDDocError::InvalidFormat("DID document must be a JSON object".into())
         })?;
 
-        if obj.get("@context").is_none() {
-            return Err(DIDDocError::MissingField("@context".into()));
-        }
+        let context = obj
+            .get("@context")
+            .cloned()
+            .ok_or_else(|| DIDDocError::MissingField("@context".into()))?;
 
         let id = required_string(obj, "id")?;
         let also_known_as = string_or_array(obj, "alsoKnownAs")?;
@@ -174,6 +178,7 @@ impl DIDDoc {
         let service = parse_service_array(obj, "service")?;
 
         Ok(Self {
+            context,
             id,
             also_known_as,
             controller,
@@ -192,7 +197,7 @@ impl DIDDoc {
     pub fn to_jsonld(&self) -> Value {
         let mut map = Map::new();
 
-        map.insert("@context".into(), json!(["https://www.w3.org/ns/did/v1"]));
+        map.insert("@context".into(), self.context.clone());
         map.insert("id".into(), json!(self.id));
 
         if !self.also_known_as.is_empty() {
