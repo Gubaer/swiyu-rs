@@ -25,7 +25,10 @@ impl fmt::Display for DIDError {
             DIDError::MissingSCID => write!(f, "DID is missing the SCID component"),
             DIDError::MissingDomain => write!(f, "DID is missing the domain component"),
             DIDError::InvalidDomain => {
-                write!(f, "domain must be a '.'-separated sequence of non-empty segments")
+                write!(
+                    f,
+                    "domain must be a '.'-separated sequence of non-empty segments"
+                )
             }
             DIDError::InvalidPath => {
                 write!(f, "path must be a ':'-separated list of non-empty segments")
@@ -70,7 +73,11 @@ impl DID_TDW {
         let mut parts = rest.splitn(3, ':');
 
         let scid_raw = parts.next().ok_or(DIDError::MissingSCID)?;
-        let scid = if scid_raw.is_empty() { None } else { Some(scid_raw.to_string()) };
+        let scid = if scid_raw.is_empty() {
+            None
+        } else {
+            Some(scid_raw.to_string())
+        };
 
         let domain_str = parts
             .next()
@@ -87,7 +94,11 @@ impl DID_TDW {
             None => None,
         };
 
-        Ok(Self { scid, domain: domain_str.to_string(), path })
+        Ok(Self {
+            scid,
+            domain: domain_str.to_string(),
+            path,
+        })
     }
 
     pub fn scid(&self) -> Option<&str> {

@@ -1,6 +1,6 @@
 pub mod scid;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::fmt;
 
 pub type DIDLogResult<T> = Result<T, DIDLogError>;
@@ -222,9 +222,9 @@ impl DIDTDWLogEntry {
     }
 
     pub fn try_from_json(v: &Value) -> DIDLogResult<Self> {
-        let arr = v.as_array().ok_or_else(|| {
-            DIDLogError::InvalidFormat("log entry must be a JSON array".into())
-        })?;
+        let arr = v
+            .as_array()
+            .ok_or_else(|| DIDLogError::InvalidFormat("log entry must be a JSON array".into()))?;
         if arr.len() != 5 {
             return Err(DIDLogError::InvalidFormat(format!(
                 "log entry must have exactly 5 elements, got {}",
@@ -252,7 +252,13 @@ impl DIDTDWLogEntry {
             })?
             .clone();
 
-        Ok(Self { version_id, version_time, parameters, did_doc_state, data_integrity_proofs })
+        Ok(Self {
+            version_id,
+            version_time,
+            parameters,
+            did_doc_state,
+            data_integrity_proofs,
+        })
     }
 
     pub fn to_json(&self) -> Value {
@@ -337,16 +343,16 @@ fn u64_field(obj: &Map<String, Value>, key: &str) -> DIDLogResult<Option<u64>> {
 fn string_array_field(obj: &Map<String, Value>, key: &str) -> DIDLogResult<Option<Vec<String>>> {
     let arr = match obj.get(key) {
         None => return Ok(None),
-        Some(v) => v.as_array().ok_or_else(|| {
-            DIDLogError::InvalidFieldType(format!("'{key}' must be an array"))
-        })?,
+        Some(v) => v
+            .as_array()
+            .ok_or_else(|| DIDLogError::InvalidFieldType(format!("'{key}' must be an array")))?,
     };
     let strings = arr
         .iter()
         .map(|v| {
-            v.as_str()
-                .map(|s| s.to_string())
-                .ok_or_else(|| DIDLogError::InvalidFieldType(format!("'{key}' elements must be strings")))
+            v.as_str().map(|s| s.to_string()).ok_or_else(|| {
+                DIDLogError::InvalidFieldType(format!("'{key}' elements must be strings"))
+            })
         })
         .collect::<DIDLogResult<Vec<_>>>()?;
     Ok(Some(strings))
@@ -383,7 +389,10 @@ mod tests {
     #[test]
     fn parse_entry() {
         let entry = DIDTDWLogEntry::try_from_json(&sample_entry_json()).unwrap();
-        assert_eq!(entry.version_id(), "1-QmdwvukAYUU6VYwqM4jQbSiKk1ctg12j5hMTY6EfbbkyEJ");
+        assert_eq!(
+            entry.version_id(),
+            "1-QmdwvukAYUU6VYwqM4jQbSiKk1ctg12j5hMTY6EfbbkyEJ"
+        );
         assert_eq!(entry.version_time(), "2024-07-29T17:00:27Z");
         assert_eq!(entry.parameters().method(), Some("did:tdw:0.3"));
         assert_eq!(entry.parameters().scid(), Some("QmZz"));

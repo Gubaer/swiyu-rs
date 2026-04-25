@@ -13,5 +13,15 @@ The `did` module provides the data structures for a DID Log with its entries acc
     * Implement `to_json` method. It converts a DIDTDWLogEntry to a JSON object
 
 
-
+## Support for SCIDs
+* Add a module `didlog::scid`
+* Provide a struct for a SCID
+* Create an `impl` block for SCID
+    * There must be no constructors 
+    * Add a `try_from_string` method. Also provide the matching `TryFrom` implementation.
+    * Add a `to_string` method.
+    * Provide accessors to make the encoded information readable:
+        * the hash algorithm
+        * the length of the hash
+        * and the raw hash value
 
