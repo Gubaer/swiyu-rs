@@ -1,3 +1,8 @@
+//! SCID (Self-Certifying Identifier) parsing and representation for the did:tdw DID method.
+//!
+//! A SCID is a base58btc-encoded multihash derived from the DID's inception log entry. It appears
+//! as the first path component of a `did:tdw` DID and binds the DID to its initial state.
+
 use multihash::Multihash;
 use std::fmt;
 
