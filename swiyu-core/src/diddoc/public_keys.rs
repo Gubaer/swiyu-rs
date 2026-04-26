@@ -66,6 +66,27 @@ impl ECKey {
         }
     }
 
+    /// Creates a P-256 EC public key from raw coordinate bytes.
+    ///
+    /// `x_bytes` and `y_bytes` are the 32-byte big-endian coordinates of the
+    /// uncompressed public point, as obtained from
+    /// `p256::ecdsa::VerifyingKey::to_encoded_point(false)`.
+    /// Both coordinates are base64url-encoded without padding per [RFC 7518 §6.2][rfc7518].
+    ///
+    /// [rfc7518]: https://www.rfc-editor.org/rfc/rfc7518#section-6.2
+    ///
+    /// # See also
+    ///
+    /// [`ECKey::with_kid`] to set the key ID after construction.
+    pub fn from_p256_coordinates(x_bytes: &[u8; 32], y_bytes: &[u8; 32]) -> Self {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        Self::new(
+            "P-256".into(),
+            URL_SAFE_NO_PAD.encode(x_bytes),
+            URL_SAFE_NO_PAD.encode(y_bytes),
+        )
+    }
+
     fn try_from_json(obj: &Map<String, Value>) -> DIDDocResult<Self> {
         Ok(Self {
             crv: super::required_string(obj, "crv")?,
@@ -78,7 +99,8 @@ impl ECKey {
         })
     }
 
-    fn to_json(&self) -> Value {
+    /// Serialises the key to a JSON object (`kty = "EC"`).
+    pub fn to_json(&self) -> Value {
         let mut map = Map::new();
         map.insert("kty".into(), json!("EC"));
         map.insert("crv".into(), json!(self.crv));
@@ -122,6 +144,12 @@ impl ECKey {
     pub fn kid(&self) -> Option<&str> {
         self.kid.as_deref()
     }
+
+    /// Sets the key ID.
+    pub fn with_kid(mut self, kid: String) -> Self {
+        self.kid = Some(kid);
+        self
+    }
 }
 
 /// Octet Key Pair public key (`kty = "OKP"`). Curves: "Ed25519", "X25519".
@@ -160,7 +188,8 @@ impl OKPKey {
         })
     }
 
-    fn to_json(&self) -> Value {
+    /// Serialises the key to a JSON object (`kty = "OKP"`).
+    pub fn to_json(&self) -> Value {
         let mut map = Map::new();
         map.insert("kty".into(), json!("OKP"));
         map.insert("crv".into(), json!(self.crv));
@@ -236,7 +265,8 @@ impl RSAKey {
         })
     }
 
-    fn to_json(&self) -> Value {
+    /// Serialises the key to a JSON object (`kty = "RSA"`).
+    pub fn to_json(&self) -> Value {
         let mut map = Map::new();
         map.insert("kty".into(), json!("RSA"));
         map.insert("n".into(), json!(self.n));
@@ -572,6 +602,22 @@ mod tests {
         let decoded = bs58::decode(&multikey[1..]).into_vec().unwrap();
         assert_eq!(&decoded[..2], &[0xed, 0x01]);
         assert_eq!(&decoded[2..], &key_bytes);
+    }
+
+    #[test]
+    fn ec_key_from_p256_coordinates() {
+        let key = ECKey::from_p256_coordinates(&[0x01u8; 32], &[0x02u8; 32]);
+        assert_eq!(key.crv(), "P-256");
+        assert_eq!(key.x(), "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE");
+        assert_eq!(key.y(), "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI");
+        assert_eq!(key.kid(), None);
+    }
+
+    #[test]
+    fn ec_key_with_kid() {
+        let key = ECKey::from_p256_coordinates(&[0x01u8; 32], &[0x02u8; 32])
+            .with_kid("assert-key-01".into());
+        assert_eq!(key.kid(), Some("assert-key-01"));
     }
 
     #[test]
