@@ -12,3 +12,4 @@ swiyu-core = { path = "../swiyu-core" }
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 rand = "0.8"
+thiserror = "2"
