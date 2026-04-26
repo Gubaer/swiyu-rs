@@ -46,7 +46,7 @@ impl SCID {
     /// # Example
     ///
     /// ```
-    /// use swiyu_rs::didlog::scid::SCID;
+    /// use swiyu_core::didlog::scid::SCID;
     /// use multihash_codetable::{Code, MultihashDigest};
     ///
     /// let mh = Code::Sha2_256.digest(b"inception entry data");

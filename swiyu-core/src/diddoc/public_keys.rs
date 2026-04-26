@@ -315,7 +315,7 @@ impl PublicKeyJWK {
     /// # Example
     ///
     /// ```
-    /// use swiyu_rs::diddoc::{PublicKeyJWK, DIDDocError};
+    /// use swiyu_core::diddoc::{PublicKeyJWK, DIDDocError};
     /// use serde_json::json;
     ///
     /// let v = json!({ "kty": "OKP", "crv": "Ed25519", "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" });
