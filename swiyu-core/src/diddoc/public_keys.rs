@@ -486,6 +486,34 @@ impl fmt::Display for PublicKeyMultibase {
     }
 }
 
+/// Encodes a raw Ed25519 public key as a multikey string using base58btc encoding,
+/// as specified in the [Multikey data integrity cryptosuite][multikey].
+///
+/// [multikey]: https://www.w3.org/TR/vc-di-eddsa/
+///
+/// # Example
+///
+/// ```
+/// use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
+///
+/// // In practice, key_bytes comes from Ed25519VerifyingKey::as_bytes().
+/// let key_bytes: [u8; 32] = [
+///     0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7,
+///     0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
+///     0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25,
+///     0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
+/// ];
+/// let multikey = ed25519_verifying_key_to_multikey(&key_bytes);
+/// assert_eq!(multikey, "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw");
+/// ```
+pub fn ed25519_verifying_key_to_multikey(key_bytes: &[u8; 32]) -> String {
+    const MULTICODEC_ED25519: [u8; 2] = [0xed, 0x01];
+    let mut bytes = Vec::with_capacity(MULTICODEC_ED25519.len() + key_bytes.len());
+    bytes.extend_from_slice(&MULTICODEC_ED25519);
+    bytes.extend_from_slice(key_bytes);
+    format!("z{}", bs58::encode(&bytes).into_string())
+}
+
 /// The public key material of a verification method.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PublicKey {
@@ -533,6 +561,18 @@ mod tests {
     use super::super::DIDDocError;
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn ed25519_multikey_encoding() {
+        let key_bytes = [0x42u8; 32];
+        let multikey = ed25519_verifying_key_to_multikey(&key_bytes);
+
+        assert!(multikey.starts_with('z'));
+
+        let decoded = bs58::decode(&multikey[1..]).into_vec().unwrap();
+        assert_eq!(&decoded[..2], &[0xed, 0x01]);
+        assert_eq!(&decoded[2..], &key_bytes);
+    }
 
     #[test]
     fn multibase_unsupported_prefix() {
