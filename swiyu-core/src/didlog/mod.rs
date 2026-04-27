@@ -1,5 +1,6 @@
 pub mod scid;
 
+use multihash_codetable::{Code, MultihashDigest};
 use serde_json::{Map, Value, json};
 use std::fmt;
 
@@ -486,6 +487,25 @@ impl DIDLog {
     }
 }
 
+/// Computes the hash input for an `eddsa-jcs-2022` data integrity proof.
+///
+/// Returns 64 bytes: SHA-256 of the JCS-canonicalised `proof_config` (the proof options without
+/// `proofValue`) followed by SHA-256 of the JCS-canonicalised `document` (the entry without the
+/// `proof` field). The caller signs this value with the authorised Ed25519 key.
+///
+/// Follows the hashing algorithm defined in the
+/// [VC Data Integrity EdDSA Cryptosuites](https://www.w3.org/TR/vc-di-eddsa/) specification.
+pub fn eddsa_jcs_2022_hash(document: &Value, proof_config: &Value) -> [u8; 64] {
+    let proof_bytes = serde_jcs::to_vec(proof_config).expect("proof config is serialisable");
+    let doc_bytes = serde_jcs::to_vec(document).expect("document is serialisable");
+    let proof_hash = Code::Sha2_256.digest(&proof_bytes);
+    let doc_hash = Code::Sha2_256.digest(&doc_bytes);
+    let mut result = [0u8; 64];
+    result[..32].copy_from_slice(proof_hash.digest());
+    result[32..].copy_from_slice(doc_hash.digest());
+    result
+}
+
 // --- helpers for parsing optional typed fields from a JSON object ---
 
 fn string_field(obj: &Map<String, Value>, key: &str) -> DIDLogResult<Option<String>> {
@@ -688,6 +708,38 @@ mod tests {
             DIDLogEntry::try_from_json(&v).unwrap_err(),
             DIDLogError::MissingField(_)
         ));
+    }
+
+    #[test]
+    fn eddsa_jcs_2022_hash_structure() {
+        let doc = json!({"id": "did:example:123", "b": 2, "a": 1});
+        let proof_config = json!({"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022"});
+
+        let result = eddsa_jcs_2022_hash(&doc, &proof_config);
+
+        let expected_proof_hash = Code::Sha2_256
+            .digest(&serde_jcs::to_vec(&proof_config).unwrap())
+            .digest()
+            .to_vec();
+        let expected_doc_hash = Code::Sha2_256
+            .digest(&serde_jcs::to_vec(&doc).unwrap())
+            .digest()
+            .to_vec();
+
+        assert_eq!(&result[..32], expected_proof_hash.as_slice());
+        assert_eq!(&result[32..], expected_doc_hash.as_slice());
+    }
+
+    #[test]
+    fn eddsa_jcs_2022_hash_is_key_order_independent() {
+        let doc_a = json!({"b": 2, "a": 1});
+        let doc_b = json!({"a": 1, "b": 2});
+        let proof_config = json!({"type": "DataIntegrityProof"});
+
+        assert_eq!(
+            eddsa_jcs_2022_hash(&doc_a, &proof_config),
+            eddsa_jcs_2022_hash(&doc_b, &proof_config),
+        );
     }
 
     #[test]
