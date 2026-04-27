@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
 blake3 = "1"
+clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
