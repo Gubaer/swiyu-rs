@@ -307,7 +307,9 @@ fn cmd_export(
 }
 
 fn parse_partner_id(s: &str) -> Result<String, String> {
-    if is_uuid(s) {
+    if s.is_empty() {
+        Err("required — provide --partner-id or set SWIYU_PARTNER_ID".to_string())
+    } else if is_uuid(s) {
         Ok(s.to_string())
     } else {
         Err(format!("not a valid UUID: '{s}'"))
@@ -315,7 +317,9 @@ fn parse_partner_id(s: &str) -> Result<String, String> {
 }
 
 fn parse_registry_url(s: &str) -> Result<String, String> {
-    if is_https_url(s) {
+    if s.is_empty() {
+        Err("required — provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL".to_string())
+    } else if is_https_url(s) {
         Ok(s.to_string())
     } else {
         Err(format!(

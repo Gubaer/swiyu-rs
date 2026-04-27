@@ -134,9 +134,9 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
     debug!("committed keys to key store (hash: {})", entry.hash());
 
     // --- report ---
-    println!("{real_did_str}");
-    eprintln!("log: {}", args.out.display());
-    eprintln!("key store: {}", entry.hash());
+    println!("Generated DID: {real_did_str}");
+    println!("Saved DID log entry: {}", args.out.display());
+    println!("Keystore hash: {}", entry.hash());
 
     Ok(())
 }
