@@ -37,6 +37,7 @@ enum Command {
     /// Create a new DID, generate key pairs, and write the initial DID log.
     Create {
         /// HTTPS URL where the DID log will be served (e.g. https://example.com/.well-known/did.jsonl).
+        #[arg(value_parser = parse_https_url)]
         url: Option<String>,
         /// Allocate a DID space via the SWIYU identifier registry instead of supplying a URL.
         #[arg(long)]
@@ -45,7 +46,7 @@ enum Command {
         #[arg(long, env = "SWIYU_PARTNER_ID", value_parser = parse_partner_id)]
         partner_id: Option<String>,
         /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
-        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_registry_url)]
+        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
         registry_url: Option<String>,
         /// DID method to use.
         #[arg(long, default_value = "webvh")]
@@ -316,9 +317,9 @@ fn parse_partner_id(s: &str) -> Result<String, String> {
     }
 }
 
-fn parse_registry_url(s: &str) -> Result<String, String> {
+fn parse_https_url(s: &str) -> Result<String, String> {
     if s.is_empty() {
-        Err("required — provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL".to_string())
+        Err("required (value is empty)".to_string())
     } else if is_https_url(s) {
         Ok(s.to_string())
     } else {
