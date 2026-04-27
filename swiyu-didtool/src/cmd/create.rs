@@ -19,10 +19,7 @@ use crate::keystore::{KeyStore, KeyStoreError, StagedKeys};
 pub struct CreateArgs {
     pub url: Option<String>,
     pub swiyu: bool,
-    // read when --swiyu is implemented
-    #[allow(dead_code)]
     pub partner_id: Option<String>,
-    #[allow(dead_code)]
     pub registry_url: Option<String>,
     pub format: LogEntryFormat,
     pub out: PathBuf,
@@ -43,12 +40,14 @@ pub enum CreateError {
     AssertionKey(CryptoError),
     #[error("--authentication-key and --assertion-key must differ")]
     IdenticalKeys,
-    #[error("--swiyu is not yet implemented")]
-    SwiyuNotImplemented,
     #[error("provide a <url> or --swiyu")]
     NoUrlSource,
     #[error("<url> and --swiyu are mutually exclusive")]
     AmbiguousUrlSource,
+    #[error("provide --partner-id or set SWIYU_PARTNER_ID")]
+    PartnerIdMissing,
+    #[error("provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL")]
+    RegistryUrlMissing,
     #[error("cannot write '{0}': {1}")]
     WriteLog(PathBuf, std::io::Error),
     #[error(transparent)]
@@ -57,6 +56,8 @@ pub enum CreateError {
     Did(#[from] swiyu_core::did::DIDError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Swiyu(#[from] crate::swiyu::SwiyuError),
 }
 
 pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError> {
@@ -64,7 +65,20 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
     let url = match (&args.url, args.swiyu) {
         (Some(_), true) => return Err(CreateError::AmbiguousUrlSource),
         (None, false) => return Err(CreateError::NoUrlSource),
-        (None, true) => return Err(CreateError::SwiyuNotImplemented),
+        (None, true) => {
+            let partner_id = args
+                .partner_id
+                .clone()
+                .ok_or(CreateError::PartnerIdMissing)?;
+            let registry_url = args
+                .registry_url
+                .clone()
+                .ok_or(CreateError::RegistryUrlMissing)?;
+            debug!("allocating DID space via SWIYU identifier registry");
+            let url = crate::swiyu::allocate_did_url(partner_id, registry_url)?;
+            debug!("registry returned identifierRegistryUrl: {}", url);
+            url
+        }
         (Some(u), false) => u.clone(),
     };
 

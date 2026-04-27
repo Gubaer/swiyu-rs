@@ -5,6 +5,7 @@ mod crypto;
 mod cmd;
 #[allow(dead_code)]
 mod keystore;
+mod swiyu;
 
 use std::path::PathBuf;
 use std::process;
@@ -41,10 +42,10 @@ enum Command {
         #[arg(long)]
         swiyu: bool,
         /// SWIYU business partner ID (overrides SWIYU_PARTNER_ID).
-        #[arg(long, env = "SWIYU_PARTNER_ID")]
+        #[arg(long, env = "SWIYU_PARTNER_ID", value_parser = parse_partner_id)]
         partner_id: Option<String>,
         /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
-        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL")]
+        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_registry_url)]
         registry_url: Option<String>,
         /// DID method to use.
         #[arg(long, default_value = "webvh")]
@@ -303,4 +304,38 @@ fn cmd_export(
     }
     debug!("exported to {}", out.display());
     Ok(())
+}
+
+fn parse_partner_id(s: &str) -> Result<String, String> {
+    if is_uuid(s) {
+        Ok(s.to_string())
+    } else {
+        Err(format!("not a valid UUID: '{s}'"))
+    }
+}
+
+fn parse_registry_url(s: &str) -> Result<String, String> {
+    if is_https_url(s) {
+        Ok(s.to_string())
+    } else {
+        Err(format!(
+            "must use https:// scheme and have a non-empty host: '{s}'"
+        ))
+    }
+}
+
+fn is_uuid(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 36 {
+        return false;
+    }
+    let mut hex_positions = (0..36).filter(|&i| ![8, 13, 18, 23].contains(&i));
+    let dash_positions = [8usize, 13, 18, 23];
+    dash_positions.iter().all(|&i| b[i] == b'-') && hex_positions.all(|i| b[i].is_ascii_hexdigit())
+}
+
+fn is_https_url(s: &str) -> bool {
+    s.strip_prefix("https://")
+        .map(|rest| !rest.split('/').next().unwrap_or("").is_empty())
+        .unwrap_or(false)
 }
