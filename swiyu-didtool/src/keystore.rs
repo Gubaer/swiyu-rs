@@ -300,6 +300,9 @@ impl KeyStore {
 
     /// Writes the staged key pairs to disk for `did` and records `did.txt`.
     ///
+    /// Takes ownership of `staged` so that the in-memory private keys are dropped
+    /// immediately after the files are written.
+    ///
     /// The keys are written into a `0001/` snapshot subdirectory under the entry directory
     /// derived from `did`. Fails with [`KeyStoreError::AlreadyExists`] if an entry for this
     /// DID already exists.

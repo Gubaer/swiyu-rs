@@ -274,24 +274,24 @@ fn build_genesis_entry(
             Some(method_str.into()),
             Some("{SCID}".into()),
             Some(vec![authorized_multikey.into()]),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, // prerotation
+            None, // next_key_hashes
+            None, // portable
+            None, // deactivated
+            None, // ttl
+            None, // witness
         ),
         LogEntryFormat::WebVH10 => LogParameters::new_webvh(
             Some(method_str.into()),
             Some("{SCID}".into()),
             Some(vec![authorized_multikey.into()]),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None, // prerotation
+            None, // next_key_hashes
+            None, // portable
+            None, // deactivated
+            None, // ttl
+            None, // witness
+            None, // watchers (did:webvh only)
         ),
     };
 
