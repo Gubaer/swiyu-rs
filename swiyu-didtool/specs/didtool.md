@@ -62,6 +62,87 @@ Writes a single key to `--out` in PEM format.
 - `--out <file>`: path to write the PEM file; required.
 - `<hash|did>`: accepts either the 12-character BLAKE3 hash or the full DID string.
 
+## `didtool log`
+
+Read-only access to a DID's log file. Three subcommands: `list`, `show`, `entry`. Like
+`didtool keystore`, these commands never mutate the log — log entries are written by
+`didtool create` and (in future) `didtool update`.
+
+### Source selectors
+
+Each `log` subcommand reads the log from one of two sources:
+
+| Flag | Value | Behavior |
+|---|---|---|
+| `--did <did-or-hash>` | full DID string **or** 12-character BLAKE3 hash | Resolves to a DID, derives the HTTPS URL where the log is served, performs an HTTPS `GET`. |
+| `--input <path>` | local file path | Reads the JSONL log from disk. |
+
+`--did` and `--input` are mutually exclusive. When neither is given, `--input ./did.jsonl` is
+used (matches the default `--out` of `didtool create`).
+
+The `<did-or-hash>` value follows the same resolution rule as `keystore show` and
+`keystore export`: a 12-character all-hex string is looked up in the key store and the DID is
+read from that entry's `did.txt`; anything else is parsed as a DID string directly. The HTTPS
+URL is derived from the DID's domain and optional path segments —
+`https://<domain>/<path>/did.jsonl`, or `https://<domain>/.well-known/did.jsonl` when no path
+is present. Percent-encoded `%3A` in the domain segment decodes to `:` so ports are handled
+correctly.
+
+### `didtool log list [--did <did-or-hash> | --input <path>]`
+
+Lists every entry in the log, one row per entry, in sequence order:
+
+```
+SEQ  VERSION-ID                                   VERSION-TIME              DEACT
+  1  1-QmXyZ…                                     2026-04-27T08:11:42Z      no
+  2  2-QmAbC…                                     2026-04-27T09:02:11Z      no
+  3  3-QmDeF…                                     2026-04-30T14:55:00Z      yes
+```
+
+Columns:
+- `SEQ` — 1-based sequence number (matches the prefix of `versionId`).
+- `VERSION-ID` — the full `versionId` of the entry.
+- `VERSION-TIME` — the `versionTime` of the entry.
+- `DEACT` — `yes` when the entry's `parameters.deactivated` is `true`, else `no`.
+
+### `didtool log show [--did <did-or-hash> | --input <path>] [--out <file>] [--raw | --pretty]`
+
+Outputs the full DID log.
+
+- Default (stdout): pretty-printed JSON, blank line between entries, each preceded by a
+  comment line `# entry <seq> — <versionId>`. Both `did:tdw` v0.3 (five-element array) and
+  `did:webvh` v1.0 (named-field object) render in their native shape.
+- `--out <file>`: writes to a file. The default file format is **raw JSONL** — byte-equivalent
+  to the source — so signatures and hashes still verify against the saved copy.
+- `--raw`: forces raw JSONL output, even on stdout (suitable for piping into `jq`).
+- `--pretty`: forces pretty-printed JSON, even when writing to a file.
+
+`--raw` and `--pretty` are mutually exclusive.
+
+### `didtool log entry [--did <did-or-hash> | --input <path>] [--at <selector>] [--out <file>] [--raw | --pretty]`
+
+Outputs a single entry from the DID log. `--at <selector>` selects the entry:
+
+| Selector      | Meaning |
+|---------------|---------|
+| `latest`      | The last entry in the log. This is the default when `--at` is omitted. |
+| `<n>`         | The entry at 1-based index `<n>` (matches the sequence number prefix of `versionId`). |
+| `<versionId>` | The entry whose `versionId` matches exactly. |
+
+Output rules are identical to `log show`: pretty-printed JSON to stdout by default, raw JSONL
+to file by default. `--raw` / `--pretty` override.
+
+### HTTPS fetch behavior (when `--did` is used)
+
+- Any non-2xx response status is a hard error; the status and a snippet of the response body
+  are included in the error message on stderr.
+- No specific `Content-Type` is required — the body is parsed line-by-line as JSONL.
+- A 50 MiB cap on response size guards against runaway responses. This is far above any
+  realistic DID log size. The cap can be raised by setting `DIDTOOL_LOG_MAX_BYTES` in the
+  environment.
+- The fetch is synchronous (`reqwest` blocking client), consistent with the `--swiyu` form of
+  `didtool create`. No async runtime is introduced.
+
 ## `didtool create`
 
 Creates a new DID, generates (or imports) key pairs, writes the initial DID log, and stores the
@@ -178,6 +259,15 @@ code. No stack traces or internal details are shown to the user.
 | SWIYU API request failed               | 1         | `error: registry API error: <status> <body>`                   |
 | Neither `<url>` nor `--swiyu` given    | 1         | `error: provide a <url> or --swiyu`                            |
 | Both `<url>` and `--swiyu` given       | 1         | `error: <url> and --swiyu are mutually exclusive`              |
+| Both `--did` and `--input` given       | 1         | `error: --did and --input are mutually exclusive`              |
+| `--did` value is neither a DID nor a 12-char hex hash | 1 | `error: '<value>' is neither a DID nor a 12-character hex hash` |
+| Hash given to `--did` not in key store | 1         | `error: no entry found for '<hash>'`                           |
+| HTTPS fetch failed (network/DNS/TLS)   | 1         | `error: cannot fetch '<url>': <reason>`                        |
+| HTTPS response is non-2xx              | 1         | `error: '<url>' returned <status>: <body>`                     |
+| Response exceeds size cap              | 1         | `error: response from '<url>' exceeds <bytes> bytes`           |
+| Log file is not valid JSONL            | 1         | `error: '<source>': line <n>: <parse error>`                   |
+| `--at` selector matches no entry       | 1         | `error: no entry matches '<selector>'`                         |
+| Both `--raw` and `--pretty` given      | 1         | `error: --raw and --pretty are mutually exclusive`             |
 
 # Logging
 
