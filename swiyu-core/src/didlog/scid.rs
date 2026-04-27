@@ -114,6 +114,17 @@ impl TryFrom<&str> for SCID {
     }
 }
 
+/// Derives the SCID from the genesis log entry.
+///
+/// `entry_json` is the compact JSON serialisation of the genesis log entry with `{SCID}` used
+/// as a placeholder wherever the SCID would normally appear. The SCID is the base58btc-encoded
+/// SHA-256 multihash of those bytes, as specified in the did:tdw / did:webvh log format.
+pub fn derive_from_genesis_entry(entry_json: &str) -> String {
+    use multihash_codetable::{Code, MultihashDigest};
+    let mh = Code::Sha2_256.digest(entry_json.as_bytes());
+    bs58::encode(mh.to_bytes()).into_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,6 +162,32 @@ mod tests {
         let s = sample_scid_string();
         let scid: SCID = s.as_str().try_into().unwrap();
         assert_eq!(scid.hash_length(), 32);
+    }
+
+    #[test]
+    fn derive_from_genesis_entry_produces_valid_scid() {
+        let entry_json = r#"["1-{SCID}","2024-01-01T00:00:00Z",{"method":"did:webvh:1.0","scid":"{SCID}"},{"value":{"id":"did:webvh:{SCID}:example.com"}},{}]"#;
+        let scid_str = derive_from_genesis_entry(entry_json);
+        let scid = SCID::try_from_string(&scid_str)
+            .expect("derive_from_genesis_entry must produce a valid SCID");
+        assert_eq!(scid.hash_algorithm(), 0x12); // SHA2-256
+        assert_eq!(scid.hash_length(), 32);
+    }
+
+    #[test]
+    fn derive_from_genesis_entry_is_deterministic() {
+        let entry_json = r#"["1-{SCID}","2024-01-01T00:00:00Z",{}]"#;
+        assert_eq!(
+            derive_from_genesis_entry(entry_json),
+            derive_from_genesis_entry(entry_json),
+        );
+    }
+
+    #[test]
+    fn derive_from_genesis_entry_is_sensitive_to_input() {
+        let a = derive_from_genesis_entry(r#"["1-{SCID}","2024-01-01T00:00:00Z"]"#);
+        let b = derive_from_genesis_entry(r#"["1-{SCID}","2024-01-02T00:00:00Z"]"#);
+        assert_ne!(a, b);
     }
 
     #[test]
