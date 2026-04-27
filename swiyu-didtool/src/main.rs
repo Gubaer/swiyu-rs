@@ -14,7 +14,7 @@ use swiyu_core::did::DID;
 use keystore::{KeyRole, KeyStore, KeyStoreEntry};
 
 #[derive(Parser)]
-#[command(name = "didtool", about = "Manage did:webvh identities")]
+#[command(name = "didtool", about = "Manage did:tdw and did:webvh identities")]
 struct Cli {
     /// Path to the key store root directory (overrides DIDTOOL_KEYSTORE and the default).
     #[arg(long, env = "DIDTOOL_KEYSTORE", global = true)]
