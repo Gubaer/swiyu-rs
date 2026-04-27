@@ -81,9 +81,6 @@ to form the DID identifier.
 
 ### Form 2 — SWIYU partner
 
-> **Not yet implemented.** `--swiyu` currently exits with an error. The design is final; the
-> HTTP client dependency (`reqwest`) has not been added yet.
-
 ```
 didtool create --swiyu [--partner-id <id>] [--registry-url <url>] [options]
 ```
@@ -149,8 +146,12 @@ A confirmation line (log file path, key store hash) is printed to stderr.
 
 ### Dependencies
 
-The `--swiyu` form requires an HTTP client (`reqwest`). This dependency is gated behind a
-`swiyu` feature flag so that users who do not need the SWIYU integration do not pull it in.
+The `--swiyu` form requires an HTTP client (`reqwest`), which is an unconditional dependency.
+`didtool` is a standalone CLI with no downstream consumers, so a feature flag to opt out would
+add complexity without benefit.
+
+`reqwest` is used in blocking mode — there is only one HTTP call and no concurrency needed, so
+introducing an async runtime (tokio) would be unnecessary complexity for a CLI tool.
 
 # Output conventions
 

@@ -7,11 +7,8 @@ edition = "2024"
 name = "didtool"
 path = "src/main.rs"
 
-[features]
-swiyu = ["dep:reqwest"]
-
 [dependencies]
-reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false, optional = true }
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
 swiyu-core = { path = "../swiyu-core" }
 base64 = { version = "0.22", features = ["alloc"] }
 blake3 = "1"
