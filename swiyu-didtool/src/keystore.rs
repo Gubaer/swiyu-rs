@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use swiyu_core::did::DID;
 use thiserror::Error;
+use tracing::debug;
 
 use ed25519_dalek::VerifyingKey as Ed25519VerifyingKey;
 use p256::ecdsa::VerifyingKey as EcdsaVerifyingKey;
@@ -61,7 +62,7 @@ pub enum KeyRole {
 }
 
 impl KeyRole {
-    fn file_stem(self) -> &'static str {
+    pub(crate) fn file_stem(self) -> &'static str {
         match self {
             KeyRole::Authorized => "authorized",
             KeyRole::Authentication => "authentication",
@@ -85,6 +86,31 @@ pub struct StagedKeys {
 }
 
 impl StagedKeys {
+    /// Assembles `StagedKeys` from three signing keys; public keys are derived automatically.
+    pub fn from_parts(
+        authorized_signing: ed25519_dalek::SigningKey,
+        authentication_signing: p256::ecdsa::SigningKey,
+        assertion_signing: p256::ecdsa::SigningKey,
+    ) -> Self {
+        let authorized_verifying = authorized_signing.verifying_key();
+        let authentication_verifying = *authentication_signing.verifying_key();
+        let assertion_verifying = *assertion_signing.verifying_key();
+        Self {
+            authorized_signing,
+            authorized_verifying,
+            authentication_signing,
+            authentication_verifying,
+            assertion_signing,
+            assertion_verifying,
+        }
+    }
+
+    /// Signs `message` with the authorized EdDSA key and returns the 64-byte signature.
+    pub fn sign_with_authorized(&self, message: &[u8]) -> [u8; 64] {
+        use ed25519_dalek::Signer;
+        self.authorized_signing.sign(message).to_bytes()
+    }
+
     /// The EdDSA public key for the `authorized` role (signs DID log entries).
     pub fn authorized_verifying_key(&self) -> &Ed25519VerifyingKey {
         &self.authorized_verifying
@@ -225,6 +251,7 @@ impl KeyStore {
                 format!("key store directory '{}' does not exist", root.display()),
             )));
         }
+        debug!("opened key store at {}", root.display());
         Ok(Self {
             root: root.to_path_buf(),
         })
@@ -233,6 +260,7 @@ impl KeyStore {
     /// Opens the key store at `root`, creating the root directory if it does not exist.
     pub fn open_or_create(root: &Path) -> KeyStoreResult<Self> {
         std::fs::create_dir_all(root)?;
+        debug!("opened key store at {}", root.display());
         Ok(Self {
             root: root.to_path_buf(),
         })
@@ -244,6 +272,7 @@ impl KeyStore {
             .ok_or(KeyStoreError::HomeDirNotFound)?
             .join(".didtool")
             .join("keys");
+        debug!("resolved default key store path: {}", root.display());
         Self::open_or_create(&root)
     }
 
@@ -253,8 +282,11 @@ impl KeyStore {
     /// to build the initial DID document, derives the SCID, constructs the full DID, and
     /// then calls [`KeyStore::commit`] to write everything to disk.
     pub fn generate() -> KeyStoreResult<StagedKeys> {
+        debug!("generating authorized Ed25519 key pair");
         let (authorized_signing, authorized_verifying) = generate_eddsa_key_pair();
+        debug!("generating authentication P-256 key pair");
         let (authentication_signing, authentication_verifying) = generate_ecdsa_key_pair();
+        debug!("generating assertion P-256 key pair");
         let (assertion_signing, assertion_verifying) = generate_ecdsa_key_pair();
         Ok(StagedKeys {
             authorized_signing,
@@ -280,6 +312,7 @@ impl KeyStore {
             return Err(KeyStoreError::AlreadyExists(hash));
         }
 
+        debug!("committing keys for DID '{}' (hash: {})", did_str, hash);
         let snapshot_dir = entry_dir.join("0001");
         std::fs::create_dir_all(&snapshot_dir)?;
 
@@ -309,6 +342,7 @@ impl KeyStore {
         )?;
 
         std::fs::write(entry_dir.join("did.txt"), &did_str)?;
+        debug!("wrote keys to {}", snapshot_dir.display());
 
         Ok(KeyStoreEntry {
             hash,
@@ -325,6 +359,7 @@ impl KeyStore {
     pub fn lookup(&self, did: &DID) -> KeyStoreResult<Option<KeyStoreEntry>> {
         let did_str = did.to_string();
         let hash = did_to_hash(&did_str);
+        debug!("looking up key store entry for DID '{}'", did_str);
         let entry_dir = self.root.join(&hash);
 
         if !entry_dir.exists() {
@@ -348,6 +383,7 @@ impl KeyStore {
     /// Looks up the entry by its 12-character BLAKE3 hash. Returns `Ok(None)` if no entry
     /// exists.
     pub fn lookup_by_hash(&self, hash: &str) -> KeyStoreResult<Option<KeyStoreEntry>> {
+        debug!("looking up key store entry by hash '{}'", hash);
         let entry_dir = self.root.join(hash);
 
         if !entry_dir.exists() {

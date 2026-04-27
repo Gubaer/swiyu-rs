@@ -2,6 +2,7 @@
 #[allow(dead_code)]
 mod crypto;
 // keystore items used only in tests (generate, commit, …) are intentionally kept for future commands
+mod cmd;
 #[allow(dead_code)]
 mod keystore;
 
@@ -10,6 +11,8 @@ use std::process;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use swiyu_core::did::DID;
+use swiyu_core::didlog::LogEntryFormat;
+use tracing::debug;
 
 use keystore::{KeyRole, KeyStore, KeyStoreEntry};
 
@@ -20,12 +23,45 @@ struct Cli {
     #[arg(long, env = "DIDTOOL_KEYSTORE", global = true)]
     keystore: Option<PathBuf>,
 
+    /// Enable DEBUG-level log output to stderr.
+    #[arg(long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Create a new DID, generate key pairs, and write the initial DID log.
+    Create {
+        /// HTTPS URL where the DID log will be served (e.g. https://example.com/.well-known/did.jsonl).
+        url: Option<String>,
+        /// Allocate a DID space via the SWIYU identifier registry instead of supplying a URL.
+        #[arg(long)]
+        swiyu: bool,
+        /// SWIYU business partner ID (overrides SWIYU_PARTNER_ID).
+        #[arg(long, env = "SWIYU_PARTNER_ID")]
+        partner_id: Option<String>,
+        /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
+        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL")]
+        registry_url: Option<String>,
+        /// DID method to use.
+        #[arg(long, default_value = "webvh")]
+        format: Format,
+        /// Path to write the initial DID log (default: did.jsonl in the current directory).
+        #[arg(long, default_value = "did.jsonl")]
+        out: PathBuf,
+        /// Existing Ed25519 private key to use for the authorized role (PEM). Generated if omitted.
+        #[arg(long)]
+        authorized_key: Option<PathBuf>,
+        /// Existing P-256 private key to use for the authentication role (PEM). Generated if omitted.
+        #[arg(long)]
+        authentication_key: Option<PathBuf>,
+        /// Existing P-256 private key to use for the assertion role (PEM). Generated if omitted.
+        #[arg(long)]
+        assertion_key: Option<PathBuf>,
+    },
     /// Manage the key store.
     Keystore {
         #[command(subcommand)]
@@ -67,6 +103,24 @@ enum KeystoreCommand {
     },
 }
 
+/// DID method format, for use as a CLI argument.
+#[derive(Clone, ValueEnum)]
+enum Format {
+    /// did:tdw v0.3 (Trust DID Web).
+    Tdw,
+    /// did:webvh v1.0 (Web + Verifiable History).
+    Webvh,
+}
+
+impl From<Format> for LogEntryFormat {
+    fn from(f: Format) -> LogEntryFormat {
+        match f {
+            Format::Tdw => LogEntryFormat::TDW03,
+            Format::Webvh => LogEntryFormat::WebVH10,
+        }
+    }
+}
+
 /// A key role, for use as a CLI argument.
 #[derive(Clone, ValueEnum)]
 enum Role {
@@ -87,6 +141,15 @@ impl From<Role> for KeyRole {
 
 fn main() {
     let cli = Cli::parse();
+
+    if cli.verbose {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_target(false)
+            .without_time()
+            .init();
+    }
+
     if let Err(e) = run(cli) {
         eprintln!("error: {e}");
         process::exit(1);
@@ -96,6 +159,31 @@ fn main() {
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let store = open_store(cli.keystore)?;
     match cli.command {
+        Command::Create {
+            url,
+            swiyu,
+            partner_id,
+            registry_url,
+            format,
+            out,
+            authorized_key,
+            authentication_key,
+            assertion_key,
+        } => cmd::create::cmd_create(
+            &store,
+            cmd::create::CreateArgs {
+                url,
+                swiyu,
+                partner_id,
+                registry_url,
+                format: format.into(),
+                out,
+                authorized_key,
+                authentication_key,
+                assertion_key,
+            },
+        )
+        .map_err(|e| e.into()),
         Command::Keystore { command } => match command {
             KeystoreCommand::List => cmd_list(&store),
             KeystoreCommand::Show {
@@ -130,16 +218,24 @@ fn resolve_target(
     target: &str,
 ) -> Result<KeyStoreEntry, Box<dyn std::error::Error>> {
     let entry = if target.len() == 12 && target.chars().all(|c| c.is_ascii_hexdigit()) {
+        debug!("resolving target '{}' as BLAKE3 hash", target);
         store.lookup_by_hash(target)?
     } else {
+        debug!("resolving target '{}' as DID", target);
         let did = DID::parse(target)?;
         store.lookup(&did)?
     };
-    entry.ok_or_else(|| format!("no entry found for '{target}'").into())
+    let entry = entry.ok_or_else(|| format!("no entry found for '{target}'").into());
+    if let Ok(ref e) = entry {
+        debug!("resolved to key store entry (hash: {})", e.hash());
+    }
+    entry
 }
 
 fn cmd_list(store: &KeyStore) -> Result<(), Box<dyn std::error::Error>> {
-    for entry in store.list()? {
+    let entries = store.list()?;
+    debug!("found {} entries in key store", entries.len());
+    for entry in entries {
         println!("{}  {}", entry.hash, entry.did);
     }
     Ok(())
@@ -154,10 +250,20 @@ fn cmd_show(
     let entry = resolve_target(store, target)?;
     match role {
         Some(role) => {
-            let pem = entry.public_key_pem(role.into(), version)?;
+            let key_role: KeyRole = role.into();
+            debug!(
+                "showing {} public key (version: {})",
+                key_role.file_stem(),
+                version.map_or("latest".to_string(), |v| v.to_string())
+            );
+            let pem = entry.public_key_pem(key_role, version)?;
             println!("{}", pem.trim());
         }
         None => {
+            debug!(
+                "showing all public keys (version: {})",
+                version.map_or("latest".to_string(), |v| v.to_string())
+            );
             for (label, key_role) in [
                 ("authorized", KeyRole::Authorized),
                 ("authentication", KeyRole::Authentication),
@@ -183,10 +289,18 @@ fn cmd_export(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let entry = resolve_target(store, target)?;
     let key_role: KeyRole = role.into();
+    let visibility = if private { "private" } else { "public" };
+    debug!(
+        "exporting {} {} key to {}",
+        key_role.file_stem(),
+        visibility,
+        out.display()
+    );
     if private {
         entry.export_private_key(key_role, version, &out)?;
     } else {
         entry.export_public_key(key_role, version, &out)?;
     }
+    debug!("exported to {}", out.display());
     Ok(())
 }
