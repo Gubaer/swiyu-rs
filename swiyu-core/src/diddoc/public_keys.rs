@@ -78,7 +78,7 @@ impl ECKey {
     /// # See also
     ///
     /// [`ECKey::with_kid`] to set the key ID after construction.
-    pub fn from_p256_coordinates(x_bytes: &[u8; 32], y_bytes: &[u8; 32]) -> Self {
+    pub fn from_p256_coordinates(x_bytes: &[u8], y_bytes: &[u8]) -> Self {
         use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
         Self::new(
             "P-256".into(),
@@ -175,6 +175,18 @@ impl OKPKey {
             alg: None,
             kid: None,
         }
+    }
+
+    /// Creates an Ed25519 OKP public key from the raw 32-byte key material.
+    ///
+    /// `key_bytes` are the compressed public key bytes as returned by
+    /// `ed25519_dalek::VerifyingKey::as_bytes()`. The value is base64url-encoded
+    /// without padding per [RFC 8037 §2][rfc8037].
+    ///
+    /// [rfc8037]: https://www.rfc-editor.org/rfc/rfc8037#section-2
+    pub fn from_ed25519_bytes(key_bytes: &[u8; 32]) -> Self {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        Self::new("Ed25519".into(), URL_SAFE_NO_PAD.encode(key_bytes))
     }
 
     fn try_from_json(obj: &Map<String, Value>) -> DIDDocResult<Self> {

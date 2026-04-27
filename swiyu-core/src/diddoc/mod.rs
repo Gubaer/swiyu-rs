@@ -152,6 +152,36 @@ impl DIDDoc {
         }
     }
 
+    /// Replaces the JSON-LD context. The default is `["https://www.w3.org/ns/did/v1"]`.
+    pub fn with_context(mut self, context: Value) -> Self {
+        self.context = context;
+        self
+    }
+
+    /// Appends a verification method to the `verificationMethod` array.
+    pub fn add_verification_method(mut self, vm: VerificationMethod) -> Self {
+        self.verification_method.push(vm);
+        self
+    }
+
+    /// Appends an entry to the `authentication` array.
+    pub fn add_authentication(mut self, r: VerificationMethodOrRef) -> Self {
+        self.authentication.push(r);
+        self
+    }
+
+    /// Appends an entry to the `assertionMethod` array.
+    pub fn add_assertion_method(mut self, r: VerificationMethodOrRef) -> Self {
+        self.assertion_method.push(r);
+        self
+    }
+
+    /// Appends an entry to the `capabilityInvocation` array.
+    pub fn add_capability_invocation(mut self, r: VerificationMethodOrRef) -> Self {
+        self.capability_invocation.push(r);
+        self
+    }
+
     /// Parses a DIDDoc from an already-parsed JSON-LD value.
     ///
     /// Expects the JSON-LD representation described in

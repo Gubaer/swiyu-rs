@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use p256::EncodedPoint;
 use serde_json::{Value, json};
 use tracing::debug;
 
 use swiyu_core::did::DID;
-use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
+use swiyu_core::diddoc::public_keys::{
+    ECKey, OKPKey, PublicKey, PublicKeyJWK, ed25519_verifying_key_to_multikey,
+};
+use swiyu_core::diddoc::{DIDDoc, VerificationMethod, VerificationMethodOrRef};
 use swiyu_core::didlog::scid::derive_from_genesis_entry;
 use swiyu_core::didlog::{
     DIDDocState, DIDLogEntry, LogEntryFormat, LogParameters, eddsa_jcs_2022_hash,
@@ -313,61 +313,50 @@ fn build_genesis_doc(did: &str, staged: &StagedKeys) -> Value {
     let auth_vm_id = format!("{did}#authentication-key-01");
     let assert_vm_id = format!("{did}#assertion-key-01");
 
-    let authorized_jwk = okp_jwk_for_ed25519(staged.authorized_verifying_key().as_bytes());
-    let auth_jwk = ec_jwk_for_p256(
-        staged
-            .authentication_verifying_key()
-            .to_encoded_point(false),
-    );
-    let assert_jwk = ec_jwk_for_p256(staged.assertion_verifying_key().to_encoded_point(false));
+    let auth_point = staged
+        .authentication_verifying_key()
+        .to_encoded_point(false);
+    let assert_point = staged.assertion_verifying_key().to_encoded_point(false);
 
-    json!({
-        "@context": [
+    let authorized_key = PublicKey::Jwk(Box::new(PublicKeyJWK::OKP(OKPKey::from_ed25519_bytes(
+        staged.authorized_verifying_key().as_bytes(),
+    ))));
+    let auth_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(ECKey::from_p256_coordinates(
+        auth_point.x().expect("uncompressed point has x").as_ref(),
+        auth_point.y().expect("uncompressed point has y").as_ref(),
+    ))));
+    let assert_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(ECKey::from_p256_coordinates(
+        assert_point.x().expect("uncompressed point has x").as_ref(),
+        assert_point.y().expect("uncompressed point has y").as_ref(),
+    ))));
+
+    DIDDoc::new(did.to_string())
+        .with_context(json!([
             "https://www.w3.org/ns/did/v1",
             "https://w3id.org/security/suites/jws-2020/v1"
-        ],
-        "id": did,
-        "verificationMethod": [
-            {
-                "id": authorized_vm_id,
-                "type": "JsonWebKey2020",
-                "controller": did,
-                "publicKeyJwk": authorized_jwk
-            },
-            {
-                "id": auth_vm_id,
-                "type": "JsonWebKey2020",
-                "controller": did,
-                "publicKeyJwk": auth_jwk
-            },
-            {
-                "id": assert_vm_id,
-                "type": "JsonWebKey2020",
-                "controller": did,
-                "publicKeyJwk": assert_jwk
-            }
-        ],
-        "authentication": [auth_vm_id],
-        "assertionMethod": [assert_vm_id],
-        "capabilityInvocation": [authorized_vm_id]
-    })
-}
-
-fn okp_jwk_for_ed25519(key_bytes: &[u8; 32]) -> Value {
-    json!({
-        "kty": "OKP",
-        "crv": "Ed25519",
-        "x": URL_SAFE_NO_PAD.encode(key_bytes)
-    })
-}
-
-fn ec_jwk_for_p256(point: EncodedPoint) -> Value {
-    json!({
-        "kty": "EC",
-        "crv": "P-256",
-        "x": URL_SAFE_NO_PAD.encode(point.x().expect("uncompressed point has x")),
-        "y": URL_SAFE_NO_PAD.encode(point.y().expect("uncompressed point has y"))
-    })
+        ]))
+        .add_verification_method(VerificationMethod::new(
+            authorized_vm_id.clone(),
+            "JsonWebKey2020".into(),
+            did.to_string(),
+            authorized_key,
+        ))
+        .add_verification_method(VerificationMethod::new(
+            auth_vm_id.clone(),
+            "JsonWebKey2020".into(),
+            did.to_string(),
+            auth_key,
+        ))
+        .add_verification_method(VerificationMethod::new(
+            assert_vm_id.clone(),
+            "JsonWebKey2020".into(),
+            did.to_string(),
+            assert_key,
+        ))
+        .add_authentication(VerificationMethodOrRef::Reference(auth_vm_id))
+        .add_assertion_method(VerificationMethodOrRef::Reference(assert_vm_id))
+        .add_capability_invocation(VerificationMethodOrRef::Reference(authorized_vm_id))
+        .to_jsonld()
 }
 
 fn build_proof(staged: &StagedKeys, entry: &Value, did_str: &str, now: &str) -> Value {
