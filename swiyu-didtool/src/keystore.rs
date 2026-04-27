@@ -116,19 +116,20 @@ impl StagedKeys {
         self.authorized_signing.sign(message).to_bytes()
     }
 
-    /// The EdDSA public key for the `authorized` role (signs DID log entries).
-    pub fn authorized_verifying_key(&self) -> &Ed25519VerifyingKey {
-        &self.authorized_verifying
+    /// Raw 32-byte Ed25519 public key for the `authorized` role (signs DID log entries).
+    pub fn authorized_key_bytes(&self) -> &[u8; 32] {
+        self.authorized_verifying.as_bytes()
     }
 
-    /// The ECDSA public key for the `authentication` role.
-    pub fn authentication_verifying_key(&self) -> &EcdsaVerifyingKey {
-        &self.authentication_verifying
+    /// Uncompressed P-256 (x, y) coordinates of the `authentication` public key.
+    pub fn authentication_key_coords(&self) -> ([u8; 32], [u8; 32]) {
+        p256_coords(&self.authentication_verifying)
     }
 
-    /// The ECDSA public key for the `assertion` role (signs verifiable credentials).
-    pub fn assertion_verifying_key(&self) -> &EcdsaVerifyingKey {
-        &self.assertion_verifying
+    /// Uncompressed P-256 (x, y) coordinates of the `assertion` public key
+    /// (signs verifiable credentials).
+    pub fn assertion_key_coords(&self) -> ([u8; 32], [u8; 32]) {
+        p256_coords(&self.assertion_verifying)
     }
 }
 
@@ -457,6 +458,13 @@ fn did_to_hash(did: &str) -> String {
 
 fn home_dir() -> Option<PathBuf> {
     dirs::home_dir()
+}
+
+fn p256_coords(key: &EcdsaVerifyingKey) -> ([u8; 32], [u8; 32]) {
+    let point = key.to_encoded_point(false);
+    let x: [u8; 32] = (*point.x().expect("uncompressed point has x")).into();
+    let y: [u8; 32] = (*point.y().expect("uncompressed point has y")).into();
+    (x, y)
 }
 
 #[cfg(test)]

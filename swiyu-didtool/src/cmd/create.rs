@@ -87,8 +87,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
 
     // --- assemble key pairs ---
     let staged = prepare_keys(&args)?;
-    let authorized_multikey =
-        ed25519_verifying_key_to_multikey(staged.authorized_verifying_key().as_bytes());
+    let authorized_multikey = ed25519_verifying_key_to_multikey(staged.authorized_key_bytes());
     debug!("authorized multikey: {}", authorized_multikey);
 
     // --- placeholder DID (scid = None → displays as {SCID}) ---
@@ -313,21 +312,17 @@ fn build_genesis_doc(did: &str, staged: &StagedKeys) -> Value {
     let auth_vm_id = format!("{did}#authentication-key-01");
     let assert_vm_id = format!("{did}#assertion-key-01");
 
-    let auth_point = staged
-        .authentication_verifying_key()
-        .to_encoded_point(false);
-    let assert_point = staged.assertion_verifying_key().to_encoded_point(false);
+    let (auth_x, auth_y) = staged.authentication_key_coords();
+    let (assert_x, assert_y) = staged.assertion_key_coords();
 
     let authorized_key = PublicKey::Jwk(Box::new(PublicKeyJWK::OKP(OKPKey::from_ed25519_bytes(
-        staged.authorized_verifying_key().as_bytes(),
+        staged.authorized_key_bytes(),
     ))));
     let auth_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(ECKey::from_p256_coordinates(
-        auth_point.x().expect("uncompressed point has x").as_ref(),
-        auth_point.y().expect("uncompressed point has y").as_ref(),
+        &auth_x, &auth_y,
     ))));
     let assert_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(ECKey::from_p256_coordinates(
-        assert_point.x().expect("uncompressed point has x").as_ref(),
-        assert_point.y().expect("uncompressed point has y").as_ref(),
+        &assert_x, &assert_y,
     ))));
 
     DIDDoc::new(did.to_string())
