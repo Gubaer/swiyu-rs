@@ -46,10 +46,7 @@ pub fn write_private_key_ecdsa(key: &EcdsaSigningKey, path: &Path) -> CryptoResu
     let pem = key
         .to_pkcs8_pem(LineEnding::LF)
         .map_err(|e| CryptoError::InvalidKey(e.to_string()))?;
-    std::fs::write(path, pem.as_bytes())?;
-    #[cfg(unix)]
-    set_private_key_permissions(path)?;
-    Ok(())
+    write_private_key_file(path, pem.as_bytes())
 }
 
 /// Reads an ECDSA private key from a PKCS#8 PEM file.
@@ -80,10 +77,7 @@ pub fn write_private_key_eddsa(key: &Ed25519SigningKey, path: &Path) -> CryptoRe
     let pem = key
         .to_pkcs8_pem(LineEnding::LF)
         .map_err(|e| CryptoError::InvalidKey(e.to_string()))?;
-    std::fs::write(path, pem.as_bytes())?;
-    #[cfg(unix)]
-    set_private_key_permissions(path)?;
-    Ok(())
+    write_private_key_file(path, pem.as_bytes())
 }
 
 /// Reads an EdDSA private key from a PKCS#8 PEM file.
@@ -108,10 +102,26 @@ pub fn read_public_key_eddsa(path: &Path) -> CryptoResult<Ed25519VerifyingKey> {
         .map_err(|e| CryptoError::InvalidKey(e.to_string()))
 }
 
-#[cfg(unix)]
-fn set_private_key_permissions(path: &Path) -> CryptoResult<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+/// Creates `path` and writes `contents` to it, ensuring the file is never visible with
+/// permissions broader than 0600. On Unix the file is opened with mode 0600 at creation
+/// time, avoiding the race between write and a subsequent chmod.
+fn write_private_key_file(path: &Path, contents: &[u8]) -> CryptoResult<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?
+            .write_all(contents)?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, contents)?;
+    }
     Ok(())
 }
 
