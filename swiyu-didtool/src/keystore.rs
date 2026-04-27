@@ -24,6 +24,7 @@ use tracing::debug;
 
 use ed25519_dalek::VerifyingKey as Ed25519VerifyingKey;
 use p256::ecdsa::VerifyingKey as EcdsaVerifyingKey;
+use zeroize::ZeroizeOnDrop;
 
 use crate::crypto::{
     CryptoError, generate_ecdsa_key_pair, generate_eddsa_key_pair, write_private_key_ecdsa,
@@ -76,12 +77,16 @@ impl KeyRole {
 /// The caller uses the public key accessors to build the initial DID document, derives the
 /// SCID, constructs the full DID, and then passes this value to [`KeyStore::commit`] to write
 /// everything to disk.
+#[derive(ZeroizeOnDrop)]
 pub struct StagedKeys {
     authorized_signing: ed25519_dalek::SigningKey,
+    #[zeroize(skip)]
     authorized_verifying: Ed25519VerifyingKey,
     authentication_signing: p256::ecdsa::SigningKey,
+    #[zeroize(skip)]
     authentication_verifying: EcdsaVerifyingKey,
     assertion_signing: p256::ecdsa::SigningKey,
+    #[zeroize(skip)]
     assertion_verifying: EcdsaVerifyingKey,
 }
 
