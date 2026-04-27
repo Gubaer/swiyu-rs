@@ -51,7 +51,7 @@ pub fn write_private_key_ecdsa(key: &EcdsaSigningKey, path: &Path) -> CryptoResu
 
 /// Reads an ECDSA private key from a PKCS#8 PEM file.
 pub fn read_private_key_ecdsa(path: &Path) -> CryptoResult<EcdsaSigningKey> {
-    let pem = std::fs::read_to_string(path)?;
+    let pem = zeroize::Zeroizing::new(std::fs::read_to_string(path)?);
     EcdsaSigningKey::from_pkcs8_pem(&pem).map_err(|e| CryptoError::InvalidKey(e.to_string()))
 }
 
@@ -82,7 +82,7 @@ pub fn write_private_key_eddsa(key: &Ed25519SigningKey, path: &Path) -> CryptoRe
 
 /// Reads an EdDSA private key from a PKCS#8 PEM file.
 pub fn read_private_key_eddsa(path: &Path) -> CryptoResult<Ed25519SigningKey> {
-    let pem = std::fs::read_to_string(path)?;
+    let pem = zeroize::Zeroizing::new(std::fs::read_to_string(path)?);
     Ed25519SigningKey::from_pkcs8_pem(&pem).map_err(|e| CryptoError::InvalidKey(e.to_string()))
 }
 
@@ -105,7 +105,7 @@ pub fn read_public_key_eddsa(path: &Path) -> CryptoResult<Ed25519VerifyingKey> {
 /// Creates `path` and writes `contents` to it, ensuring the file is never visible with
 /// permissions broader than 0600. On Unix the file is opened with mode 0600 at creation
 /// time, avoiding the race between write and a subsequent chmod.
-fn write_private_key_file(path: &Path, contents: &[u8]) -> CryptoResult<()> {
+pub(crate) fn write_private_key_file(path: &Path, contents: &[u8]) -> CryptoResult<()> {
     #[cfg(unix)]
     {
         use std::io::Write;
@@ -120,6 +120,10 @@ fn write_private_key_file(path: &Path, contents: &[u8]) -> CryptoResult<()> {
     }
     #[cfg(not(unix))]
     {
+        // Windows ACL restriction is not implemented. Private key files are written
+        // with default permissions. On shared Windows systems, ensure the user profile
+        // directory (~\AppData) is not accessible to other local accounts, which is
+        // the default on modern Windows.
         std::fs::write(path, contents)?;
     }
     Ok(())

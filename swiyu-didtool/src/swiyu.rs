@@ -2,8 +2,8 @@
 pub enum SwiyuError {
     #[error("SWIYU_ACCESS_TOKEN is not set")]
     AccessTokenMissing,
-    #[error("registry API error: {0} {1}")]
-    ApiError(u16, String),
+    #[error("registry API error: HTTP {0}")]
+    ApiError(u16),
     #[error("registry response did not contain identifierRegistryUrl")]
     ResponseInvalid,
     #[error("registry request failed: {0}")]
@@ -21,8 +21,9 @@ pub enum SwiyuError {
 /// `SWIYU_ACCESS_TOKEN` must be set in the environment; the function returns
 /// [`SwiyuError::AccessTokenMissing`] if it is absent.
 pub fn allocate_did_url(partner_id: String, registry_url: String) -> Result<String, SwiyuError> {
-    let access_token =
-        std::env::var("SWIYU_ACCESS_TOKEN").map_err(|_| SwiyuError::AccessTokenMissing)?;
+    let access_token: zeroize::Zeroizing<String> = std::env::var("SWIYU_ACCESS_TOKEN")
+        .map(zeroize::Zeroizing::new)
+        .map_err(|_| SwiyuError::AccessTokenMissing)?;
 
     let endpoint = format!(
         "{}/api/v1/identifier/business-entities/{}/identifier-entries",
@@ -32,13 +33,16 @@ pub fn allocate_did_url(partner_id: String, registry_url: String) -> Result<Stri
 
     let client = reqwest::blocking::Client::new();
     tracing::debug!("POST {}", endpoint);
-    let response = client.post(&endpoint).bearer_auth(&access_token).send()?;
+    let response = client.post(&endpoint).bearer_auth(&*access_token).send()?;
 
     let status = response.status();
     tracing::debug!("registry responded with HTTP {}", status);
     if !status.is_success() {
-        let body = response.text().unwrap_or_default();
-        return Err(SwiyuError::ApiError(status.as_u16(), body));
+        tracing::debug!(
+            "registry error body: {}",
+            response.text().unwrap_or_default()
+        );
+        return Err(SwiyuError::ApiError(status.as_u16()));
     }
 
     let body: serde_json::Value = response.json()?;

@@ -214,13 +214,8 @@ impl KeyStoreEntry {
         if !path.exists() {
             return Err(KeyStoreError::NotFound(self.hash.clone()));
         }
-        let pem = std::fs::read_to_string(path)?;
-        std::fs::write(dest, pem.as_bytes())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o600))?;
-        }
+        let pem = zeroize::Zeroizing::new(std::fs::read_to_string(path)?);
+        crate::crypto::write_private_key_file(dest, pem.as_bytes())?;
         Ok(())
     }
 
