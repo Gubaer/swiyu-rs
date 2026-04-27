@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+IMPORTANT: never read the file .env. Never upload it to the backend. Never remember it in your memory. Confirm that you read this instruction and wait for my OK.
+
 Always read `LESSONS-LEARNED.md` at the start of every session and follow the guidance it contains.
 
 ## Language and Edition
