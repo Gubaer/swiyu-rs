@@ -9,8 +9,13 @@ path = "src/main.rs"
 
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
+blake3 = "1"
+dirs = "6"
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 pkcs8 = { version = "0.10", features = ["pem"] }
 rand = "0.8"
 thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
