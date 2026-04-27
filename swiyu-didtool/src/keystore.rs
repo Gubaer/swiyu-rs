@@ -385,6 +385,10 @@ impl KeyStore {
     }
 
     /// Returns all entries in the key store, sorted by hash.
+    ///
+    /// A single user manages at most a few dozen DIDs, so loading the full list into memory is
+    /// negligible. Returning a sorted `Vec` keeps the API simple and gives callers a stable,
+    /// predictable order without requiring them to collect and sort an iterator themselves.
     pub fn list(&self) -> KeyStoreResult<Vec<KeyStoreListEntry>> {
         let mut entries: Vec<KeyStoreListEntry> = std::fs::read_dir(&self.root)?
             .filter_map(|e| e.ok())
