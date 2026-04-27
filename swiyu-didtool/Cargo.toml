@@ -9,14 +9,21 @@ path = "src/main.rs"
 
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
+base64 = { version = "0.22", features = ["alloc"] }
 blake3 = "1"
+bs58 = "0.5"
+chrono = { version = "0.4", features = ["clock"] }
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 pkcs8 = { version = "0.10", features = ["pem"] }
 rand = "0.8"
+serde_json = "1"
+serde_jcs = "0.2"
 thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
