@@ -38,29 +38,31 @@ Lists all entries in the key store, one per line, sorted by hash:
 
 Two-column output (hash, DID separated by two spaces) for easy `grep`/`awk` use.
 
-### `didtool keystore show <hash|did> [--role authorized|authentication|assertion] [--version <n>]`
+### `didtool keystore show --did <did-or-hash> [--role authorized|authentication|assertion] [--version <n>]`
 
 Displays public key(s) to stdout in PEM format.
 
+- `--did <did-or-hash>` is required: accepts either the full DID string or its 12-character
+  BLAKE3 hash.
 - Without `--role`: displays all three public keys for the entry, each preceded by a comment
   line identifying the role (e.g. `# authorized`).
 - With `--role`: displays only the public key for that role.
 - `--version <n>`: selects a specific snapshot; defaults to the latest.
-- `<hash|did>`: accepts either the 12-character BLAKE3 hash or the full DID string.
 
 Private keys are never shown on stdout — use `export` for those.
 
-### `didtool keystore export <hash|did> --role authorized|authentication|assertion --out <file> [--private] [--version <n>]`
+### `didtool keystore export --did <did-or-hash> --role authorized|authentication|assertion --out <file> [--private] [--version <n>]`
 
 Writes a single key to `--out` in PEM format.
 
+- `--did <did-or-hash>` is required: accepts either the full DID string or its 12-character
+  BLAKE3 hash.
 - `--role` is required — one key is exported at a time.
 - Without `--private`: exports the public key.
 - `--private`: exports the private key. The explicit flag makes the intent clear and auditable
   in shell history.
 - `--version <n>`: selects a specific snapshot; defaults to the latest.
 - `--out <file>`: path to write the PEM file; required.
-- `<hash|did>`: accepts either the 12-character BLAKE3 hash or the full DID string.
 
 ## `didtool log`
 

@@ -227,8 +227,9 @@ enum KeystoreCommand {
     List,
     /// Display public key(s) for an entry.
     Show {
-        /// 12-character BLAKE3 hash or full DID string.
-        target: String,
+        /// Full DID string or 12-character BLAKE3 hash.
+        #[arg(long, required = true)]
+        did: String,
         /// Show only the key for this role; omit to show all three.
         #[arg(long)]
         role: Option<Role>,
@@ -238,8 +239,9 @@ enum KeystoreCommand {
     },
     /// Export a key to a file in PEM format.
     Export {
-        /// 12-character BLAKE3 hash or full DID string.
-        target: String,
+        /// Full DID string or 12-character BLAKE3 hash.
+        #[arg(long, required = true)]
+        did: String,
         /// The key role to export.
         #[arg(long, required = true)]
         role: Role,
@@ -340,18 +342,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| e.into()),
         Command::Keystore { command } => match command {
             KeystoreCommand::List => cmd_list(&store),
-            KeystoreCommand::Show {
-                target,
-                role,
-                version,
-            } => cmd_show(&store, &target, role, version),
+            KeystoreCommand::Show { did, role, version } => cmd_show(&store, &did, role, version),
             KeystoreCommand::Export {
-                target,
+                did,
                 role,
                 out,
                 private,
                 version,
-            } => cmd_export(&store, &target, role, out, private, version),
+            } => cmd_export(&store, &did, role, out, private, version),
         },
         Command::Log { command } => match command {
             LogCommand::List { did, input } => {
