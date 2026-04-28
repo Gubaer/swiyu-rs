@@ -222,7 +222,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
 }
 
 /// Extracts the trailing path segment of a DID (the SWIYU registry's `<uuid>`).
-fn extract_registry_identifier(did: &DID) -> Option<String> {
+pub(super) fn extract_registry_identifier(did: &DID) -> Option<String> {
     did.path()
         .and_then(|p| p.rsplit(':').next())
         .filter(|s| !s.is_empty())
@@ -388,7 +388,7 @@ fn build_did_doc(did: &str, staged: &StagedKeys) -> Value {
         .to_jsonld()
 }
 
-fn build_proof(
+pub(super) fn build_proof(
     signer: &ed25519_dalek::SigningKey,
     document: &Value,
     authorized_multikey: &str,
@@ -415,7 +415,7 @@ fn build_proof(
     Value::Object(proof)
 }
 
-fn compute_version_time(prev_version_time: &str) -> String {
+pub(super) fn compute_version_time(prev_version_time: &str) -> String {
     // Backdate by 5 s to absorb client clock skew, but never earlier than (prev + 1 s).
     let now = chrono::Utc::now() - chrono::Duration::seconds(5);
     let prev = chrono::DateTime::parse_from_rfc3339(prev_version_time)
@@ -434,7 +434,7 @@ fn compute_version_time(prev_version_time: &str) -> String {
 // ---------------------------------------------------------------------------
 // Writing
 
-fn build_updated_log(loaded: &LoadedLog, new_line: &str) -> String {
+pub(super) fn build_updated_log(loaded: &LoadedLog, new_line: &str) -> String {
     let mut updated = String::new();
     for line in &loaded.raw_lines {
         updated.push_str(line);
@@ -466,23 +466,21 @@ fn write_log(
     let source = source_path
         .clone()
         .ok_or(UpdateError::OutRequiredForRemote)?;
-    write_atomic(&source, content)?;
+    write_atomic(&source, content).map_err(|source_err| UpdateError::WriteOutput {
+        path: source.clone(),
+        source: source_err,
+    })?;
     Ok(source)
 }
 
-fn write_atomic(target: &Path, content: &str) -> Result<(), UpdateError> {
+/// Writes `content` to `target` via a sibling `.tmp` file followed by an atomic rename, so a
+/// crash mid-write cannot corrupt an existing file at `target`.
+pub(super) fn write_atomic(target: &Path, content: &str) -> std::io::Result<()> {
     let mut tmp_name = target.as_os_str().to_os_string();
     tmp_name.push(".tmp");
     let tmp = PathBuf::from(tmp_name);
-    fs::write(&tmp, content).map_err(|source| UpdateError::WriteOutput {
-        path: tmp.clone(),
-        source,
-    })?;
-    fs::rename(&tmp, target).map_err(|source| UpdateError::WriteOutput {
-        path: target.to_path_buf(),
-        source,
-    })?;
-    Ok(())
+    fs::write(&tmp, content)?;
+    fs::rename(&tmp, target)
 }
 
 #[cfg(test)]

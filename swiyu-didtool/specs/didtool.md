@@ -389,6 +389,70 @@ If the new entry has been written locally but a future publish step fails, the l
 - **Non-key DID-document updates** (services, additional contexts, etc.) are not supported.
   `update` only rotates the three key roles.
 
+---
+
+## `didtool deactivate`
+
+```
+didtool deactivate [--did <did-or-hash> | --input <path>]
+                   [--out <file>] [--force]
+                   [--no-publish]
+                   [--partner-id <id>] [--registry-url <url>]
+```
+
+Marks an existing DID as deactivated by appending a final entry to its log. Once deactivated,
+the DID can still be resolved (its log is still served) but no further entries are valid —
+resolvers and registries should treat it as terminated.
+
+Deactivation is one-way. The command refuses to operate on a DID whose latest entry already
+has `parameters.deactivated == true`.
+
+### Source, output, publish
+
+Identical to `didtool update`:
+
+- `--did <did-or-hash>` / `--input <path>` (mutually exclusive; default `./did.jsonl`).
+- `--out <file>` writes the full log; without it, the source file is updated atomically via
+  temp-file-and-rename. `--force` allows `--out` to overwrite an existing file.
+- `--no-publish` skips the registry PUT. With publish enabled (the default),
+  `--partner-id` / `SWIYU_PARTNER_ID` and `--registry-url` / `SWIYU_IDENTIFIER_REGISTRY_URL`
+  are required.
+
+There are no key-rotation flags. Deactivation does not rotate any keys.
+
+### What `deactivate` does internally
+
+1. Loads the existing DID log (file or HTTPS).
+2. Refuses if the latest entry's `parameters.deactivated` is already `true`.
+3. Looks up the current authorized key pair in the key store by the log's DID. Required to
+   sign the new entry.
+4. Constructs the new DID log entry:
+   - `versionId` placeholder = the previous entry's `versionId` (substituted for the
+     `entryHash` computation).
+   - `versionTime` = `max(now − 5s, previous_versionTime + 1s)`, ISO-8601 UTC.
+   - `parameters` contains exactly two fields: `deactivated: true` and `updateKeys: []`. No
+     other parameter fields are included.
+   - `state.value` is the previous entry's DID document, **unchanged** — same keys, same
+     contexts, same id. Deactivation is a state change, not a re-key.
+   - Computes `entryHash` over the 4-element entry (proof slot excluded), JCS-canonicalised;
+     final on-disk `versionId` is `"<n+1>-<entryHash>"`.
+   - Signs with the current authorized key; `proof.challenge` is the new `versionId`.
+5. Writes the resulting log (atomic-rename to the source path, or to `--out` if given).
+6. (Unless `--no-publish`) PUTs the full updated log to the SWIYU registry, mirroring
+   `update`. On failure the local files are kept; the error message instructs the user to
+   retry manually.
+
+The key store is **not** advanced to a new version: deactivation does not change any key
+material, so no new snapshot is needed.
+
+### Failure semantics
+
+If the key store entry for the DID is missing, the command aborts before any file is
+written — the deactivation entry cannot be signed without it.
+
+If the local write succeeded but the registry PUT fails, the local file is kept; the user
+can retry the upload manually with `curl` against the same `identifier-entries/<uuid>` path.
+
 # Output conventions
 
 - Normal output (key material, lists) goes to **stdout**.

@@ -113,6 +113,30 @@ enum Command {
         #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
         registry_url: Option<String>,
     },
+    /// Mark a DID as deactivated by appending a final entry to its log.
+    Deactivate {
+        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
+        #[arg(long, conflicts_with = "input")]
+        did: Option<String>,
+        /// Local DID log file (defaults to `did.jsonl`).
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Write the full updated log to this file (default: append in place to the source).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Allow `--out` to overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+        /// Skip the registry update; produce only the local files.
+        #[arg(long)]
+        no_publish: bool,
+        /// SWIYU business partner ID (overrides SWIYU_PARTNER_ID).
+        #[arg(long, env = "SWIYU_PARTNER_ID", value_parser = parse_partner_id)]
+        partner_id: Option<String>,
+        /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
+        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
+        registry_url: Option<String>,
+    },
 }
 
 /// Role names for `didtool update --rotate`.
@@ -395,6 +419,27 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 authorized_key,
                 authentication_key,
                 assertion_key,
+                out,
+                force,
+                no_publish,
+                partner_id,
+                registry_url,
+            },
+        )
+        .map_err(|e| e.into()),
+        Command::Deactivate {
+            did,
+            input,
+            out,
+            force,
+            no_publish,
+            partner_id,
+            registry_url,
+        } => cmd::deactivate::cmd_deactivate(
+            &store,
+            cmd::deactivate::DeactivateArgs {
+                did,
+                input,
                 out,
                 force,
                 no_publish,
