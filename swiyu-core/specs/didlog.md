@@ -211,3 +211,104 @@ Provide a struct for a SCID with an `impl` block:
 - `try_from_string` method and matching `TryFrom` implementation
 - `to_string` method
 - Getters for the hash algorithm, hash length, and raw hash value
+
+---
+
+# Lessons Learned
+
+Notes captured while making `didtool create --swiyu --format tdw` round-trip
+through the SWIYU integration registry. They focus on details that are easy to
+get wrong from a casual read of the did:tdw 0.3 spec.
+
+## Shape of a genesis log entry
+
+A did:tdw 0.3 genesis log entry is a 5-element JSON array:
+
+```
+[ versionId, versionTime, parameters, state, proof ]
+```
+
+- `versionId` — the string `"1-<entryHash>"` (see below; `<entryHash>` is *not*
+  the SCID).
+- `versionTime` — ISO-8601 UTC, **strictly in the past**. The registry rejects
+  entries whose `versionTime` is not strictly less than its own clock; backdate
+  by a few seconds to absorb skew.
+- `parameters` — object with `method`, `scid`, `updateKeys`, `portable`, …
+- `state` — `{"value": <DID document>}` for did:tdw. (did:webvh 1.0 stores the
+  DID document directly under `state`, without the `value` envelope — different
+  method, different shape.)
+- `proof` — array of one DataIntegrityProof.
+
+## Two distinct hashes: SCID and entryHash
+
+The genesis entry uses **two different** base58btc-multihash-SHA256 values,
+both computed over the **proof-less, 4-element** form of the entry (the proof
+slot is excluded entirely — *not* an empty array `[]`):
+
+1. **SCID** — hash of the *preliminary* entry, where:
+   - `versionId` is the literal placeholder `"{SCID}"` (not `"1-{SCID}"`),
+   - every SCID-bearing position (`parameters.scid`, the DID `id`, controllers,
+     verification-method `id`s, …) is `"{SCID}"`,
+   - the proof slot is omitted (4 elements).
+
+2. **entryHash** — hash of the same 4-element entry after substituting the
+   actual SCID everywhere, *except* `versionId`, which becomes the **bare SCID
+   with no `"1-"` prefix**. The spec rule: "set versionId to the previous
+   entry's versionId; for the genesis entry, set it to the SCID."
+
+Both hashes are computed as
+`base58btc(multihash(SHA-256(JCS(entry)), 0x12))`,
+using JCS canonicalisation (RFC 8785).
+
+## versionId
+
+After entryHash is known, set the on-disk
+`versionId = "1-" + entryHash`. The proof's `challenge` is this final value.
+
+## Data Integrity Proof
+
+- `cryptosuite: "eddsa-jcs-2022"`, signed by the authorized Ed25519 key.
+- `verificationMethod` references the key as `did:key:<multikey>#<multikey>`.
+- `proofPurpose: "authentication"` for did:tdw (the DID Toolbox / SWIYU
+  convention; did:webvh 1.0 uses `"assertionMethod"`).
+- `challenge` is the final `versionId` (`"1-<entryHash>"`).
+- Signed bytes are `SHA256(JCS(proofConfig)) ‖ SHA256(JCS(documentToSign))`.
+  **DID Toolbox quirk:** `documentToSign` is only the inner DID document —
+  `entry[3]["value"]` for did:tdw — not the whole log entry. The Rust port
+  mirrors this to match Toolbox-produced signatures.
+- `proofValue` is `"z" + base58btc(signature)`.
+
+## SWIYU registry interaction
+
+- `POST /api/v1/identifier/business-entities/<partner>/identifier-entries`
+  allocates the DID space and returns an `identifierRegistryUrl`. The trailing
+  UUID becomes part of the DID's path component.
+- `PUT /api/v1/identifier/business-entities/<partner>/identifier-entries/<uuid>`
+  uploads the JSONL line. Content-Type: `application/jsonl+json`. Bearer auth
+  with `SWIYU_ACCESS_TOKEN`.
+
+## Pitfalls that cost real time
+
+- **Treating SCID and entryHash as the same value.** They aren't, even for the
+  genesis entry. SCID has placeholder positions; entryHash has the real SCID
+  everywhere except `versionId` (where it's the bare SCID).
+- **Including an empty `[]` proof slot when hashing.** The proof slot must be
+  omitted from the array entirely (4 elements), not present-but-empty.
+- **Putting `"1-{SCID}"` in the preliminary `versionId`.** It must be just
+  `"{SCID}"`.
+- **Relying on `serde_json::to_string` as a JCS substitute.** With the default
+  `BTreeMap`-backed `serde_json::Map` and ASCII-only content the bytes usually
+  match JCS — but only by coincidence. Always use `serde_jcs::to_vec` for
+  hashing inputs.
+- **Using `state.value` shape for did:webvh.** That envelope is did:tdw-only;
+  did:webvh 1.0 places the DID document directly under `state` and rejects
+  entries that wrap it in `value`.
+
+## Implementation in this crate
+
+- `swiyu_core::didlog::scid::derive_scid(&Value) -> String` — preliminary-entry
+  hasher (input contract documented on the function).
+- `swiyu_core::didlog::scid::derive_entry_hash(&Value) -> String` — same
+  algorithm, different input contract (SCID substituted; `versionId` is the
+  previous entry's `versionId` or the bare SCID for genesis).
+- Both are pinned to a known-good SWIYU vector by unit tests in `scid.rs`.

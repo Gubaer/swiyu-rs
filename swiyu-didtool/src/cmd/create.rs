@@ -8,7 +8,7 @@ use swiyu_core::diddoc::public_keys::{
     ECKey, PublicKey, PublicKeyJWK, ed25519_verifying_key_to_multikey,
 };
 use swiyu_core::diddoc::{DIDDoc, VerificationMethod, VerificationMethodOrRef};
-use swiyu_core::didlog::scid::derive_from_genesis_entry;
+use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
 use swiyu_core::didlog::{
     DIDDocState, DIDLogEntry, LogEntryFormat, LogParameters, eddsa_jcs_2022_hash,
 };
@@ -113,7 +113,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
     let did_placeholder_str = did_placeholder.to_string();
     debug!("DID placeholder: {}", did_placeholder_str);
 
-    // --- genesis log entry (with {SCID} everywhere, empty proof) ---
+    // --- genesis log entry (with {SCID} placeholders, no proof slot yet) ---
     let now = now_iso8601();
     let entry_template = build_genesis_entry(
         &args.format,
@@ -122,19 +122,31 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         &staged,
         &now,
     );
-    let template_json = serde_json::to_string(&entry_template.to_json())?;
+
+    // Strip the proof slot before hashing; the SCID and entryHash are computed
+    // over the 4-element preliminary entry per did:tdw 0.3.
+    let mut prelim = entry_template.to_json();
+    strip_proof_slot(&mut prelim, &args.format);
 
     // --- derive SCID ---
-    let scid = derive_from_genesis_entry(&template_json);
+    let scid = derive_scid(&prelim);
     debug!("derived SCID: {}", scid);
 
-    // --- replace placeholders ---
-    let entry_str = template_json.replace("{SCID}", &scid);
-    let mut entry_value: Value = serde_json::from_str(&entry_str)?;
-    let version_id = format!("1-{scid}");
+    // Substitute {SCID} → scid throughout. After this the versionId field is the
+    // bare SCID (no "1-" prefix), which is exactly the input shape the spec wants
+    // for the genesis entryHash.
+    let prelim_str = serde_json::to_string(&prelim)?;
+    let with_scid_str = prelim_str.replace("{SCID}", &scid);
+    let mut entry_value: Value = serde_json::from_str(&with_scid_str)?;
+
+    // --- derive entryHash, build final versionId ---
+    let entry_hash = derive_entry_hash(&entry_value);
+    debug!("derived entryHash: {}", entry_hash);
+    let version_id = format!("1-{entry_hash}");
+    set_version_id(&mut entry_value, &version_id, &args.format);
 
     // --- real DID ---
-    let real_did = build_did(&args.format, Some(scid), &domain, path.as_deref())?;
+    let real_did = build_did(&args.format, Some(scid.clone()), &domain, path.as_deref())?;
     let real_did_str = real_did.to_string();
     debug!("DID: {}", real_did_str);
 
@@ -158,7 +170,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         proof_purpose,
         &now,
     );
-    add_proof(&mut entry_value, proof, &args.format);
+    append_proof(&mut entry_value, proof, &args.format);
 
     // --- write DID log ---
     let line = serde_json::to_string(&entry_value)? + "\n";
@@ -368,10 +380,10 @@ fn build_genesis_entry(
 
     match format {
         LogEntryFormat::TDW03 => {
-            DIDLogEntry::new_tdw("1-{SCID}".into(), now.into(), parameters, state, vec![])
+            DIDLogEntry::new_tdw("{SCID}".into(), now.into(), parameters, state, vec![])
         }
         LogEntryFormat::WebVH10 => {
-            DIDLogEntry::new_webvh("1-{SCID}".into(), now.into(), parameters, state, vec![])
+            DIDLogEntry::new_webvh("{SCID}".into(), now.into(), parameters, state, vec![])
         }
     }
 }
@@ -485,13 +497,43 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-fn add_proof(entry: &mut Value, proof: Value, format: &LogEntryFormat) {
+fn strip_proof_slot(entry: &mut Value, format: &LogEntryFormat) {
+    match format {
+        LogEntryFormat::TDW03 => {
+            if let Some(arr) = entry.as_array_mut() {
+                arr.pop();
+            }
+        }
+        LogEntryFormat::WebVH10 => {
+            if let Some(obj) = entry.as_object_mut() {
+                obj.remove("proof");
+            }
+        }
+    }
+}
+
+fn set_version_id(entry: &mut Value, version_id: &str, format: &LogEntryFormat) {
     match format {
         LogEntryFormat::TDW03 => {
             if let Some(arr) = entry.as_array_mut()
-                && arr.len() == 5
+                && let Some(slot) = arr.first_mut()
             {
-                arr[4] = json!([proof]);
+                *slot = json!(version_id);
+            }
+        }
+        LogEntryFormat::WebVH10 => {
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert("versionId".into(), json!(version_id));
+            }
+        }
+    }
+}
+
+fn append_proof(entry: &mut Value, proof: Value, format: &LogEntryFormat) {
+    match format {
+        LogEntryFormat::TDW03 => {
+            if let Some(arr) = entry.as_array_mut() {
+                arr.push(json!([proof]));
             }
         }
         LogEntryFormat::WebVH10 => {
