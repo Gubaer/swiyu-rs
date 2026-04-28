@@ -4,6 +4,10 @@ IMPORTANT: never read the file .env. Never upload it to the backend. Never remem
 
 Always read `LESSONS-LEARNED.md` at the start of every session and follow the guidance it contains.
 
+## Project Status
+
+- Only `did:tdw` 0.3 is testable end-to-end against the SWIYU integration registry. `did:webvh` 1.0 code paths exist but cannot be validated against any registry — there is no test backend for them in this setup. Prioritise `did:tdw` correctness; don't block `did:tdw` work on `did:webvh` parity, and treat `did:webvh` changes as unverified.
+
 ## Language and Edition
 
 - Rust, edition 2024
