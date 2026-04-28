@@ -77,6 +77,66 @@ enum Command {
         #[command(subcommand)]
         command: LogCommand,
     },
+    /// Append a new entry to an existing DID log, rotating one or more keys.
+    Update {
+        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
+        #[arg(long, conflicts_with = "input")]
+        did: Option<String>,
+        /// Local DID log file (defaults to `did.jsonl`).
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Generate fresh keys for the named role(s). Repeatable.
+        #[arg(long, value_enum)]
+        rotate: Vec<RotateRole>,
+        /// Existing Ed25519 private key to install as the new authorized key (PEM).
+        #[arg(long)]
+        authorized_key: Option<PathBuf>,
+        /// Existing P-256 private key to install as the new authentication key (PEM).
+        #[arg(long)]
+        authentication_key: Option<PathBuf>,
+        /// Existing P-256 private key to install as the new assertion key (PEM).
+        #[arg(long)]
+        assertion_key: Option<PathBuf>,
+        /// Write the full updated log to this file (default: append in place to the source).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Allow `--out` to overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+        /// Skip the registry update; produce only the local files.
+        #[arg(long)]
+        no_publish: bool,
+        /// SWIYU business partner ID (overrides SWIYU_PARTNER_ID).
+        #[arg(long, env = "SWIYU_PARTNER_ID", value_parser = parse_partner_id)]
+        partner_id: Option<String>,
+        /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
+        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
+        registry_url: Option<String>,
+    },
+}
+
+/// Role names for `didtool update --rotate`.
+#[derive(Clone, ValueEnum)]
+enum RotateRole {
+    /// EdDSA signing key for log-entry signatures.
+    Authorized,
+    /// P-256 key for DID authentication.
+    Authentication,
+    /// P-256 key for verifiable-credential signatures.
+    Assertion,
+    /// Shortcut for all three roles.
+    All,
+}
+
+impl From<RotateRole> for cmd::update::RotateRole {
+    fn from(r: RotateRole) -> cmd::update::RotateRole {
+        match r {
+            RotateRole::Authorized => cmd::update::RotateRole::Authorized,
+            RotateRole::Authentication => cmd::update::RotateRole::Authentication,
+            RotateRole::Assertion => cmd::update::RotateRole::Assertion,
+            RotateRole::All => cmd::update::RotateRole::All,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -314,6 +374,35 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             )
             .map_err(|e| e.into()),
         },
+        Command::Update {
+            did,
+            input,
+            rotate,
+            authorized_key,
+            authentication_key,
+            assertion_key,
+            out,
+            force,
+            no_publish,
+            partner_id,
+            registry_url,
+        } => cmd::update::cmd_update(
+            &store,
+            cmd::update::UpdateArgs {
+                did,
+                input,
+                rotate: rotate.into_iter().map(Into::into).collect(),
+                authorized_key,
+                authentication_key,
+                assertion_key,
+                out,
+                force,
+                no_publish,
+                partner_id,
+                registry_url,
+            },
+        )
+        .map_err(|e| e.into()),
     }
 }
 

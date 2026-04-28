@@ -276,6 +276,119 @@ add complexity without benefit.
 `reqwest` is used in blocking mode — there is only one HTTP call and no concurrency needed, so
 introducing an async runtime (tokio) would be unnecessary complexity for a CLI tool.
 
+---
+
+## `didtool update`
+
+```
+didtool update [--did <did-or-hash> | --input <path>]
+               [--rotate authorized | --rotate authentication | --rotate assertion | --rotate all] ...
+               [--authorized-key <pem-file>]
+               [--authentication-key <pem-file>]
+               [--assertion-key <pem-file>]
+               [--out <file>] [--force]
+               [--no-publish]
+```
+
+Appends a new entry to an existing DID log, rotating one or more keys. The new entry is signed
+by the *current* authorized key (loaded from the key store), links back to the previous entry
+via the entryHash chain, and embeds the new authentication / assertion keys in the DID
+document.
+
+At least one of `--rotate <role>`, `--authorized-key`, `--authentication-key`, or
+`--assertion-key` must be present — otherwise there is nothing to update.
+
+### Source
+
+Same selectors as `didtool log`:
+
+| Flag | Behavior |
+|---|---|
+| `--did <did-or-hash>` | Resolves to a DID (hash via key store, otherwise direct DID parse), fetches the existing log via HTTPS. |
+| `--input <path>` | Reads the existing log from a local file. |
+| _(neither)_ | Defaults to `--input ./did.jsonl`. |
+
+`--did` and `--input` are mutually exclusive.
+
+### Key rotation
+
+Two kinds of flag, freely combinable across roles but **mutually exclusive per role**:
+
+| Flag | Description |
+|---|---|
+| `--rotate <role>` | Generate a fresh key for `<role>`. The flag is repeatable; values are `authorized`, `authentication`, `assertion`, or `all` (= the three roles). Duplicate values are no-ops. |
+| `--authorized-key <pem-file>` | Import an existing Ed25519 PEM as the new authorized key. |
+| `--authentication-key <pem-file>` | Import an existing P-256 PEM as the new authentication key. |
+| `--assertion-key <pem-file>` | Import an existing P-256 PEM as the new assertion key. |
+
+Roles not addressed by either flag keep their current key — the entry still references them
+unchanged. Combining `--rotate authorized` with `--authorized-key` (etc.) on the same role is an
+error.
+
+### Output
+
+| Flag | Description |
+|---|---|
+| `--out <file>` | Write the **full updated log** to this path. |
+| `--force` | Allow `--out` to overwrite an existing file. |
+| _(no `--out`)_ | Append to the source file in place. The write is performed via a temporary file followed by an atomic rename, so a crash mid-write cannot corrupt the existing log. |
+
+### Publish
+
+| Flag | Description |
+|---|---|
+| `--no-publish` | Skip the registry update; produce only the local files. |
+
+The SWIYU registry accepts updates via the **same call used by `create`**: a `PUT` to
+`<registry-url>/api/v1/identifier/business-entities/<partner>/identifier-entries/<uuid>` with
+`Content-Type: application/jsonl+json` and the **full updated log** as the body (genesis entry
++ all subsequent updates). The registry treats it as an idempotent replace; subsequent `GET`s
+on the public DID URL serve the body byte-for-byte. The reference DID Toolbox (Java) does
+*not* publish updates of any kind — its `update` command is purely local — so this behavior
+is specific to the SWIYU registry, not the did:tdw spec.
+
+The CLI does **not yet** make this call. `--no-publish` is currently the only behavior and the
+flag is a no-op, accepted so the surface doesn't change when publish lands. Once implemented,
+omitting `--no-publish` will PUT the updated log as described above; failure semantics will
+mirror `create` (local files kept, error message instructing manual retry).
+
+### What `update` does internally
+
+1. Loads the existing DID log (from file or HTTPS).
+2. Looks up the current authorized key pair in the key store by the log's DID. If no key store
+   entry exists, fails with a clear error — the new entry cannot be signed without it.
+3. Builds the staged key set: imports or generates per the rotation flags; keeps current keys
+   for unrotated roles.
+4. Constructs the new DID log entry:
+   - `versionId` placeholder = the previous entry's `versionId` (this is the value substituted
+     for the entryHash computation).
+   - `versionTime` = `max(now − 5s, previous_versionTime + 1s)`, ISO-8601 UTC.
+   - `parameters.updateKeys` updated only if the authorized key rotated.
+   - `state.value` is the new DID document with the new authentication / assertion keys.
+   - Computes `entryHash` over the 4-element entry (proof slot excluded), JCS-canonicalised;
+     the final on-disk `versionId` is `"<n+1>-<entryHash>"`.
+   - Signs with the *previous* authorized key; `proof.challenge` is the new `versionId`.
+5. Commits the new key pairs to the key store at version `current+1`.
+6. Writes the resulting log (atomic-rename to the source path, or to `--out` if given).
+7. (Once publish is implemented) PUTs the updated log to the SWIYU registry. On failure the
+   local files are kept; the error message instructs the user to retry manually.
+
+### Failure semantics
+
+If the key store lookup fails (DID not present, current authorized key unreadable), the
+command aborts before any file is written.
+
+If the new entry has been written locally but a future publish step fails, the local files
+(DID log + new key store version) are kept, mirroring `create`.
+
+### Out of scope for this version
+
+- **Prerotation / `nextKeyHashes`.** did:tdw 0.3 supports pre-committing to a future authorized
+  key. Not implemented yet. When added, `update` will enforce that the new authorized
+  multikey hash matches any commitment recorded in the previous entry's `parameters`.
+- **Non-key DID-document updates** (services, additional contexts, etc.) are not supported.
+  `update` only rotates the three key roles.
+
 # Output conventions
 
 - Normal output (key material, lists) goes to **stdout**.

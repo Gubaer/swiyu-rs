@@ -220,6 +220,72 @@ impl KeyStoreEntry {
         Ok(())
     }
 
+    /// Loads the Ed25519 private signing key for `role` at `version` (latest if `None`).
+    pub fn load_eddsa(
+        &self,
+        role: KeyRole,
+        version: Option<u32>,
+    ) -> KeyStoreResult<ed25519_dalek::SigningKey> {
+        let path = self.key_path(self.resolve_version(version)?, role, true);
+        if !path.exists() {
+            return Err(KeyStoreError::NotFound(self.hash.clone()));
+        }
+        let pem = zeroize::Zeroizing::new(std::fs::read_to_string(path)?);
+        Ok(crate::crypto::parse_private_key_eddsa(&pem)?)
+    }
+
+    /// Loads the P-256 ECDSA private signing key for `role` at `version` (latest if `None`).
+    pub fn load_ecdsa(
+        &self,
+        role: KeyRole,
+        version: Option<u32>,
+    ) -> KeyStoreResult<p256::ecdsa::SigningKey> {
+        let path = self.key_path(self.resolve_version(version)?, role, true);
+        if !path.exists() {
+            return Err(KeyStoreError::NotFound(self.hash.clone()));
+        }
+        let pem = zeroize::Zeroizing::new(std::fs::read_to_string(path)?);
+        Ok(crate::crypto::parse_private_key_ecdsa(&pem)?)
+    }
+
+    /// Writes a new snapshot version with `staged` and returns its 1-based number.
+    ///
+    /// The next version is `latest_version() + 1`. Takes ownership of `staged` so the
+    /// in-memory private keys are dropped immediately after the files are written.
+    pub fn add_version(&self, staged: StagedKeys) -> KeyStoreResult<u32> {
+        let next = self.latest_version()? + 1;
+        let snapshot_dir = self.entry_dir.join(format!("{next:04}"));
+        std::fs::create_dir_all(&snapshot_dir)?;
+
+        write_private_key_eddsa(
+            &staged.authorized_signing,
+            &snapshot_dir.join("authorized-private.pem"),
+        )?;
+        write_public_key_eddsa(
+            &staged.authorized_verifying,
+            &snapshot_dir.join("authorized-public.pem"),
+        )?;
+        write_private_key_ecdsa(
+            &staged.authentication_signing,
+            &snapshot_dir.join("authentication-private.pem"),
+        )?;
+        write_public_key_ecdsa(
+            &staged.authentication_verifying,
+            &snapshot_dir.join("authentication-public.pem"),
+        )?;
+        write_private_key_ecdsa(
+            &staged.assertion_signing,
+            &snapshot_dir.join("assertion-private.pem"),
+        )?;
+        write_public_key_ecdsa(
+            &staged.assertion_verifying,
+            &snapshot_dir.join("assertion-public.pem"),
+        )?;
+
+        debug!("wrote new key store version: {}", snapshot_dir.display());
+        Ok(next)
+    }
+
     fn resolve_version(&self, version: Option<u32>) -> KeyStoreResult<u32> {
         match version {
             Some(v) => Ok(v),

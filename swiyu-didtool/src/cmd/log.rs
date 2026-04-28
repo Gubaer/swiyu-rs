@@ -137,12 +137,14 @@ pub fn cmd_entry(store: &KeyStore, args: EntryArgs) -> Result<(), LogError> {
 // ---------------------------------------------------------------------------
 // Loading
 
-struct LoadedLog {
-    raw_lines: Vec<String>,
-    log: DIDLog,
+pub(crate) struct LoadedLog {
+    pub(crate) raw_lines: Vec<String>,
+    pub(crate) log: DIDLog,
+    /// Local source path, if the log was read from disk. `None` when fetched via HTTPS.
+    pub(crate) source_path: Option<PathBuf>,
 }
 
-fn load_log(
+pub(crate) fn load_log(
     store: &KeyStore,
     did: Option<String>,
     input: Option<PathBuf>,
@@ -150,26 +152,31 @@ fn load_log(
     if did.is_some() && input.is_some() {
         return Err(LogError::AmbiguousSource);
     }
-    let text = match did {
+    let (text, source_path) = match did {
         Some(target) => {
             let resolved = resolve_did(store, &target)?;
             let url = resolved.log_url();
             debug!("resolved DID to log URL: {}", url);
-            fetch_log(&url)?
+            (fetch_log(&url)?, None)
         }
         None => {
             let path = input.unwrap_or_else(|| PathBuf::from(DEFAULT_INPUT));
             debug!("reading DID log from {}", path.display());
-            fs::read_to_string(&path).map_err(|source| LogError::ReadInput {
+            let text = fs::read_to_string(&path).map_err(|source| LogError::ReadInput {
                 path: path.clone(),
                 source,
-            })?
+            })?;
+            (text, Some(path))
         }
     };
     let raw_lines = collect_raw_lines(&text);
     let log = DIDLog::try_from_jsonl(&text)?;
     debug!("loaded {} log entries", log.entries().len());
-    Ok(LoadedLog { raw_lines, log })
+    Ok(LoadedLog {
+        raw_lines,
+        log,
+        source_path,
+    })
 }
 
 fn collect_raw_lines(text: &str) -> Vec<String> {
@@ -350,7 +357,7 @@ fn print_list(store: &KeyStore, log: &DIDLog) -> Result<(), LogError> {
 
 /// Returns the DID id from the most recent log entry whose state is a full document.
 /// Skips `Patch` states, falling back to earlier entries (the genesis is always `Value`).
-fn current_did(log: &DIDLog) -> Option<String> {
+pub(crate) fn current_did(log: &DIDLog) -> Option<String> {
     for entry in log.entries().iter().rev() {
         if let DIDDocState::Value(doc) = entry.did_doc_state()
             && let Some(id) = doc.get("id").and_then(|v| v.as_str())

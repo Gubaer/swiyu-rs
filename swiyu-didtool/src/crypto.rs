@@ -52,7 +52,12 @@ pub fn write_private_key_ecdsa(key: &EcdsaSigningKey, path: &Path) -> CryptoResu
 /// Reads an ECDSA private key from a PKCS#8 PEM file.
 pub fn read_private_key_ecdsa(path: &Path) -> CryptoResult<EcdsaSigningKey> {
     let pem = zeroize::Zeroizing::new(std::fs::read_to_string(path)?);
-    EcdsaSigningKey::from_pkcs8_pem(&pem).map_err(|e| CryptoError::InvalidKey(e.to_string()))
+    parse_private_key_ecdsa(&pem)
+}
+
+/// Parses an ECDSA private key from a PKCS#8 PEM string.
+pub fn parse_private_key_ecdsa(pem: &str) -> CryptoResult<EcdsaSigningKey> {
+    EcdsaSigningKey::from_pkcs8_pem(pem).map_err(|e| CryptoError::InvalidKey(e.to_string()))
 }
 
 /// Writes an ECDSA public key to a file in SPKI PEM format.
@@ -83,7 +88,12 @@ pub fn write_private_key_eddsa(key: &Ed25519SigningKey, path: &Path) -> CryptoRe
 /// Reads an EdDSA private key from a PKCS#8 PEM file.
 pub fn read_private_key_eddsa(path: &Path) -> CryptoResult<Ed25519SigningKey> {
     let pem = zeroize::Zeroizing::new(std::fs::read_to_string(path)?);
-    Ed25519SigningKey::from_pkcs8_pem(&pem).map_err(|e| CryptoError::InvalidKey(e.to_string()))
+    parse_private_key_eddsa(&pem)
+}
+
+/// Parses an EdDSA private key from a PKCS#8 PEM string.
+pub fn parse_private_key_eddsa(pem: &str) -> CryptoResult<Ed25519SigningKey> {
+    Ed25519SigningKey::from_pkcs8_pem(pem).map_err(|e| CryptoError::InvalidKey(e.to_string()))
 }
 
 /// Writes an EdDSA public key to a file in SPKI PEM format.
