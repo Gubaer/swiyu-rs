@@ -499,6 +499,16 @@ impl PublicKeyMultibase {
         Self { key }
     }
 
+    /// Creates a `PublicKeyMultibase` for an Ed25519 public key by prefixing the 32-byte
+    /// raw key with the Ed25519 multicodec identifier (`0xed 0x01`).
+    pub fn from_ed25519_bytes(key_bytes: &[u8; 32]) -> Self {
+        const MULTICODEC_ED25519: [u8; 2] = [0xed, 0x01];
+        let mut bytes = Vec::with_capacity(MULTICODEC_ED25519.len() + key_bytes.len());
+        bytes.extend_from_slice(&MULTICODEC_ED25519);
+        bytes.extend_from_slice(key_bytes);
+        Self { key: bytes }
+    }
+
     /// Parses a multibase-encoded public key string. Only the `z` prefix (base58btc) is supported.
     pub fn try_from_string(s: &str) -> DIDDocResult<Self> {
         let mut chars = s.chars();

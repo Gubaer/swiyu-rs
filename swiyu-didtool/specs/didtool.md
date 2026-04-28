@@ -167,9 +167,11 @@ didtool create --swiyu [--partner-id <id>] [--registry-url <url>] [options]
 ```
 
 Calls the SWIYU identifier registry API to allocate a new DID space, then uses the
-`identifierRegistryUrl` from the response as the DID URL. Requires `SWIYU_ACCESS_TOKEN` to be
-set in the environment — it is intentionally not accepted as a flag to keep it out of shell
-history and process listings.
+`identifierRegistryUrl` from the response as the DID URL. After the local DID log entry is
+constructed and signed, it is uploaded back to the registry via a PUT request, completing the
+registration in a single command. Use `--no-publish` to skip the upload step (e.g. for dry-run
+testing). Requires `SWIYU_ACCESS_TOKEN` to be set in the environment — it is intentionally not
+accepted as a flag to keep it out of shell history and process listings.
 
 | Flag | Env var | Description |
 |---|---|---|
@@ -177,12 +179,36 @@ history and process listings.
 | `--registry-url <url>` | `SWIYU_IDENTIFIER_REGISTRY_URL` | Base URL of the identifier registry API |
 | _(no flag)_ | `SWIYU_ACCESS_TOKEN` | Bearer token for the registry API; env var only |
 
-The API call made is:
+The API calls made are:
 
 ```
-POST <registry-url>/api/v1/identifier/business-entities/<partner-id>/identifier-entries
-Authorization: Bearer <access-token>
+1. POST <registry-url>/api/v1/identifier/business-entities/<partner-id>/identifier-entries
+   Authorization: Bearer <access-token>
+
+   Allocates a DID space. The response body contains `identifierRegistryUrl`
+   of the form `https://identifier-reg.<env>.swiyu.admin.ch/api/v1/did/<id>`
+   (the public path from which the DID log will be served, with `/did.jsonl`
+   appended at resolution time). The `<id>` is a UUID that also appears as
+   the last path segment of the resulting DID; it is used to address the
+   entry in the next call.
+
+2. PUT <registry-url>/api/v1/identifier/business-entities/<partner-id>/identifier-entries/<id>
+   Authorization: Bearer <access-token>
+   Content-Type: application/jsonl+json
+   Body: <the DID log entry, one line of JSON, no trailing newline>
+
+   Uploads the signed DID log entry. After this returns 2xx, the DID is
+   resolvable via the `identifierRegistryUrl` from step 1.
 ```
+
+#### Failure semantics
+
+If the registry POST succeeds but the PUT fails, the registry has an allocated-but-empty entry
+and the local files (`did.jsonl` + keystore entry) are written but not published. The CLI keeps
+the local files (so the keys aren't lost), reports the error, and exits non-zero. **Re-running
+`didtool create --swiyu` will allocate a fresh identifier and orphan the previous one** —
+instead, retry the upload manually with the local `did.jsonl` (e.g. via `curl`). A `didtool
+publish` subcommand to automate retry is not currently provided.
 
 ### Common options
 
@@ -193,6 +219,7 @@ Authorization: Bearer <access-token>
 | `--authorized-key <pem-file>` | Private EdDSA (Ed25519) key to use for the `authorized` role. Generated if omitted. |
 | `--authentication-key <pem-file>` | Private ECDSA (P-256) key to use for the `authentication` role. Generated if omitted. |
 | `--assertion-key <pem-file>` | Private ECDSA (P-256) key to use for the `assertion` role. Generated if omitted. |
+| `--no-publish` | (with `--swiyu` only) skip the PUT upload step. The DID is created locally but not published to the registry. |
 
 When a private key file is supplied, the public key is derived from it — no separate public key
 file is needed. Key pairs not supplied by the user are generated fresh.
@@ -223,7 +250,10 @@ A confirmation line (log file path, key store hash) is printed to stderr.
 3. Derives the SCID and constructs the full DID.
 4. Writes the initial DID log entry to `--out`.
 5. Commits the keys to the key store.
-6. Prints the DID to stdout.
+6. **For `--swiyu` (unless `--no-publish`)**: PUTs the DID log entry to the registry at the
+   allocated identifier endpoint. On failure, the local files (DID log + keystore entry) are
+   kept; the error message instructs the user to retry the upload manually.
+7. Prints the DID to stdout.
 
 ### Dependencies
 
@@ -256,7 +286,8 @@ code. No stack traces or internal details are shown to the user.
 | Wrong key type for role                | 1         | `error: --<role>-key: expected <expected> key, got <actual>`   |
 | authentication and assertion keys identical | 1    | `error: --authentication-key and --assertion-key must differ`  |
 | SWIYU_ACCESS_TOKEN not set             | 1         | `error: SWIYU_ACCESS_TOKEN is not set`                         |
-| SWIYU API request failed               | 1         | `error: registry API error: <status> <body>`                   |
+| SWIYU API request failed               | 1         | `error: registry API error: HTTP <status>`                     |
+| DID created locally but registry upload failed | 1 | `error: DID created and saved locally, but registry upload failed (HTTP <status>) — retry manually with the file at <path>` |
 | Neither `<url>` nor `--swiyu` given    | 1         | `error: provide a <url> or --swiyu`                            |
 | Both `<url>` and `--swiyu` given       | 1         | `error: <url> and --swiyu are mutually exclusive`              |
 | Both `--did` and `--input` given       | 1         | `error: --did and --input are mutually exclusive`              |

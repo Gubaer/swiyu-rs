@@ -48,6 +48,9 @@ enum Command {
         /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
         #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
         registry_url: Option<String>,
+        /// (with --swiyu only) skip the PUT upload step. The DID is created locally but not published.
+        #[arg(long)]
+        no_publish: bool,
         /// DID method to use.
         #[arg(long, default_value = "webvh")]
         format: Format,
@@ -166,6 +169,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             swiyu,
             partner_id,
             registry_url,
+            no_publish,
             format,
             out,
             authorized_key,
@@ -178,6 +182,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 swiyu,
                 partner_id,
                 registry_url,
+                no_publish,
                 format: format.into(),
                 out,
                 authorized_key,
