@@ -90,22 +90,32 @@ correctly.
 
 ### `didtool log list [--did <did-or-hash> | --input <path>]`
 
-Lists every entry in the log, one row per entry, in sequence order:
+Lists every entry in the log, one row per entry, in sequence order. Output starts with a small
+header identifying the DID, followed by a blank line and the entry rows:
 
 ```
-SEQ  VERSION-ID                                   VERSION-TIME              DEACT
-  1  1-QmXyZ…                                     2026-04-27T08:11:42Z      no
-  2  2-QmAbC…                                     2026-04-27T09:02:11Z      no
-  3  3-QmDeF…                                     2026-04-30T14:55:00Z      yes
+DID:            did:tdw:QmXyZ…:example.com:dids:issuer
+Keystore hash:  9a4964f818df
+
+VERSION-ID                                   VERSION-TIME
+1-QmXyZ…                                     2026-04-27T08:11:42Z
+2-QmAbC…                                     2026-04-27T09:02:11Z
+3-QmDeF…                                     2026-04-30T14:55:00Z
 ```
+
+Header lines:
+- `DID` — the DID this log belongs to. Taken from the `id` field of the latest entry's DID
+  document.
+- `Keystore hash` — the 12-character BLAKE3 hash of the local keystore entry for this DID, if
+  one exists. The lookup is attempted for every source (`--did <did>`, `--did <hash>`,
+  `--input <path>`, default). If no keystore entry exists, the line reads
+  `Keystore hash:  (not in keystore)`.
 
 Columns:
-- `SEQ` — 1-based sequence number (matches the prefix of `versionId`).
 - `VERSION-ID` — the full `versionId` of the entry.
 - `VERSION-TIME` — the `versionTime` of the entry.
-- `DEACT` — `yes` when the entry's `parameters.deactivated` is `true`, else `no`.
 
-### `didtool log show [--did <did-or-hash> | --input <path>] [--out <file>] [--raw | --pretty]`
+### `didtool log show [--did <did-or-hash> | --input <path>] [--out <file>] [--force] [--raw | --pretty]`
 
 Outputs the full DID log.
 
@@ -113,24 +123,26 @@ Outputs the full DID log.
   comment line `# entry <seq> — <versionId>`. Both `did:tdw` v0.3 (five-element array) and
   `did:webvh` v1.0 (named-field object) render in their native shape.
 - `--out <file>`: writes to a file. The default file format is **raw JSONL** — byte-equivalent
-  to the source — so signatures and hashes still verify against the saved copy.
+  to the source — so signatures and hashes still verify against the saved copy. If the file
+  already exists the command refuses to overwrite it; pass `--force` to overwrite.
 - `--raw`: forces raw JSONL output, even on stdout (suitable for piping into `jq`).
 - `--pretty`: forces pretty-printed JSON, even when writing to a file.
+- `--force`: only meaningful with `--out`; allows an existing file to be overwritten.
 
 `--raw` and `--pretty` are mutually exclusive.
 
-### `didtool log entry [--did <did-or-hash> | --input <path>] [--at <selector>] [--out <file>] [--raw | --pretty]`
+### `didtool log entry [--did <did-or-hash> | --input <path>] [--at <selector>] [--out <file>] [--force] [--raw | --pretty]`
 
 Outputs a single entry from the DID log. `--at <selector>` selects the entry:
 
-| Selector      | Meaning |
-|---------------|---------|
-| `latest`      | The last entry in the log. This is the default when `--at` is omitted. |
-| `<n>`         | The entry at 1-based index `<n>` (matches the sequence number prefix of `versionId`). |
-| `<versionId>` | The entry whose `versionId` matches exactly. |
+| Selector | Meaning |
+|----------|---------|
+| `latest` | The last entry in the log. This is the default when `--at` is omitted. |
+| `<n>`    | The entry at 1-based numeric index `<n>` (matches the sequence-number prefix of `versionId`). |
 
 Output rules are identical to `log show`: pretty-printed JSON to stdout by default, raw JSONL
-to file by default. `--raw` / `--pretty` override.
+to file by default. `--raw` / `--pretty` override. `--out <file>` refuses to overwrite an
+existing file unless `--force` is given.
 
 ### HTTPS fetch behavior (when `--did` is used)
 

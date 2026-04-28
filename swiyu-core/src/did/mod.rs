@@ -178,6 +178,18 @@ impl DID {
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
     }
+
+    /// HTTPS URL where the DID's `did.jsonl` log is served.
+    pub fn log_url(&self) -> String {
+        let host = self.domain.replace("%3A", ":");
+        match &self.path {
+            Some(p) => {
+                let segments = p.replace(':', "/");
+                format!("https://{host}/{segments}/did.jsonl")
+            }
+            None => format!("https://{host}/.well-known/did.jsonl"),
+        }
+    }
 }
 
 impl fmt::Display for DID {
@@ -355,5 +367,34 @@ mod tests {
         assert_eq!(did.domain(), "example.com");
         let did: DID = "did:webvh:abc123:example.com".parse().unwrap();
         assert_eq!(did.domain(), "example.com");
+    }
+
+    #[test]
+    fn log_url_well_known_when_path_absent() {
+        let did: DID = "did:tdw:abc123:example.com".parse().unwrap();
+        assert_eq!(did.log_url(), "https://example.com/.well-known/did.jsonl");
+    }
+
+    #[test]
+    fn log_url_with_single_path_segment() {
+        let did: DID = "did:tdw:abc123:example.com:dids".parse().unwrap();
+        assert_eq!(did.log_url(), "https://example.com/dids/did.jsonl");
+    }
+
+    #[test]
+    fn log_url_with_multi_segment_path() {
+        let did: DID = "did:tdw:abc123:example.com:api:v1:did:fce949f2"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            did.log_url(),
+            "https://example.com/api/v1/did/fce949f2/did.jsonl"
+        );
+    }
+
+    #[test]
+    fn log_url_decodes_percent_encoded_port() {
+        let did: DID = "did:tdw:abc123:example.com%3A8443:api:v1".parse().unwrap();
+        assert_eq!(did.log_url(), "https://example.com:8443/api/v1/did.jsonl");
     }
 }

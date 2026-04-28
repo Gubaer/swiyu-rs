@@ -72,6 +72,69 @@ enum Command {
         #[command(subcommand)]
         command: KeystoreCommand,
     },
+    /// Read a DID's log file (list, show, entry).
+    Log {
+        #[command(subcommand)]
+        command: LogCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum LogCommand {
+    /// List every entry in the DID log, one row per entry.
+    List {
+        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
+        #[arg(long, conflicts_with = "input")]
+        did: Option<String>,
+        /// Local DID log file (defaults to `did.jsonl`).
+        #[arg(long)]
+        input: Option<PathBuf>,
+    },
+    /// Output the full DID log.
+    Show {
+        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
+        #[arg(long, conflicts_with = "input")]
+        did: Option<String>,
+        /// Local DID log file (defaults to `did.jsonl`).
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Write to this file instead of stdout. Default file format is raw JSONL.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Allow `--out` to overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+        /// Force raw JSONL output (default to a file).
+        #[arg(long, conflicts_with = "pretty")]
+        raw: bool,
+        /// Force pretty-printed output (default to stdout).
+        #[arg(long)]
+        pretty: bool,
+    },
+    /// Output a single entry from the DID log.
+    Entry {
+        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
+        #[arg(long, conflicts_with = "input")]
+        did: Option<String>,
+        /// Local DID log file (defaults to `did.jsonl`).
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Entry selector: `latest` (default) or a 1-based numeric index.
+        #[arg(long)]
+        at: Option<String>,
+        /// Write to this file instead of stdout. Default file format is raw JSONL.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Allow `--out` to overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+        /// Force raw JSONL output (default to a file).
+        #[arg(long, conflicts_with = "pretty")]
+        raw: bool,
+        /// Force pretty-printed output (default to stdout).
+        #[arg(long)]
+        pretty: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -205,6 +268,51 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 private,
                 version,
             } => cmd_export(&store, &target, role, out, private, version),
+        },
+        Command::Log { command } => match command {
+            LogCommand::List { did, input } => {
+                cmd::log::cmd_list(&store, cmd::log::ListArgs { did, input }).map_err(|e| e.into())
+            }
+            LogCommand::Show {
+                did,
+                input,
+                out,
+                force,
+                raw,
+                pretty,
+            } => cmd::log::cmd_show(
+                &store,
+                cmd::log::ShowArgs {
+                    did,
+                    input,
+                    out,
+                    force,
+                    raw,
+                    pretty,
+                },
+            )
+            .map_err(|e| e.into()),
+            LogCommand::Entry {
+                did,
+                input,
+                at,
+                out,
+                force,
+                raw,
+                pretty,
+            } => cmd::log::cmd_entry(
+                &store,
+                cmd::log::EntryArgs {
+                    did,
+                    input,
+                    at,
+                    out,
+                    force,
+                    raw,
+                    pretty,
+                },
+            )
+            .map_err(|e| e.into()),
         },
     }
 }

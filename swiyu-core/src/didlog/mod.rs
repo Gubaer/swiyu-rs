@@ -485,6 +485,36 @@ impl DIDLog {
     pub fn entries(&self) -> &[DIDLogEntry] {
         &self.entries
     }
+
+    /// Parses a DID log from JSONL text.
+    ///
+    /// Blank lines are skipped. Each line must be a single JSON value that parses via
+    /// [`DIDLogEntry::try_from_json`]; on failure, the 1-based line number is included in
+    /// the error message.
+    pub fn try_from_jsonl(text: &str) -> DIDLogResult<Self> {
+        let mut entries = Vec::new();
+        for (i, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let v: Value = serde_json::from_str(trimmed)
+                .map_err(|e| DIDLogError::InvalidFormat(format!("line {}: {}", i + 1, e)))?;
+            let entry = DIDLogEntry::try_from_json(&v).map_err(|e| match e {
+                DIDLogError::InvalidFormat(m) => {
+                    DIDLogError::InvalidFormat(format!("line {}: {}", i + 1, m))
+                }
+                DIDLogError::MissingField(f) => {
+                    DIDLogError::InvalidFormat(format!("line {}: missing field '{}'", i + 1, f))
+                }
+                DIDLogError::InvalidFieldType(m) => {
+                    DIDLogError::InvalidFormat(format!("line {}: {}", i + 1, m))
+                }
+            })?;
+            entries.push(entry);
+        }
+        Ok(DIDLog { entries })
+    }
 }
 
 /// Computes the hash input for an `eddsa-jcs-2022` data integrity proof.
@@ -751,5 +781,42 @@ mod tests {
             log.entries()[0].version_id(),
             "1-QmdwvukAYUU6VYwqM4jQbSiKk1ctg12j5hMTY6EfbbkyEJ"
         );
+    }
+
+    #[test]
+    fn try_from_jsonl_parses_tdw_entries() {
+        let line = serde_json::to_string(&tdw_entry_json()).unwrap();
+        let text = format!("{line}\n{line}\n");
+        let log = DIDLog::try_from_jsonl(&text).unwrap();
+        assert_eq!(log.entries().len(), 2);
+    }
+
+    #[test]
+    fn try_from_jsonl_skips_blank_lines() {
+        let line = serde_json::to_string(&webvh_entry_json()).unwrap();
+        let text = format!("\n{line}\n\n{line}\n  \n");
+        let log = DIDLog::try_from_jsonl(&text).unwrap();
+        assert_eq!(log.entries().len(), 2);
+    }
+
+    #[test]
+    fn try_from_jsonl_reports_line_number_on_invalid_json() {
+        let line = serde_json::to_string(&tdw_entry_json()).unwrap();
+        let text = format!("{line}\nthis is not json\n");
+        let err = DIDLog::try_from_jsonl(&text).unwrap_err();
+        match err {
+            DIDLogError::InvalidFormat(msg) => assert!(msg.contains("line 2")),
+            other => panic!("expected InvalidFormat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_from_jsonl_reports_line_number_on_invalid_entry() {
+        let text = "[\"1-x\", \"2024-01-01T00:00:00Z\"]\n";
+        let err = DIDLog::try_from_jsonl(text).unwrap_err();
+        match err {
+            DIDLogError::InvalidFormat(msg) => assert!(msg.contains("line 1")),
+            other => panic!("expected InvalidFormat, got {other:?}"),
+        }
     }
 }

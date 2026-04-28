@@ -1,0 +1,517 @@
+use std::fs;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+use tracing::debug;
+
+use swiyu_core::did::{DID, DIDError};
+use swiyu_core::didlog::{DIDDocState, DIDLog, DIDLogEntry, DIDLogError};
+
+use crate::keystore::{KeyStore, KeyStoreError};
+
+const DEFAULT_INPUT: &str = "did.jsonl";
+const DEFAULT_MAX_BYTES: usize = 50 * 1024 * 1024;
+const ENV_MAX_BYTES: &str = "DIDTOOL_LOG_MAX_BYTES";
+const FETCH_BODY_SNIPPET: usize = 200;
+
+#[derive(Debug, thiserror::Error)]
+pub enum LogError {
+    #[error("--did and --input are mutually exclusive")]
+    AmbiguousSource,
+    #[error("--raw and --pretty are mutually exclusive")]
+    AmbiguousFormat,
+    #[error("--force is only meaningful with --out")]
+    ForceWithoutOut,
+    #[error("file '{}' already exists; pass --force to overwrite", path.display())]
+    FileExists { path: PathBuf },
+    #[error("cannot read '{}': {source}", path.display())]
+    ReadInput {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("cannot write '{}': {source}", path.display())]
+    WriteOutput {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("write to stdout failed: {0}")]
+    WriteStdout(#[source] std::io::Error),
+    #[error("invalid DID '{target}': {source}")]
+    Did {
+        target: String,
+        #[source]
+        source: DIDError,
+    },
+    #[error("no entry found for '{0}' in the key store")]
+    KeyStoreLookup(String),
+    #[error(transparent)]
+    KeyStore(#[from] KeyStoreError),
+    #[error("DID log parse error: {0}")]
+    LogParse(#[from] DIDLogError),
+    #[error("HTTPS request to '{url}' failed: {source}")]
+    Http {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("registry returned HTTP {status} for '{url}': {body}")]
+    HttpStatus {
+        url: String,
+        status: u16,
+        body: String,
+    },
+    #[error("reading response body for '{url}' failed: {source}")]
+    FetchRead {
+        url: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("response body for '{url}' exceeds {limit} bytes (override with {ENV_MAX_BYTES})")]
+    TooLarge { url: String, limit: usize },
+    #[error("response body for '{url}' is not valid UTF-8")]
+    NotUtf8 { url: String },
+    #[error("invalid --at selector '{0}': must be 'latest' or a positive integer")]
+    BadSelector(String),
+    #[error("no entry at index {index} (log has {total} entries)")]
+    IndexOutOfRange { index: usize, total: usize },
+}
+
+pub struct ListArgs {
+    pub did: Option<String>,
+    pub input: Option<PathBuf>,
+}
+
+pub struct ShowArgs {
+    pub did: Option<String>,
+    pub input: Option<PathBuf>,
+    pub out: Option<PathBuf>,
+    pub force: bool,
+    pub raw: bool,
+    pub pretty: bool,
+}
+
+pub struct EntryArgs {
+    pub did: Option<String>,
+    pub input: Option<PathBuf>,
+    pub at: Option<String>,
+    pub out: Option<PathBuf>,
+    pub force: bool,
+    pub raw: bool,
+    pub pretty: bool,
+}
+
+pub fn cmd_list(store: &KeyStore, args: ListArgs) -> Result<(), LogError> {
+    let loaded = load_log(store, args.did, args.input)?;
+    print_list(store, &loaded.log)
+}
+
+pub fn cmd_show(store: &KeyStore, args: ShowArgs) -> Result<(), LogError> {
+    if args.raw && args.pretty {
+        return Err(LogError::AmbiguousFormat);
+    }
+    if args.force && args.out.is_none() {
+        return Err(LogError::ForceWithoutOut);
+    }
+    let loaded = load_log(store, args.did, args.input)?;
+    let format = decide_format(args.out.is_some(), args.raw, args.pretty);
+    write_show(&loaded, format, args.out.as_deref(), args.force)
+}
+
+pub fn cmd_entry(store: &KeyStore, args: EntryArgs) -> Result<(), LogError> {
+    if args.raw && args.pretty {
+        return Err(LogError::AmbiguousFormat);
+    }
+    if args.force && args.out.is_none() {
+        return Err(LogError::ForceWithoutOut);
+    }
+    let selector = parse_selector(args.at.as_deref().unwrap_or("latest"))?;
+    let loaded = load_log(store, args.did, args.input)?;
+    let idx = resolve_selector(selector, &loaded.log)?;
+    let format = decide_format(args.out.is_some(), args.raw, args.pretty);
+    write_entry(&loaded, idx, format, args.out.as_deref(), args.force)
+}
+
+// ---------------------------------------------------------------------------
+// Loading
+
+struct LoadedLog {
+    raw_lines: Vec<String>,
+    log: DIDLog,
+}
+
+fn load_log(
+    store: &KeyStore,
+    did: Option<String>,
+    input: Option<PathBuf>,
+) -> Result<LoadedLog, LogError> {
+    if did.is_some() && input.is_some() {
+        return Err(LogError::AmbiguousSource);
+    }
+    let text = match did {
+        Some(target) => {
+            let resolved = resolve_did(store, &target)?;
+            let url = resolved.log_url();
+            debug!("resolved DID to log URL: {}", url);
+            fetch_log(&url)?
+        }
+        None => {
+            let path = input.unwrap_or_else(|| PathBuf::from(DEFAULT_INPUT));
+            debug!("reading DID log from {}", path.display());
+            fs::read_to_string(&path).map_err(|source| LogError::ReadInput {
+                path: path.clone(),
+                source,
+            })?
+        }
+    };
+    let raw_lines = collect_raw_lines(&text);
+    let log = DIDLog::try_from_jsonl(&text)?;
+    debug!("loaded {} log entries", log.entries().len());
+    Ok(LoadedLog { raw_lines, log })
+}
+
+fn collect_raw_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn resolve_did(store: &KeyStore, target: &str) -> Result<DID, LogError> {
+    if target.len() == 12 && target.chars().all(|c| c.is_ascii_hexdigit()) {
+        debug!("resolving '{}' as BLAKE3 hash via key store", target);
+        let entry = store
+            .lookup_by_hash(target)?
+            .ok_or_else(|| LogError::KeyStoreLookup(target.to_string()))?;
+        DID::parse(entry.did()).map_err(|e| LogError::Did {
+            target: target.to_string(),
+            source: e,
+        })
+    } else {
+        debug!("parsing '{}' as DID string", target);
+        DID::parse(target).map_err(|e| LogError::Did {
+            target: target.to_string(),
+            source: e,
+        })
+    }
+}
+
+fn fetch_log(url: &str) -> Result<String, LogError> {
+    let max_bytes = std::env::var(ENV_MAX_BYTES)
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_MAX_BYTES);
+
+    let client = reqwest::blocking::Client::new();
+    debug!("GET {}", url);
+    let response = client.get(url).send().map_err(|e| LogError::Http {
+        url: url.to_string(),
+        source: e,
+    })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().unwrap_or_default();
+        let snippet: String = body.chars().take(FETCH_BODY_SNIPPET).collect();
+        return Err(LogError::HttpStatus {
+            url: url.to_string(),
+            status: status.as_u16(),
+            body: snippet,
+        });
+    }
+
+    // Read at most max_bytes + 1 so we can detect "exceeded" cleanly.
+    let mut buf = Vec::with_capacity(max_bytes.min(1024 * 64));
+    response
+        .take((max_bytes + 1) as u64)
+        .read_to_end(&mut buf)
+        .map_err(|source| LogError::FetchRead {
+            url: url.to_string(),
+            source,
+        })?;
+
+    if buf.len() > max_bytes {
+        return Err(LogError::TooLarge {
+            url: url.to_string(),
+            limit: max_bytes,
+        });
+    }
+    String::from_utf8(buf).map_err(|_| LogError::NotUtf8 {
+        url: url.to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Selector
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Selector {
+    Latest,
+    Index(usize),
+}
+
+fn parse_selector(s: &str) -> Result<Selector, LogError> {
+    if s == "latest" {
+        return Ok(Selector::Latest);
+    }
+    match s.parse::<usize>() {
+        Ok(n) if n >= 1 => Ok(Selector::Index(n)),
+        _ => Err(LogError::BadSelector(s.to_string())),
+    }
+}
+
+fn resolve_selector(selector: Selector, log: &DIDLog) -> Result<usize, LogError> {
+    let total = log.entries().len();
+    match selector {
+        Selector::Latest => {
+            if total == 0 {
+                return Err(LogError::IndexOutOfRange { index: 1, total });
+            }
+            Ok(total - 1)
+        }
+        Selector::Index(n) => {
+            if n > total {
+                return Err(LogError::IndexOutOfRange { index: n, total });
+            }
+            Ok(n - 1)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Output
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Format {
+    Raw,
+    Pretty,
+}
+
+fn decide_format(to_file: bool, raw: bool, pretty: bool) -> Format {
+    if raw {
+        Format::Raw
+    } else if pretty {
+        Format::Pretty
+    } else if to_file {
+        Format::Raw
+    } else {
+        Format::Pretty
+    }
+}
+
+fn print_list(store: &KeyStore, log: &DIDLog) -> Result<(), LogError> {
+    let entries = log.entries();
+    let version_id_width = entries
+        .iter()
+        .map(|e| e.version_id().len())
+        .max()
+        .unwrap_or(10)
+        .max("VERSION-ID".len());
+
+    let did_str = current_did(log);
+    let keystore_hash = did_str.as_deref().and_then(|d| keystore_hash_for(store, d));
+
+    let mut out = io::stdout().lock();
+    writeln!(
+        out,
+        "DID:            {}",
+        did_str.as_deref().unwrap_or("(unknown)"),
+    )
+    .map_err(LogError::WriteStdout)?;
+    writeln!(
+        out,
+        "Keystore hash:  {}",
+        keystore_hash.as_deref().unwrap_or("(not in keystore)"),
+    )
+    .map_err(LogError::WriteStdout)?;
+    writeln!(out).map_err(LogError::WriteStdout)?;
+
+    writeln!(
+        out,
+        "{vid:<vid_w$}  VERSION-TIME",
+        vid = "VERSION-ID",
+        vid_w = version_id_width,
+    )
+    .map_err(LogError::WriteStdout)?;
+    for entry in entries {
+        writeln!(
+            out,
+            "{vid:<vid_w$}  {vt}",
+            vid = entry.version_id(),
+            vid_w = version_id_width,
+            vt = entry.version_time(),
+        )
+        .map_err(LogError::WriteStdout)?;
+    }
+    Ok(())
+}
+
+/// Returns the DID id from the most recent log entry whose state is a full document.
+/// Skips `Patch` states, falling back to earlier entries (the genesis is always `Value`).
+fn current_did(log: &DIDLog) -> Option<String> {
+    for entry in log.entries().iter().rev() {
+        if let DIDDocState::Value(doc) = entry.did_doc_state()
+            && let Some(id) = doc.get("id").and_then(|v| v.as_str())
+        {
+            return Some(id.to_string());
+        }
+    }
+    None
+}
+
+fn keystore_hash_for(store: &KeyStore, did: &str) -> Option<String> {
+    let parsed = DID::parse(did).ok()?;
+    store
+        .lookup(&parsed)
+        .ok()
+        .flatten()
+        .map(|e| e.hash().to_string())
+}
+
+fn write_show(
+    loaded: &LoadedLog,
+    format: Format,
+    out: Option<&Path>,
+    force: bool,
+) -> Result<(), LogError> {
+    let body = render_show(loaded, format);
+    write_body(&body, out, force, format)
+}
+
+fn write_entry(
+    loaded: &LoadedLog,
+    index: usize,
+    format: Format,
+    out: Option<&Path>,
+    force: bool,
+) -> Result<(), LogError> {
+    let body = render_entry(loaded, index, format);
+    write_body(&body, out, force, format)
+}
+
+fn render_show(loaded: &LoadedLog, format: Format) -> String {
+    match format {
+        Format::Raw => {
+            let mut s = loaded.raw_lines.join("\n");
+            if !s.is_empty() {
+                s.push('\n');
+            }
+            s
+        }
+        Format::Pretty => {
+            let mut s = String::new();
+            for (i, entry) in loaded.log.entries().iter().enumerate() {
+                if i > 0 {
+                    s.push('\n');
+                }
+                s.push_str(&format_pretty_header(i, entry));
+                s.push('\n');
+                s.push_str(&pretty_json(entry));
+                s.push('\n');
+            }
+            s
+        }
+    }
+}
+
+fn render_entry(loaded: &LoadedLog, index: usize, format: Format) -> String {
+    match format {
+        Format::Raw => {
+            let mut s = loaded.raw_lines[index].clone();
+            s.push('\n');
+            s
+        }
+        Format::Pretty => {
+            let entry = &loaded.log.entries()[index];
+            let mut s = format_pretty_header(index, entry);
+            s.push('\n');
+            s.push_str(&pretty_json(entry));
+            s.push('\n');
+            s
+        }
+    }
+}
+
+fn format_pretty_header(index: usize, entry: &DIDLogEntry) -> String {
+    format!("# entry {} — {}", index + 1, entry.version_id())
+}
+
+fn pretty_json(entry: &DIDLogEntry) -> String {
+    let value: Value = entry.to_json();
+    serde_json::to_string_pretty(&value).expect("serializable JSON value")
+}
+
+fn write_body(
+    body: &str,
+    out: Option<&Path>,
+    force: bool,
+    _format: Format,
+) -> Result<(), LogError> {
+    match out {
+        Some(path) => {
+            if path.exists() && !force {
+                return Err(LogError::FileExists {
+                    path: path.to_path_buf(),
+                });
+            }
+            fs::write(path, body).map_err(|source| LogError::WriteOutput {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+        None => {
+            let mut stdout = io::stdout().lock();
+            stdout
+                .write_all(body.as_bytes())
+                .map_err(LogError::WriteStdout)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_selector_latest() {
+        assert_eq!(parse_selector("latest").unwrap(), Selector::Latest);
+    }
+
+    #[test]
+    fn parse_selector_numeric() {
+        assert_eq!(parse_selector("3").unwrap(), Selector::Index(3));
+    }
+
+    #[test]
+    fn parse_selector_rejects_zero() {
+        assert!(matches!(parse_selector("0"), Err(LogError::BadSelector(_))));
+    }
+
+    #[test]
+    fn parse_selector_rejects_non_numeric() {
+        assert!(matches!(
+            parse_selector("1-QmAbc"),
+            Err(LogError::BadSelector(_))
+        ));
+    }
+
+    #[test]
+    fn decide_format_defaults() {
+        assert_eq!(decide_format(false, false, false), Format::Pretty);
+        assert_eq!(decide_format(true, false, false), Format::Raw);
+    }
+
+    #[test]
+    fn decide_format_overrides() {
+        assert_eq!(decide_format(false, true, false), Format::Raw);
+        assert_eq!(decide_format(true, false, true), Format::Pretty);
+    }
+
+    #[test]
+    fn collect_raw_lines_skips_blanks() {
+        let text = "a\n\nb\n   \nc\n";
+        assert_eq!(collect_raw_lines(text), vec!["a", "b", "c"]);
+    }
+}
