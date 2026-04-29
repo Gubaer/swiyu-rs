@@ -190,6 +190,31 @@ impl DID {
             None => format!("https://{host}/.well-known/did.jsonl"),
         }
     }
+
+    /// Returns the DID rendered as a percent-encoded URL path segment.
+    ///
+    /// Encodes the conservative reserved set (`:`, `/`, `?`, `#`, `%`, space). In
+    /// practice DIDs only need `:` encoded — the others are defensive for unusual
+    /// inputs.
+    pub fn url_path_segment(&self) -> String {
+        percent_encode_path_segment(&self.to_string())
+    }
+}
+
+fn percent_encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            ':' => out.push_str("%3A"),
+            '/' => out.push_str("%2F"),
+            '?' => out.push_str("%3F"),
+            '#' => out.push_str("%23"),
+            '%' => out.push_str("%25"),
+            ' ' => out.push_str("%20"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 impl fmt::Display for DID {
@@ -396,5 +421,22 @@ mod tests {
     fn log_url_decodes_percent_encoded_port() {
         let did: DID = "did:tdw:abc123:example.com%3A8443:api:v1".parse().unwrap();
         assert_eq!(did.log_url(), "https://example.com:8443/api/v1/did.jsonl");
+    }
+
+    #[test]
+    fn url_path_segment_percent_encodes_colons() {
+        let did: DID = "did:tdw:Q123:host.example.com:api:v1:did:abc"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            did.url_path_segment(),
+            "did%3Atdw%3AQ123%3Ahost.example.com%3Aapi%3Av1%3Adid%3Aabc"
+        );
+    }
+
+    #[test]
+    fn url_path_segment_well_known_form() {
+        let did: DID = "did:tdw:abc:example.com".parse().unwrap();
+        assert_eq!(did.url_path_segment(), "did%3Atdw%3Aabc%3Aexample.com");
     }
 }

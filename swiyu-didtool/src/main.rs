@@ -285,6 +285,18 @@ enum BusinessEntityCommand {
         #[arg(long)]
         raw: bool,
     },
+    /// Verify the SWIYU trust statements for a business entity DID.
+    VerifyTrust {
+        /// Subject DID — full DID string or 12-character BLAKE3 hash.
+        #[arg(long, required = true)]
+        did: String,
+        /// Base URL of the SWIYU trust registry.
+        #[arg(long, env = "SWIYU_TRUST_REGISTRY_URL", value_parser = parse_https_url)]
+        trust_registry_url: Option<String>,
+        /// The well-known SWIYU trust authority's DID. Allowlist for `payload.iss` and signer of the status list.
+        #[arg(long, env = "SWIYU_TRUST_ISSUER_DID")]
+        trust_issuer: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -527,6 +539,27 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             ) {
                 Ok(cmd::business_entity::lookup::LookupOutcome::Found) => Ok(()),
                 Ok(cmd::business_entity::lookup::LookupOutcome::NoStatements) => process::exit(1),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    process::exit(2);
+                }
+            },
+            BusinessEntityCommand::VerifyTrust {
+                did,
+                trust_registry_url,
+                trust_issuer,
+            } => match cmd::business_entity::verify_trust::cmd_verify_trust(
+                &store,
+                cmd::business_entity::verify_trust::VerifyTrustArgs {
+                    did,
+                    trust_registry_url,
+                    trust_issuer,
+                },
+            ) {
+                Ok(cmd::business_entity::verify_trust::VerifyTrustOutcome::Trusted) => Ok(()),
+                Ok(cmd::business_entity::verify_trust::VerifyTrustOutcome::Untrusted) => {
+                    process::exit(1)
+                }
                 Err(e) => {
                     eprintln!("error: {e}");
                     process::exit(2);

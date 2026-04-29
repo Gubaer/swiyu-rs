@@ -692,7 +692,7 @@ The current subcommand list:
 | Subcommand | Purpose |
 |---|---|
 | `lookup` | Fetch and display trust statements for a business entity. **Does not** verify signatures or revocation. |
-| `verify-trust` | (planned) Fetch, then perform full verification: issuer allowlist, signature, freshness, revocation. |
+| `verify-trust` | Fetch, then perform full verification: issuer allowlist, signature, freshness, revocation. |
 
 ### `didtool business-entity lookup`
 
@@ -818,6 +818,148 @@ fi
 - Caching. Each invocation hits the registry.
 - Authentication. The endpoint is public; `SWIYU_ACCESS_TOKEN` is not used.
 
+### `didtool business-entity verify-trust`
+
+```
+didtool business-entity verify-trust --did <did-or-hash>
+                                     [--trust-registry-url <url>]
+                                     [--trust-issuer <did>]
+```
+
+Fetches trust statements for a business entity DID and runs full verification on each:
+issuer allowlist, signature, freshness, revocation. Reports a per-statement verdict and
+an overall trust verdict for the entity.
+
+The overall verdict is **trusted** iff at least one statement passes all checks —
+matching the question "is this entity currently vouched-for by SWIYU right now?".
+
+#### Flags
+
+| Flag | Env var | Required | Description |
+|---|---|---|---|
+| `--did <did-or-hash>` | — | yes | Subject DID. Same resolution as `lookup`. |
+| `--trust-registry-url <url>` | `SWIYU_TRUST_REGISTRY_URL` | one of these | Base URL of the SWIYU trust registry. Same as `lookup`. |
+| `--trust-issuer <did>` | `SWIYU_TRUST_ISSUER_DID` | one of these | The well-known SWIYU trust authority's DID. Used as an allowlist for `payload.iss`. Also used to verify the *status list's* signature, since SWIYU signs both the trust statement and the status list with the same DID. |
+
+#### Validation per statement
+
+Each statement is verified independently. The five checks (in order):
+
+1. **Issuer allowlist**: `payload.iss == --trust-issuer`.
+2. **Issuer DID resolution**: fetch the issuer's `did.jsonl` from the identifier registry
+   (the URL is encoded in the DID — `did:tdw:Q…:identifier-reg.…:api:v1:did:UUID` resolves
+   to `https://identifier-reg.…/api/v1/did/UUID/did.jsonl`). Find the verification method
+   whose id equals the JWT's `kid`.
+3. **Signature**: verify the SD-JWT VC's JWS over `<header>.<payload>` with the resolved
+   key. **Short-circuit**: if this fails, `freshness` and `status` are still reported but
+   `iss` and `signature` failures cause the statement's verdict to be untrusted.
+4. **Freshness**: `nbf ≤ now ≤ exp` (Unix seconds). Independent of signature.
+5. **Revocation (status list)**:
+   1. Fetch the JWT at `status.status_list.uri`.
+   2. Verify *its* signature against `--trust-issuer` (SWIYU signs the status list
+      with the same DID — confirmed empirically against the integration environment).
+   3. Read `payload.status_list.bits` (default `1`; observed `2` in SWIYU integration).
+   4. Decompress `payload.status_list.lst` (zlib-deflate, base64url-encoded).
+   5. Read the value at `status.status_list.idx` from the bitstring.
+   6. `0` = valid; non-zero = revoked / suspended / reserved (all treated as untrusted).
+
+A statement is **trusted** iff all five checks pass.
+
+The overall command verdict is **trusted** iff at least one statement is trusted.
+
+#### Status-list value semantics
+
+For 2-bit entries (the SWIYU default), the value at the indexed position is interpreted
+per the IETF Token Status List draft:
+
+| Value | Label | Treated as |
+|---|---|---|
+| `0` | valid | trusted |
+| `1` | revoked | untrusted |
+| `2` | suspended | untrusted |
+| `3` | reserved | untrusted (defensive) |
+
+For 1-bit entries (legacy fallback): `0` = valid, `1` = revoked.
+
+#### Default output
+
+```
+Trust statements for did:tdw:QmPAaz…:fce949f2-…
+Expected issuer:    did:tdw:QmWrXW…:2e246676-…
+
+#1  TrustStatementIdentityV1
+  iat:          2026-04-20T11:12:18Z
+  iss:          [ok]    matches expected issuer
+  signature:    [ok]    valid (kid: did:tdw:…#assert-key-02)
+  freshness:    [ok]    now within nbf..exp (2026-01-01..2027-01-01)
+  status:       [ok]    valid (idx=643, bits=2)
+  entity name:  de-CH: kacon GmbH
+  state actor:  no
+  verdict:      [ok]    trusted
+
+Verdict: 1 trusted statement out of 1 — entity is trusted.
+```
+
+Failure example (issuer mismatch):
+
+```
+#1  TrustStatementIdentityV1
+  iat:          2026-04-20T11:12:18Z
+  iss:          [fail]  did:tdw:OTHER… (does not match expected issuer)
+  signature:    [skip]  (issuer mismatch)
+  freshness:    [ok]    now within nbf..exp
+  status:       [skip]  (would only matter if signature were trusted)
+  verdict:      [fail]  untrusted
+
+Verdict: 0 trusted statements out of 1 — entity is untrusted.
+```
+
+Markers:
+
+| Marker | Meaning |
+|---|---|
+| `[ok]` | Check passed. |
+| `[fail]` | Check failed; reason printed inline. |
+| `[skip]` | Check skipped because an earlier check made it meaningless (e.g. signature skipped after issuer mismatch). |
+
+#### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | At least one statement passes all checks — entity is trusted. |
+| `1` | Zero trust statements, or none of the statements pass all checks. **Semantically untrusted.** |
+| `2` | Operational error: bad config, network failure, malformed JWT, can't resolve issuer DID, can't reach status list, etc. Not a verdict — "we couldn't tell". |
+
+#### What `verify-trust` does internally
+
+1. Resolves `--did`, `--trust-registry-url`, `--trust-issuer` (flag or env).
+2. Fetches trust statements (same `lookup` code path).
+3. For each statement:
+   1. Decodes header / payload / disclosures.
+   2. Cross-checks `iss` against `--trust-issuer`.
+   3. Resolves the issuer DID's log via the identifier registry, locates the
+      verification method by `kid`.
+   4. Verifies the JWS signature.
+   5. Checks `nbf ≤ now ≤ exp`.
+   6. Fetches the status-list JWT, verifies its signature with `--trust-issuer`,
+      decompresses `lst`, reads the bit / 2-bit value at `idx`.
+4. Aggregates verdicts; prints per-statement report.
+5. Exits 0 if any statement is trusted, 1 otherwise.
+
+Within a single invocation, the issuer DID document and the status-list JWT are cached
+by URL (one fetch each, regardless of how many statements reference them).
+
+#### Out of scope for this version
+
+- `--allow-expired` — for `verify-trust` the question being asked is "currently
+  trusted?", so an expired statement is semantically untrusted by design. Add only if
+  a debugging use case emerges.
+- A separate `--status-issuer` flag — empirically settled: SWIYU signs the status list
+  with the same DID as the trust statement.
+- Filtering by statement type. `identity` is hardcoded as the only type.
+- Caching across invocations.
+- Authentication. All endpoints are public.
+
 # Output conventions
 
 - Normal output (key material, lists) goes to **stdout**.
@@ -869,6 +1011,14 @@ code. No stack traces or internal details are shown to the user.
 | `business-entity lookup`: trust registry returned non-`2xx`, non-`404` | 2 | `error: '<url>' returned <status>: <body>` |
 | `business-entity lookup`: response is not a JSON array of strings | 2 | `error: trust registry response is not a JSON array of JWT strings` |
 | `business-entity lookup`: trust statement is malformed | 2 | `error: trust statement #<n> is malformed: <reason>` |
+| `business-entity verify-trust`: `--trust-issuer` and `SWIYU_TRUST_ISSUER_DID` both unset | 2 | `error: --trust-issuer or SWIYU_TRUST_ISSUER_DID is required` |
+| `business-entity verify-trust`: cannot resolve issuer DID log | 2 | `error: cannot resolve issuer DID log: <reason>` |
+| `business-entity verify-trust`: status-list HTTPS fetch failed | 2 | `error: cannot fetch status list '<url>': <reason>` |
+| `business-entity verify-trust`: status-list JWT malformed | 2 | `error: status list at '<url>' is malformed: <reason>` |
+| `business-entity verify-trust`: status-list signature invalid | 2 | `error: status list signature verification failed` |
+| `business-entity verify-trust`: status-list bitstring decompression failed | 2 | `error: status list at '<url>' bitstring decompression failed: <reason>` |
+| `business-entity verify-trust`: `idx` out of range in bitstring | 2 | `error: status list idx <n> exceeds bitstring length` |
+| `business-entity verify-trust`: zero trusted statements | 1 | (none — verdict line on stdout) |
 | JWT expired                            | 1         | `error: JWT expired at <iso8601> (<delta> ago)`                |
 | `iat` further than 60s in the future   | 1         | `error: JWT has iat in the future (<delta> ahead)`             |
 | `--nonce` mismatch                     | 1         | `error: payload.nonce '<actual>' does not match expected '<expected>'` |

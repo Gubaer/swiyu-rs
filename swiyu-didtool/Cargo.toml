@@ -16,6 +16,7 @@ blake3 = "1"
 bs58 = "0.5"
 chrono = { version = "0.4", features = ["clock"] }
 clap = { version = "4", features = ["derive", "env"] }
+flate2 = "1"
 dirs = "6"
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
