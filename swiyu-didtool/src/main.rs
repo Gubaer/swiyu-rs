@@ -10,7 +10,7 @@ mod swiyu;
 use std::path::PathBuf;
 use std::process;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use swiyu_core::didlog::LogEntryFormat;
 use tracing::debug;
 
@@ -41,15 +41,8 @@ enum Command {
         /// Allocate a DID space via the SWIYU identifier registry instead of supplying a URL.
         #[arg(long)]
         swiyu: bool,
-        /// SWIYU business partner ID (overrides SWIYU_PARTNER_ID).
-        #[arg(long, env = "SWIYU_PARTNER_ID", value_parser = parse_partner_id)]
-        partner_id: Option<String>,
-        /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
-        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
-        registry_url: Option<String>,
-        /// (with --swiyu only) skip the PUT upload step. The DID is created locally but not published.
-        #[arg(long)]
-        no_publish: bool,
+        #[command(flatten)]
+        registry: SwiyuRegistryArgs,
         /// DID method to use.
         #[arg(long, default_value = "webvh")]
         format: Format,
@@ -102,15 +95,8 @@ enum Command {
         /// Allow `--out` to overwrite an existing file.
         #[arg(long)]
         force: bool,
-        /// Skip the registry update; produce only the local files.
-        #[arg(long)]
-        no_publish: bool,
-        /// SWIYU business partner ID (overrides SWIYU_PARTNER_ID).
-        #[arg(long, env = "SWIYU_PARTNER_ID", value_parser = parse_partner_id)]
-        partner_id: Option<String>,
-        /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
-        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
-        registry_url: Option<String>,
+        #[command(flatten)]
+        registry: SwiyuRegistryArgs,
     },
     /// Create a Proof of Possession (PoP) JWT signed with one of the DID's keys.
     CreatePop {
@@ -176,16 +162,24 @@ enum Command {
         /// Allow `--out` to overwrite an existing file.
         #[arg(long)]
         force: bool,
-        /// Skip the registry update; produce only the local files.
-        #[arg(long)]
-        no_publish: bool,
-        /// SWIYU business partner ID (overrides SWIYU_PARTNER_ID).
-        #[arg(long, env = "SWIYU_PARTNER_ID", value_parser = parse_partner_id)]
-        partner_id: Option<String>,
-        /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
-        #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
-        registry_url: Option<String>,
+        #[command(flatten)]
+        registry: SwiyuRegistryArgs,
     },
+}
+
+/// Shared `--no-publish`, `--partner-id`, `--registry-url` options for the
+/// subcommands that interact with the SWIYU identifier registry.
+#[derive(Args)]
+struct SwiyuRegistryArgs {
+    /// Skip the registry update; produce only the local files.
+    #[arg(long)]
+    no_publish: bool,
+    /// SWIYU business partner ID (overrides SWIYU_PARTNER_ID).
+    #[arg(long, env = "SWIYU_PARTNER_ID", value_parser = parse_partner_id)]
+    partner_id: Option<String>,
+    /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
+    #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
+    registry_url: Option<String>,
 }
 
 /// Role names for `didtool update --rotate`.
@@ -393,9 +387,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Create {
             url,
             swiyu,
-            partner_id,
-            registry_url,
-            no_publish,
+            registry:
+                SwiyuRegistryArgs {
+                    no_publish,
+                    partner_id,
+                    registry_url,
+                },
             format,
             out,
             authorized_key,
@@ -482,9 +479,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             assertion_key,
             out,
             force,
-            no_publish,
-            partner_id,
-            registry_url,
+            registry:
+                SwiyuRegistryArgs {
+                    no_publish,
+                    partner_id,
+                    registry_url,
+                },
         } => cmd::update::cmd_update(
             &store,
             cmd::update::UpdateArgs {
@@ -589,9 +589,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             input,
             out,
             force,
-            no_publish,
-            partner_id,
-            registry_url,
+            registry:
+                SwiyuRegistryArgs {
+                    no_publish,
+                    partner_id,
+                    registry_url,
+                },
         } => cmd::deactivate::cmd_deactivate(
             &store,
             cmd::deactivate::DeactivateArgs {
