@@ -25,6 +25,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM alpine:3.20
 
+LABEL org.opencontainers.image.title="didtool" \
+      org.opencontainers.image.description="SWIYU did:tdw / did:webvh CLI" \
+      org.opencontainers.image.source="https://github.com/gubaer/swiyu-rs" \
+      org.opencontainers.image.licenses="MIT"
+
 RUN addgroup -S didtool && adduser -S -G didtool didtool
 
 COPY --from=builder /usr/local/bin/didtool /usr/local/bin/didtool
