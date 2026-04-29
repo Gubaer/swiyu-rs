@@ -110,10 +110,10 @@ Create a DID, rotate a key, deactivate:
 didtool create --swiyu --format tdw
 
 # Append a new entry that rotates the authentication key; publish.
-didtool update --rotate authentication
+didtool update --did did:tdw:Qmb7D2murY... --rotate authentication
 
 # Append a final entry marking the DID as deactivated; publish.
-didtool deactivate
+didtool deactivate --did did:tdw:Qmb7D2murY...
 ```
 
 Inspect a DID's log:
