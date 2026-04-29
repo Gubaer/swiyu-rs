@@ -71,12 +71,8 @@ enum Command {
     },
     /// Append a new entry to an existing DID log, rotating one or more keys.
     Update {
-        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
-        #[arg(long, conflicts_with = "input")]
-        did: Option<String>,
-        /// Local DID log file (defaults to `did.jsonl`).
-        #[arg(long)]
-        input: Option<PathBuf>,
+        #[command(flatten)]
+        source: DidOrInputArgs,
         /// Generate fresh keys for the named role(s). Repeatable.
         #[arg(long, value_enum)]
         rotate: Vec<RotateRole>,
@@ -135,12 +131,8 @@ enum Command {
         /// Path to a file containing the JWT.
         #[arg(long)]
         jwt_file: Option<PathBuf>,
-        /// Full DID string or 12-character BLAKE3 hash. Fetches the DID log via HTTPS.
-        #[arg(long, conflicts_with = "input")]
-        did: Option<String>,
-        /// Local DID log file.
-        #[arg(long)]
-        input: Option<PathBuf>,
+        #[command(flatten)]
+        source: DidOrInputArgs,
         /// Expected nonce; if given, payload.nonce must match exactly.
         #[arg(long)]
         nonce: Option<String>,
@@ -150,12 +142,8 @@ enum Command {
     },
     /// Mark a DID as deactivated by appending a final entry to its log.
     Deactivate {
-        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
-        #[arg(long, conflicts_with = "input")]
-        did: Option<String>,
-        /// Local DID log file (defaults to `did.jsonl`).
-        #[arg(long)]
-        input: Option<PathBuf>,
+        #[command(flatten)]
+        source: DidOrInputArgs,
         /// Write the full updated log to this file (default: append in place to the source).
         #[arg(long)]
         out: Option<PathBuf>,
@@ -180,6 +168,18 @@ struct SwiyuRegistryArgs {
     /// SWIYU identifier registry base URL (overrides SWIYU_IDENTIFIER_REGISTRY_URL).
     #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
     registry_url: Option<String>,
+}
+
+/// Shared `--did` / `--input` mutex pair for subcommands that load a DID log,
+/// either by resolving a DID over HTTPS or by reading a local JSONL file.
+#[derive(Args)]
+struct DidOrInputArgs {
+    /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
+    #[arg(long, conflicts_with = "input")]
+    did: Option<String>,
+    /// Local DID log file (defaults to `did.jsonl`).
+    #[arg(long)]
+    input: Option<PathBuf>,
 }
 
 /// Role names for `didtool update --rotate`.
@@ -210,21 +210,13 @@ impl From<RotateRole> for cmd::update::RotateRole {
 enum LogCommand {
     /// List every entry in the DID log, one row per entry.
     List {
-        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
-        #[arg(long, conflicts_with = "input")]
-        did: Option<String>,
-        /// Local DID log file (defaults to `did.jsonl`).
-        #[arg(long)]
-        input: Option<PathBuf>,
+        #[command(flatten)]
+        source: DidOrInputArgs,
     },
     /// Output the full DID log.
     Show {
-        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
-        #[arg(long, conflicts_with = "input")]
-        did: Option<String>,
-        /// Local DID log file (defaults to `did.jsonl`).
-        #[arg(long)]
-        input: Option<PathBuf>,
+        #[command(flatten)]
+        source: DidOrInputArgs,
         /// Write to this file instead of stdout. Default file format is raw JSONL.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -240,12 +232,8 @@ enum LogCommand {
     },
     /// Output a single entry from the DID log.
     Entry {
-        /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
-        #[arg(long, conflicts_with = "input")]
-        did: Option<String>,
-        /// Local DID log file (defaults to `did.jsonl`).
-        #[arg(long)]
-        input: Option<PathBuf>,
+        #[command(flatten)]
+        source: DidOrInputArgs,
         /// Entry selector: `latest` (default) or a 1-based numeric index.
         #[arg(long)]
         at: Option<String>,
@@ -426,12 +414,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             } => cmd_export(&store, &did, role, out, private, version),
         },
         Command::Log { command } => match command {
-            LogCommand::List { did, input } => {
+            LogCommand::List {
+                source: DidOrInputArgs { did, input },
+            } => {
                 cmd::log::cmd_list(&store, cmd::log::ListArgs { did, input }).map_err(|e| e.into())
             }
             LogCommand::Show {
-                did,
-                input,
+                source: DidOrInputArgs { did, input },
                 out,
                 force,
                 raw,
@@ -449,8 +438,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             )
             .map_err(|e| e.into()),
             LogCommand::Entry {
-                did,
-                input,
+                source: DidOrInputArgs { did, input },
                 at,
                 out,
                 force,
@@ -471,8 +459,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| e.into()),
         },
         Command::Update {
-            did,
-            input,
+            source: DidOrInputArgs { did, input },
             rotate,
             authorized_key,
             authentication_key,
@@ -568,8 +555,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::VerifyPop {
             jwt,
             jwt_file,
-            did,
-            input,
+            source: DidOrInputArgs { did, input },
             nonce,
             allow_expired,
         } => cmd::verify_pop::cmd_verify_pop(
@@ -585,8 +571,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         )
         .map_err(|e| e.into()),
         Command::Deactivate {
-            did,
-            input,
+            source: DidOrInputArgs { did, input },
             out,
             force,
             registry:
