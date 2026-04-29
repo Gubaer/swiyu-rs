@@ -1,15 +1,14 @@
 use std::collections::HashMap;
-use std::io::Read;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use flate2::read::ZlibDecoder;
 use serde_json::Value;
 use tracing::debug;
 
 use swiyu_core::did::DID;
 use swiyu_core::diddoc::{DIDDoc, PublicKey, PublicKeyJWK};
 use swiyu_core::didlog::{DIDDocState, DIDLog};
+use swiyu_core::statuslist::{StatusList, StatusValue};
 
 use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
@@ -115,18 +114,10 @@ struct VerifyContext {
     /// re-used for both the trust-statement signature check and the status-list signature
     /// check (which both resolve their `kid` against the issuer DID's verification methods).
     issuer_docs: HashMap<String, DIDDoc>,
-    /// Cache of decompressed status-list bitstrings, keyed by URL. The `bits` field of the
-    /// list is stored alongside the bytes so repeated reads at different `idx` values
-    /// don't re-derive it.
-    status_lists: HashMap<String, StatusListEntry>,
-}
-
-/// A signature-verified status list, ready for slot lookups.
-struct StatusListEntry {
-    /// Bits per slot — `1` or `2`.
-    bits: u8,
-    /// The decompressed bitstring.
-    bytes: Vec<u8>,
+    /// Cache of decoded, signature-verified status lists, keyed by URL. Parsing
+    /// (decompression, slot-width validation) is done by [`StatusList::from_payload`];
+    /// signature verification is done locally before insertion.
+    status_lists: HashMap<String, StatusList>,
 }
 
 impl VerifyContext {
@@ -280,21 +271,18 @@ fn check_status(
         Some(s) => s,
         None => return Ok(Check::Fail("no status_list claim in payload".into())),
     };
-    let entry = load_status_list(&info.uri, ctx)?;
-    let value = match read_status_value(&entry.bytes, info.idx, entry.bits) {
-        Some(v) => v,
-        None => {
-            return Err(VerifyTrustError::StatusListIdxOutOfRange { idx: info.idx });
+    let list = load_status_list(info.uri(), ctx)?;
+    let bits = list.bits();
+    let value = list.value_at(info.idx())?;
+    Ok(match value {
+        StatusValue::Valid => Check::Ok(format!("valid (idx={}, bits={bits})", info.idx())),
+        StatusValue::Revoked => Check::Fail(format!("revoked (idx={}, bits={bits})", info.idx())),
+        StatusValue::Suspended => {
+            Check::Fail(format!("suspended (idx={}, bits={bits})", info.idx()))
         }
-    };
-    Ok(match (entry.bits, value) {
-        (_, 0) => Check::Ok(format!("valid (idx={}, bits={})", info.idx, entry.bits)),
-        (_, 1) => Check::Fail(format!("revoked (idx={}, bits={})", info.idx, entry.bits)),
-        (2, 2) => Check::Fail(format!("suspended (idx={}, bits={})", info.idx, entry.bits)),
-        (_, n) => Check::Fail(format!(
-            "reserved={n} (idx={}, bits={})",
-            info.idx, entry.bits
-        )),
+        StatusValue::Reserved(n) => {
+            Check::Fail(format!("reserved={n} (idx={}, bits={bits})", info.idx()))
+        }
     })
 }
 
@@ -388,7 +376,7 @@ fn jwk_to_p256_verifying_key(jwk: &PublicKeyJWK) -> Result<p256::ecdsa::Verifyin
 fn load_status_list<'a>(
     url: &str,
     ctx: &'a mut VerifyContext,
-) -> Result<&'a StatusListEntry, VerifyTrustError> {
+) -> Result<&'a StatusList, VerifyTrustError> {
     if !ctx.status_lists.contains_key(url) {
         let text = match fetch_text(url)? {
             FetchOutcome::Ok(t) => t,
@@ -399,8 +387,8 @@ fn load_status_list<'a>(
                 });
             }
         };
-        let entry = parse_and_verify_status_list(url, text.trim(), ctx)?;
-        ctx.status_lists.insert(url.to_string(), entry);
+        let list = parse_and_verify_status_list(url, text.trim(), ctx)?;
+        ctx.status_lists.insert(url.to_string(), list);
     }
     Ok(ctx.status_lists.get(url).expect("just inserted"))
 }
@@ -409,7 +397,7 @@ fn parse_and_verify_status_list(
     url: &str,
     jwt: &str,
     ctx: &mut VerifyContext,
-) -> Result<StatusListEntry, VerifyTrustError> {
+) -> Result<StatusList, VerifyTrustError> {
     let segs: Vec<&str> = jwt.split('.').collect();
     if segs.len() != 3 {
         return Err(VerifyTrustError::StatusListMalformed {
@@ -498,58 +486,9 @@ fn parse_and_verify_status_list(
     vk.verify(signing_input.as_bytes(), &sig)
         .map_err(|_| VerifyTrustError::StatusListSignatureInvalid)?;
 
-    // Read status_list metadata + decompress lst.
-    let sl = payload
-        .get("status_list")
-        .ok_or_else(|| VerifyTrustError::StatusListMalformed {
-            url: url.to_string(),
-            reason: "missing 'status_list' in payload".into(),
-        })?;
-    let bits = sl.get("bits").and_then(Value::as_u64).unwrap_or(1) as u8;
-    if bits != 1 && bits != 2 {
-        return Err(VerifyTrustError::StatusListMalformed {
-            url: url.to_string(),
-            reason: format!("unsupported 'bits' value: {bits} (expected 1 or 2)"),
-        });
-    }
-    let lst = sl.get("lst").and_then(Value::as_str).ok_or_else(|| {
-        VerifyTrustError::StatusListMalformed {
-            url: url.to_string(),
-            reason: "missing 'lst' in status_list".into(),
-        }
-    })?;
-    let compressed =
-        URL_SAFE_NO_PAD
-            .decode(lst)
-            .map_err(|e| VerifyTrustError::StatusListMalformed {
-                url: url.to_string(),
-                reason: format!("'lst' not base64url: {e}"),
-            })?;
-    let mut bytes = Vec::new();
-    ZlibDecoder::new(&compressed[..])
-        .read_to_end(&mut bytes)
-        .map_err(|e| VerifyTrustError::StatusListDecompression {
-            url: url.to_string(),
-            reason: e.to_string(),
-        })?;
-
-    Ok(StatusListEntry { bits, bytes })
-}
-
-fn read_status_value(bytes: &[u8], idx: u64, bits: u8) -> Option<u8> {
-    match bits {
-        1 => {
-            let byte_idx = (idx / 8) as usize;
-            let bit_idx = (idx % 8) as u8;
-            bytes.get(byte_idx).map(|b| (b >> bit_idx) & 1)
-        }
-        2 => {
-            let byte_idx = (idx / 4) as usize;
-            let shift = ((idx % 4) * 2) as u8;
-            bytes.get(byte_idx).map(|b| (b >> shift) & 0b11)
-        }
-        _ => None,
-    }
+    // Decode + decompress + bit-width validate via core. Errors propagate as
+    // BusinessEntityError::StatusList(StatusListError) through `?`.
+    Ok(StatusList::from_payload(&payload)?)
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────
@@ -608,34 +547,8 @@ fn print_report(n: usize, r: &Report<'_>) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn read_status_value_2bit() {
-        // 0x55 = 0b01_01_01_01 → bits 0..3 read as 1, 1, 1, 1 (LSB first)
-        let bytes = [0x55u8];
-        assert_eq!(read_status_value(&bytes, 0, 2), Some(1));
-        assert_eq!(read_status_value(&bytes, 1, 2), Some(1));
-        assert_eq!(read_status_value(&bytes, 2, 2), Some(1));
-        assert_eq!(read_status_value(&bytes, 3, 2), Some(1));
-        // out of range
-        assert_eq!(read_status_value(&bytes, 4, 2), None);
-    }
-
-    #[test]
-    fn read_status_value_1bit() {
-        // 0b00010000 → bit 4 set, rest clear
-        let bytes = [0b00010000u8];
-        assert_eq!(read_status_value(&bytes, 0, 1), Some(0));
-        assert_eq!(read_status_value(&bytes, 4, 1), Some(1));
-        assert_eq!(read_status_value(&bytes, 5, 1), Some(0));
-        assert_eq!(read_status_value(&bytes, 8, 1), None);
-    }
-
-    #[test]
-    fn read_status_value_unsupported_bits() {
-        let bytes = [0u8; 4];
-        assert_eq!(read_status_value(&bytes, 0, 4), None);
-        assert_eq!(read_status_value(&bytes, 0, 8), None);
-    }
+    // Bitstring slot-reading is exhaustively covered by `swiyu_core::statuslist`'s
+    // unit tests; we don't duplicate that surface here.
 
     #[test]
     fn check_freshness_within_window() {

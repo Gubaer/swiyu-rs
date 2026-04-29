@@ -1999,6 +1999,7 @@ version = "0.1.2"
 dependencies = [
  "base64",
  "bs58",
+ "flate2",
  "multihash",
  "multihash-codetable",
  "serde_jcs",
@@ -2016,7 +2017,6 @@ dependencies = [
  "clap",
  "dirs",
  "ed25519-dalek",
- "flate2",
  "p256",
  "pkcs8",
  "rand 0.8.6",

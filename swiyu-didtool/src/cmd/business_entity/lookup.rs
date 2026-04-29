@@ -107,8 +107,8 @@ fn print_statement(n: usize, s: &DecodedStatement) {
         }
     );
     if let Some(st) = &s.status {
-        println!("  status:       {} idx={}", st.type_, st.idx);
-        println!("                {}", st.uri);
+        println!("  status:       {} idx={}", st.type_(), st.idx());
+        println!("                {}", st.uri());
     }
 }
 

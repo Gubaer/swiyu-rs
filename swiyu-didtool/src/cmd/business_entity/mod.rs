@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::DIDDocError;
+use swiyu_core::statuslist::{StatusListError, StatusListPointer};
 
 use crate::cmd::ResolveError;
 use crate::cmd::http::FetchError;
@@ -30,10 +31,8 @@ pub enum BusinessEntityError {
     StatusListMalformed { url: String, reason: String },
     #[error("status list signature verification failed")]
     StatusListSignatureInvalid,
-    #[error("status list at '{url}' bitstring decompression failed: {reason}")]
-    StatusListDecompression { url: String, reason: String },
-    #[error("status list idx {idx} exceeds bitstring length")]
-    StatusListIdxOutOfRange { idx: u64 },
+    #[error(transparent)]
+    StatusList(#[from] StatusListError),
     #[error(transparent)]
     Fetch(#[from] FetchError),
     #[error(transparent)]
@@ -80,7 +79,7 @@ pub(crate) struct DecodedStatement {
     pub is_state_actor: Option<bool>,
     /// Status-list pointer from `payload.status.status_list`. `None` if the statement
     /// has no revocation mechanism (uncommon, but allowed by the SD-JWT VC spec).
-    pub status: Option<StatusInfo>,
+    pub status: Option<StatusListPointer>,
     /// JWT header `kid` — the verification method id used to sign the statement.
     /// SWIYU's trust authority signs with the `#assert-key-02` fragment of its DID.
     pub kid: String,
@@ -93,24 +92,6 @@ pub(crate) struct DecodedStatement {
     /// Raw signature bytes from the third JWT segment. For `ES256` this is the JOSE
     /// 64-byte `r || s` form (not DER); decoded directly into `p256::ecdsa::Signature`.
     pub signature: Vec<u8>,
-}
-
-/// Pointer to a single entry in an external status list (the IETF Token Status List
-/// shape). Lives at `payload.status.status_list` of a SWIYU trust statement and tells a
-/// verifier *where* to look up the statement's current revocation status — the bitstring
-/// itself is fetched from `uri` and the slot is read at `idx`.
-#[derive(Debug)]
-pub(crate) struct StatusInfo {
-    /// Status-list type tag from the issuer (e.g. `SwissTokenStatusList-1.0`). Stored
-    /// verbatim and surfaced in the `lookup` display; not interpreted by `verify-trust`,
-    /// which works off the `bits` value in the fetched status list itself.
-    pub type_: String,
-    /// 0-based index of this statement's slot in the bitstring. For 2-bit lists the
-    /// slot is 2 bits wide; for 1-bit lists, 1 bit. Out-of-range indices are an error.
-    pub idx: u64,
-    /// HTTPS URL of the status-list JWT. `verify-trust` fetches it once per invocation
-    /// (cached by URL), verifies its signature, and reads the slot at `idx`.
-    pub uri: String,
 }
 
 pub(crate) fn build_endpoint(base_url: &str, did: &DID) -> String {
@@ -237,13 +218,9 @@ pub(crate) fn decode_statement(jwt_text: &str) -> Result<DecodedStatement, Strin
     let status = payload
         .get("status")
         .and_then(|s| s.get("status_list"))
-        .and_then(|sl| {
-            Some(StatusInfo {
-                type_: sl.get("type").and_then(Value::as_str)?.to_string(),
-                idx: sl.get("idx").and_then(Value::as_u64)?,
-                uri: sl.get("uri").and_then(Value::as_str)?.to_string(),
-            })
-        });
+        .map(StatusListPointer::try_from_json)
+        .transpose()
+        .map_err(|e| e.to_string())?;
 
     let signing_input = format!("{}.{}", segs[0], segs[1]);
 
@@ -347,7 +324,7 @@ mod tests {
         assert_eq!(s.iat, 1776683538);
         assert_eq!(s.entity_name.get("de-CH"), Some(&"kacon GmbH".to_string()));
         assert_eq!(s.is_state_actor, Some(false));
-        assert_eq!(s.status.as_ref().unwrap().idx, 643);
+        assert_eq!(s.status.as_ref().unwrap().idx(), 643);
         assert_eq!(s.alg, "ES256");
         assert!(s.kid.starts_with("did:tdw:"));
         assert!(!s.signing_input.is_empty());
