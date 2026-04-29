@@ -5,12 +5,11 @@
 
 use std::io::Read;
 
-/// Default cap on HTTPS response body size, in bytes (50 MiB). Overridable via
-/// the `DIDTOOL_HTTP_MAX_BYTES` environment variable.
-pub(crate) const DEFAULT_MAX_BYTES: usize = 50 * 1024 * 1024;
-
-/// Name of the environment variable that overrides [`DEFAULT_MAX_BYTES`].
-pub(crate) const ENV_MAX_BYTES: &str = "DIDTOOL_HTTP_MAX_BYTES";
+/// Hard cap on HTTPS response body size, in bytes (1 MiB). Generous compared to
+/// realistic response sizes (DID logs in the hundreds of KB; trust statements
+/// and status lists in the tens of KB) but tight enough to keep a misbehaving
+/// server from streaming the process to death.
+pub(crate) const MAX_BYTES: usize = 1024 * 1024;
 
 /// Maximum number of characters from a non-2xx response body to include in the
 /// error message. Keeps error output readable when servers return long HTML
@@ -39,7 +38,7 @@ pub enum FetchError {
         status: u16,
         body: String,
     },
-    #[error("response from '{url}' exceeds {max_bytes} bytes (override with {ENV_MAX_BYTES})")]
+    #[error("response from '{url}' exceeds {max_bytes} bytes")]
     TooLarge { url: String, max_bytes: usize },
     #[error("response from '{url}' is not valid UTF-8")]
     NonUtf8 { url: String },
@@ -57,11 +56,6 @@ pub enum FetchError {
 /// statuses, network failures, oversize responses, and UTF-8 issues come back
 /// as [`FetchError`] variants.
 pub(crate) fn fetch_text(url: &str) -> Result<FetchOutcome, FetchError> {
-    let max_bytes = std::env::var(ENV_MAX_BYTES)
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_MAX_BYTES);
-
     let client = reqwest::blocking::Client::new();
     let response = client.get(url).send().map_err(|e| FetchError::Http {
         url: url.to_string(),
@@ -82,19 +76,19 @@ pub(crate) fn fetch_text(url: &str) -> Result<FetchOutcome, FetchError> {
         });
     }
 
-    let mut buf = Vec::with_capacity(max_bytes.min(1024 * 64));
+    let mut buf = Vec::with_capacity(MAX_BYTES.min(1024 * 64));
     response
-        .take((max_bytes + 1) as u64)
+        .take((MAX_BYTES + 1) as u64)
         .read_to_end(&mut buf)
         .map_err(|e| FetchError::Io {
             url: url.to_string(),
             source: e,
         })?;
 
-    if buf.len() > max_bytes {
+    if buf.len() > MAX_BYTES {
         return Err(FetchError::TooLarge {
             url: url.to_string(),
-            max_bytes,
+            max_bytes: MAX_BYTES,
         });
     }
 
