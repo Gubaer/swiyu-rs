@@ -11,7 +11,7 @@ use swiyu_core::diddoc::{DIDDoc, DIDDocError, PublicKey, PublicKeyJWK, PublicKey
 use swiyu_core::didlog::{DIDDocState, DIDLog};
 
 use crate::cmd::iso8601;
-use crate::cmd::log::{LogError, load_log};
+use crate::cmd::log::{LogError, current_did, load_log};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
 
 const IAT_SKEW_SECS: u64 = 60;
@@ -309,7 +309,7 @@ fn resolve_context(
         KidShape::DidKey { multikey } if log_flag => {
             let key = decode_multikey(multikey)?;
             let loaded = load_log(store, args.did.clone(), args.input.clone())?;
-            let log_did = current_did(&loaded.log)?;
+            let log_did = current_did(&loaded.log).ok_or(VerifyPopError::EmptyLog)?;
             let update_keys = latest_update_keys(&loaded.log);
             if !update_keys.iter().any(|k| k == multikey) {
                 return Err(VerifyPopError::MultikeyNotInUpdateKeys {
@@ -330,7 +330,7 @@ fn resolve_context(
         }
         KidShape::Fragment { kid_did } if log_flag => {
             let loaded = load_log(store, args.did.clone(), args.input.clone())?;
-            let log_did = current_did(&loaded.log)?;
+            let log_did = current_did(&loaded.log).ok_or(VerifyPopError::EmptyLog)?;
             if &log_did != kid_did {
                 return Err(VerifyPopError::DidMismatch {
                     kid_did: kid_did.clone(),
@@ -378,16 +378,6 @@ fn decode_multikey(s: &str) -> Result<VerifyingKey, VerifyPopError> {
             bytes[0], bytes[1]
         ))),
     }
-}
-
-fn current_did(log: &DIDLog) -> Result<String, VerifyPopError> {
-    let last = log.entries().last().ok_or(VerifyPopError::EmptyLog)?;
-    let doc_value = match last.did_doc_state() {
-        DIDDocState::Value(v) => v,
-        DIDDocState::Patch(_) => return Err(VerifyPopError::PreviousStateIsPatch),
-    };
-    let doc = DIDDoc::try_from_jsonld(doc_value)?;
-    Ok(doc.id().to_string())
 }
 
 fn latest_update_keys(log: &DIDLog) -> Vec<String> {
