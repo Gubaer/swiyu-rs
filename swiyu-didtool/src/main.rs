@@ -11,11 +11,10 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use swiyu_core::did::DID;
 use swiyu_core::didlog::LogEntryFormat;
 use tracing::debug;
 
-use keystore::{KeyRole, KeyStore, KeyStoreEntry};
+use keystore::{KeyRole, KeyStore};
 
 #[derive(Parser)]
 #[command(name = "didtool", about = "Manage did:tdw and did:webvh identities")]
@@ -617,28 +616,6 @@ fn open_store(path: Option<PathBuf>) -> Result<KeyStore, Box<dyn std::error::Err
     Ok(store)
 }
 
-/// Resolves a `<hash|did>` target string to a [`KeyStoreEntry`].
-///
-/// A 12-character all-hex string is treated as a BLAKE3 hash; anything else is parsed as a DID.
-fn resolve_target(
-    store: &KeyStore,
-    target: &str,
-) -> Result<KeyStoreEntry, Box<dyn std::error::Error>> {
-    let entry = if target.len() == 12 && target.chars().all(|c| c.is_ascii_hexdigit()) {
-        debug!("resolving target '{}' as BLAKE3 hash", target);
-        store.lookup_by_hash(target)?
-    } else {
-        debug!("resolving target '{}' as DID", target);
-        let did = DID::parse(target)?;
-        store.lookup(&did)?
-    };
-    let entry = entry.ok_or_else(|| format!("no entry found for '{target}'").into());
-    if let Ok(ref e) = entry {
-        debug!("resolved to key store entry (hash: {})", e.hash());
-    }
-    entry
-}
-
 fn cmd_list(store: &KeyStore) -> Result<(), Box<dyn std::error::Error>> {
     let entries = store.list()?;
     debug!("found {} entries in key store", entries.len());
@@ -654,7 +631,7 @@ fn cmd_show(
     role: Option<Role>,
     version: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let entry = resolve_target(store, target)?;
+    let entry = cmd::resolve_entry(store, target)?;
     match role {
         Some(role) => {
             let key_role: KeyRole = role.into();
@@ -694,7 +671,7 @@ fn cmd_export(
     private: bool,
     version: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let entry = resolve_target(store, target)?;
+    let entry = cmd::resolve_entry(store, target)?;
     let key_role: KeyRole = role.into();
     let visibility = if private { "private" } else { "public" };
     debug!(

@@ -7,11 +7,10 @@ use ed25519_dalek::Signer as _;
 use rand::RngCore;
 use rand::rngs::OsRng;
 use serde_json::json;
-use tracing::debug;
 
-use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 
+use crate::cmd::{ResolveError, resolve_entry};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreEntry, KeyStoreError};
 
 pub struct CreatePopArgs {
@@ -30,8 +29,6 @@ pub enum CreatePopError {
     InvalidTtl,
     #[error("--force is only meaningful with --out")]
     ForceWithoutOut,
-    #[error("no entry found for '{0}'")]
-    NotFound(String),
     #[error("file '{}' already exists; pass --force to overwrite", path.display())]
     FileExists { path: PathBuf },
     #[error("cannot write '{}': {source}", path.display())]
@@ -43,9 +40,9 @@ pub enum CreatePopError {
     #[error("cannot write to stdout: {0}")]
     WriteStdout(std::io::Error),
     #[error(transparent)]
-    KeyStore(#[from] KeyStoreError),
+    Resolve(#[from] ResolveError),
     #[error(transparent)]
-    Did(#[from] DIDError),
+    KeyStore(#[from] KeyStoreError),
 }
 
 pub fn cmd_create_pop(store: &KeyStore, args: CreatePopArgs) -> Result<(), CreatePopError> {
@@ -56,7 +53,7 @@ pub fn cmd_create_pop(store: &KeyStore, args: CreatePopArgs) -> Result<(), Creat
         return Err(CreatePopError::ForceWithoutOut);
     }
 
-    let entry = resolve_target(store, &args.did)?;
+    let entry = resolve_entry(store, &args.did)?;
     let did = entry.did().to_string();
 
     let (kid, signer) = resolve_role(&entry, args.role, args.version)?;
@@ -97,18 +94,6 @@ pub fn cmd_create_pop(store: &KeyStore, args: CreatePopArgs) -> Result<(), Creat
 
     write_output(&jwt, args.out.as_deref(), args.force)?;
     Ok(())
-}
-
-fn resolve_target(store: &KeyStore, target: &str) -> Result<KeyStoreEntry, CreatePopError> {
-    let entry = if target.len() == 12 && target.chars().all(|c| c.is_ascii_hexdigit()) {
-        debug!("resolving target '{}' as BLAKE3 hash", target);
-        store.lookup_by_hash(target)?
-    } else {
-        debug!("resolving target '{}' as DID", target);
-        let did = DID::parse(target)?;
-        store.lookup(&did)?
-    };
-    entry.ok_or_else(|| CreatePopError::NotFound(target.to_string()))
 }
 
 enum Signer {
@@ -190,6 +175,7 @@ fn write_output(jwt: &str, out: Option<&Path>, force: bool) -> Result<(), Create
 mod tests {
     use super::*;
     use ed25519_dalek::Verifier as _;
+    use swiyu_core::did::DID;
 
     fn test_did() -> DID {
         DID::parse("did:webvh:abc123:example.com").unwrap()
@@ -357,7 +343,10 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(matches!(err, CreatePopError::NotFound(_)));
+        assert!(matches!(
+            err,
+            CreatePopError::Resolve(ResolveError::NotFound(_))
+        ));
     }
 
     #[test]

@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use tracing::debug;
 
-use swiyu_core::did::{DID, DIDError};
+use swiyu_core::did::DID;
 use swiyu_core::didlog::{DIDDocState, DIDLog, DIDLogEntry, DIDLogError};
 
+use crate::cmd::ResolveError;
 use crate::keystore::{KeyStore, KeyStoreError};
 
 const DEFAULT_INPUT: &str = "did.jsonl";
@@ -39,14 +40,8 @@ pub enum LogError {
     },
     #[error("write to stdout failed: {0}")]
     WriteStdout(#[source] std::io::Error),
-    #[error("invalid DID '{target}': {source}")]
-    Did {
-        target: String,
-        #[source]
-        source: DIDError,
-    },
-    #[error("no entry found for '{0}' in the key store")]
-    KeyStoreLookup(String),
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
     #[error("DID log parse error: {0}")]
@@ -154,7 +149,7 @@ pub(crate) fn load_log(
     }
     let (text, source_path) = match did {
         Some(target) => {
-            let resolved = resolve_did(store, &target)?;
+            let resolved = crate::cmd::resolve_did(store, &target)?;
             let url = resolved.log_url();
             debug!("resolved DID to log URL: {}", url);
             (fetch_log(&url)?, None)
@@ -184,25 +179,6 @@ fn collect_raw_lines(text: &str) -> Vec<String> {
         .filter(|line| !line.trim().is_empty())
         .map(str::to_string)
         .collect()
-}
-
-fn resolve_did(store: &KeyStore, target: &str) -> Result<DID, LogError> {
-    if target.len() == 12 && target.chars().all(|c| c.is_ascii_hexdigit()) {
-        debug!("resolving '{}' as BLAKE3 hash via key store", target);
-        let entry = store
-            .lookup_by_hash(target)?
-            .ok_or_else(|| LogError::KeyStoreLookup(target.to_string()))?;
-        DID::parse(entry.did()).map_err(|e| LogError::Did {
-            target: target.to_string(),
-            source: e,
-        })
-    } else {
-        debug!("parsing '{}' as DID string", target);
-        DID::parse(target).map_err(|e| LogError::Did {
-            target: target.to_string(),
-            source: e,
-        })
-    }
 }
 
 fn fetch_log(url: &str) -> Result<String, LogError> {

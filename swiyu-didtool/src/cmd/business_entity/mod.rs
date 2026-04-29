@@ -7,13 +7,13 @@ use std::io::Read;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tracing::debug;
 
 use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::DIDDocError;
 
+use crate::cmd::ResolveError;
 use crate::cmd::log::LogError;
-use crate::keystore::{KeyStore, KeyStoreError};
+use crate::keystore::KeyStoreError;
 
 const FETCH_BODY_SNIPPET: usize = 200;
 const DEFAULT_MAX_BYTES: usize = 50 * 1024 * 1024;
@@ -25,8 +25,6 @@ pub enum BusinessEntityError {
     TrustRegistryUrlMissing,
     #[error("--trust-issuer or SWIYU_TRUST_ISSUER_DID is required")]
     TrustIssuerMissing,
-    #[error("no entry found for '{0}'")]
-    NotFound(String),
     #[error("cannot fetch '{url}': {source}")]
     Http {
         url: String,
@@ -57,6 +55,8 @@ pub enum BusinessEntityError {
     StatusListDecompression { url: String, reason: String },
     #[error("status list idx {idx} exceeds bitstring length")]
     StatusListIdxOutOfRange { idx: u64 },
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
     #[error(transparent)]
     Did(#[from] DIDError),
     #[error(transparent)]
@@ -139,18 +139,6 @@ pub(crate) struct StatusInfo {
 pub(crate) enum FetchOutcome {
     Ok(String),
     NotFound,
-}
-
-pub(crate) fn resolve_did(store: &KeyStore, target: &str) -> Result<DID, BusinessEntityError> {
-    if target.len() == 12 && target.chars().all(|c| c.is_ascii_hexdigit()) {
-        debug!("resolving '{target}' as BLAKE3 hash via key store");
-        let entry = store
-            .lookup_by_hash(target)?
-            .ok_or_else(|| BusinessEntityError::NotFound(target.to_string()))?;
-        Ok(DID::parse(entry.did())?)
-    } else {
-        Ok(DID::parse(target)?)
-    }
 }
 
 pub(crate) fn build_endpoint(base_url: &str, did: &DID) -> String {
