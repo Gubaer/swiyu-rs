@@ -12,12 +12,9 @@ use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::DIDDocError;
 
 use crate::cmd::ResolveError;
+use crate::cmd::http::{DEFAULT_MAX_BYTES, ENV_MAX_BYTES, FETCH_BODY_SNIPPET};
 use crate::cmd::log::LogError;
 use crate::keystore::KeyStoreError;
-
-const FETCH_BODY_SNIPPET: usize = 200;
-const DEFAULT_MAX_BYTES: usize = 50 * 1024 * 1024;
-const ENV_MAX_BYTES: &str = "DIDTOOL_LOG_MAX_BYTES";
 
 #[derive(Debug, thiserror::Error)]
 pub enum BusinessEntityError {

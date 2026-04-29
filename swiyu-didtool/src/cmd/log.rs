@@ -11,10 +11,9 @@ use swiyu_core::didlog::{DIDDocState, DIDLog, DIDLogEntry, DIDLogError};
 use crate::cmd::ResolveError;
 use crate::keystore::{KeyStore, KeyStoreError};
 
+use crate::cmd::http::{DEFAULT_MAX_BYTES, ENV_MAX_BYTES, FETCH_BODY_SNIPPET};
+
 const DEFAULT_INPUT: &str = "did.jsonl";
-const DEFAULT_MAX_BYTES: usize = 50 * 1024 * 1024;
-const ENV_MAX_BYTES: &str = "DIDTOOL_LOG_MAX_BYTES";
-const FETCH_BODY_SNIPPET: usize = 200;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LogError {

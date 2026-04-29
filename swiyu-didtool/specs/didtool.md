@@ -152,8 +152,9 @@ existing file unless `--force` is given.
   are included in the error message on stderr.
 - No specific `Content-Type` is required — the body is parsed line-by-line as JSONL.
 - A 50 MiB cap on response size guards against runaway responses. This is far above any
-  realistic DID log size. The cap can be raised by setting `DIDTOOL_LOG_MAX_BYTES` in the
-  environment.
+  realistic DID log size. The cap can be raised by setting `DIDTOOL_HTTP_MAX_BYTES` in
+  the environment — it applies to every HTTPS fetch didtool performs (DID log, trust
+  registry, status list).
 - The fetch is synchronous (`reqwest` blocking client), consistent with the `--swiyu` form of
   `didtool create`. No async runtime is introduced.
 
