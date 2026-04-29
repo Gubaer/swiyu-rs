@@ -121,6 +121,22 @@ didtool business-entity lookup --did did:tdw:QmPAaz... \
     --trust-registry-url https://trust-reg.trust-infra.swiyu-int.admin.ch
 ```
 
+Verify that a business entity is currently vouched-for by SWIYU — checks the
+issuer allowlist, ES256 signature, freshness (`nbf`/`exp`), and revocation via
+the issuer-signed status list. Reports a per-statement breakdown plus an
+overall verdict. Exit codes are `0` (trusted), `1` (untrusted — no statement
+passes all checks), `2` (operational error):
+
+```sh
+# With SWIYU_TRUST_REGISTRY_URL and SWIYU_TRUST_ISSUER_DID set in .env.
+didtool business-entity verify-trust --did did:tdw:QmPAaz...
+
+# Or with the flags.
+didtool business-entity verify-trust --did did:tdw:QmPAaz... \
+    --trust-registry-url https://trust-reg.trust-infra.swiyu-int.admin.ch \
+    --trust-issuer did:tdw:QmWrXW...:2e246676-...
+```
+
 ## Configuration
 
 See [`.env.example`](./.env.example).
