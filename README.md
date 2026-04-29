@@ -31,7 +31,7 @@ available.
 
 ## Quick start
 
-Build the CLI:
+### Build from source
 
 ```sh
 # clone the repo
@@ -47,6 +47,58 @@ export PATH="$(pwd)/target/release:$PATH"
 # run didtool
 didtool --help
 ```
+
+### Or use the Docker image
+
+The `didtool` CLI is also published as a container image targeting the SWIYU
+Beta infrastructure:
+
+```sh
+docker pull ghcr.io/gubaer/didtool:swiyu-beta
+```
+
+Available tags:
+
+- `swiyu-beta` — floating tag, follows the latest published build.
+- `<version>-swiyu-beta` (e.g. `0.1.4-swiyu-beta`) — pinned to a specific release.
+
+The image bakes in the SWIYU Beta registry URLs, so users only need to supply
+`SWIYU_PARTNER_ID` and `SWIYU_ACCESS_TOKEN`. The key store persists in the named
+Docker volume `didtool-keys`; reset it with `docker volume rm didtool-keys`.
+
+Drop this shell function into `~/.bashrc` / `~/.zshrc` so the rest of the
+examples below work the same as a native install:
+
+```sh
+didtool() {
+    docker run --rm -it \
+        -v didtool-keys:/data \
+        -e SWIYU_PARTNER_ID -e SWIYU_ACCESS_TOKEN \
+        -e SWIYU_IDENTIFIER_REGISTRY_URL \
+        -e SWIYU_TRUST_REGISTRY_URL \
+        -e SWIYU_TRUST_ISSUER_DID \
+        ghcr.io/gubaer/didtool:swiyu-beta "$@"
+}
+```
+
+PowerShell equivalent for `$PROFILE`:
+
+```powershell
+function didtool {
+    docker run --rm -it `
+        -v didtool-keys:/data `
+        -e SWIYU_PARTNER_ID -e SWIYU_ACCESS_TOKEN `
+        -e SWIYU_IDENTIFIER_REGISTRY_URL `
+        -e SWIYU_TRUST_REGISTRY_URL `
+        -e SWIYU_TRUST_ISSUER_DID `
+        ghcr.io/gubaer/didtool:swiyu-beta @args
+}
+```
+
+`-it` keeps interactive use feeling native but trips up scripted/CI contexts —
+drop the `-t` (or call `docker run` directly) when there's no terminal attached.
+
+### Configure credentials
 
 Set the SWIYU credentials (or load them via [direnv](https://direnv.net/) from
 a local `.env`). See [`.env.example`](./.env.example) for a template `.env` file.
