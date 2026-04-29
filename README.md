@@ -103,6 +103,8 @@ drop the `-t` (or call `docker run` directly) when there's no terminal attached.
 Set the SWIYU credentials (or load them via [direnv](https://direnv.net/) from
 a local `.env`). See [`.env.example`](./.env.example) for a template `.env` file.
 
+### Using `didtool`
+
 Create a DID, rotate a key, deactivate:
 
 ```sh
