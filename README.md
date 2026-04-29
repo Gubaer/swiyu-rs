@@ -106,6 +106,21 @@ didtool verify-pop --jwt "$(cat pop.jwt)"
 didtool verify-pop --jwt-file pop.jwt --did did:tdw:Qmb7D2murY... --nonce "<challenge>"
 ```
 
+Look up the SWIYU trust registry's statements about a business entity DID —
+displays the disclosed claims (entity name per locale, state-actor flag, status
+list pointer). Display only; signatures and revocation are not checked. Exit
+codes are `0` (statements found), `1` (none found — i.e. *untrusted*), `2`
+(operational error):
+
+```sh
+# With SWIYU_TRUST_REGISTRY_URL set in .env.
+didtool business-entity lookup --did did:tdw:QmPAaz...
+
+# Or via the flag.
+didtool business-entity lookup --did did:tdw:QmPAaz... \
+    --trust-registry-url https://trust-reg.trust-infra.swiyu-int.admin.ch
+```
+
 ## Configuration
 
 See [`.env.example`](./.env.example).

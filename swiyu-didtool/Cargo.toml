@@ -24,6 +24,7 @@ pkcs8 = { version = "0.10", features = ["pem"] }
 rand = "0.8"
 serde_json = "1"
 serde_jcs = "0.2"
+sha2 = "0.10"
 thiserror = "2"
 zeroize = { version = "1", features = ["derive"] }
 tracing = "0.1"

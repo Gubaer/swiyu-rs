@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::Utc;
 use ed25519_dalek::Verifier as _;
 use serde_json::Value;
 use tracing::debug;
@@ -10,6 +10,7 @@ use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::{DIDDoc, DIDDocError, PublicKey, PublicKeyJWK, PublicKeyMultibase};
 use swiyu_core::didlog::{DIDDocState, DIDLog};
 
+use crate::cmd::iso8601;
 use crate::cmd::log::{LogError, load_log};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
 
@@ -481,12 +482,6 @@ fn jwk_to_verifying_key(jwk: &PublicKeyJWK) -> Result<VerifyingKey, VerifyPopErr
 
 fn current_unix_seconds() -> u64 {
     Utc::now().timestamp().max(0) as u64
-}
-
-fn iso8601(unix_secs: u64) -> String {
-    DateTime::from_timestamp(unix_secs as i64, 0)
-        .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Secs, true))
-        .unwrap_or_else(|| unix_secs.to_string())
 }
 
 fn human_duration(secs: u64) -> String {

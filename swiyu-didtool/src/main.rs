@@ -137,6 +137,11 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Inspect or verify SWIYU business-entity trust statements.
+    BusinessEntity {
+        #[command(subcommand)]
+        command: BusinessEntityCommand,
+    },
     /// Verify a Proof of Possession (PoP) JWT against a DID's keys.
     VerifyPop {
         /// The JWT to verify, passed inline.
@@ -263,6 +268,22 @@ enum LogCommand {
         /// Force pretty-printed output (default to stdout).
         #[arg(long)]
         pretty: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum BusinessEntityCommand {
+    /// Look up trust statements for a business entity DID and display them.
+    Lookup {
+        /// Subject DID — full DID string or 12-character BLAKE3 hash.
+        #[arg(long, required = true)]
+        did: String,
+        /// Base URL of the SWIYU trust registry.
+        #[arg(long, env = "SWIYU_TRUST_REGISTRY_URL", value_parser = parse_https_url)]
+        trust_registry_url: Option<String>,
+        /// Emit the registry response (JSON array) verbatim instead of a human-readable summary.
+        #[arg(long)]
+        raw: bool,
     },
 }
 
@@ -491,6 +512,27 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             },
         )
         .map_err(|e| e.into()),
+        Command::BusinessEntity { command } => match command {
+            BusinessEntityCommand::Lookup {
+                did,
+                trust_registry_url,
+                raw,
+            } => match cmd::business_entity::lookup::cmd_lookup(
+                &store,
+                cmd::business_entity::lookup::LookupArgs {
+                    did,
+                    trust_registry_url,
+                    raw,
+                },
+            ) {
+                Ok(cmd::business_entity::lookup::LookupOutcome::Found) => Ok(()),
+                Ok(cmd::business_entity::lookup::LookupOutcome::NoStatements) => process::exit(1),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    process::exit(2);
+                }
+            },
+        },
         Command::VerifyPop {
             jwt,
             jwt_file,

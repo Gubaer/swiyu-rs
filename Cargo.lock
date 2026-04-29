@@ -1981,6 +1981,7 @@ dependencies = [
  "reqwest",
  "serde_jcs",
  "serde_json",
+ "sha2 0.10.9",
  "swiyu-core",
  "tempfile",
  "thiserror 2.0.18",

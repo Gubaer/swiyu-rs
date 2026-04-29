@@ -678,6 +678,146 @@ is left behind.
 - DPoP-specific headers (`htu`, `htm`, `ath`).
 - A `--quiet` mode that suppresses the success summary. Add later if scripting demands it.
 
+---
+
+## `didtool business-entity`
+
+Read-only access to the SWIYU **trust registry**: the service that holds
+`TrustStatementIdentityV1` statements asserting facts about registered SWIYU business
+entities (legal name in each language, state-actor flag, etc.). The trust registry is a
+distinct service from the identifier (DID) registry — see the URL anatomy below.
+
+The current subcommand list:
+
+| Subcommand | Purpose |
+|---|---|
+| `lookup` | Fetch and display trust statements for a business entity. **Does not** verify signatures or revocation. |
+| `verify-trust` | (planned) Fetch, then perform full verification: issuer allowlist, signature, freshness, revocation. |
+
+### `didtool business-entity lookup`
+
+```
+didtool business-entity lookup --did <did-or-hash>
+                               [--trust-registry-url <url>]
+                               [--raw]
+```
+
+Fetches the trust statements for a business entity DID from the SWIYU trust registry,
+decodes them, and displays the disclosed claims. **Display only** — the JWT signatures
+are not verified. For trust assertions, use `verify-trust`.
+
+#### Flags
+
+| Flag | Env var | Required | Default | Description |
+|---|---|---|---|---|
+| `--did <did-or-hash>` | — | yes | — | Subject DID. Full DID string or 12-character BLAKE3 hash; the hash form is resolved via the local key store and is convenient for looking up your *own* business entity during development. |
+| `--trust-registry-url <url>` | `SWIYU_TRUST_REGISTRY_URL` | one of these | — | Base URL of the SWIYU trust registry (e.g. `https://trust-reg.trust-infra.swiyu-int.admin.ch`). Environment-specific (int / pre-prod / prod). At least one of the flag or the env var must be set. |
+| `--raw` | — | no | off | Emit the registry response (JSON array of SD-JWT VC strings) verbatim to stdout, pretty-printed. Useful for piping to `jq` or saving the original artifact. |
+
+#### Endpoint
+
+The CLI sends a single GET to:
+
+```
+<trust-registry-url>/api/v1/truststatements/identity/<percent-encoded-DID>
+```
+
+Only `:` characters in the DID are percent-encoded (to `%3A`); other DID characters are
+already URL-safe. The endpoint is public — no `Authorization` header is sent. Response
+is expected to be a JSON array of SD-JWT VC strings.
+
+The path segment `identity` is hardcoded; this command does not query other trust
+statement types. If/when SWIYU adds others, they will surface as separate subcommands or
+a `--type` flag.
+
+#### Default output
+
+For one or more statements, sorted newest-first by `iat`:
+
+```
+Trust statements for did:tdw:QmPAaz…:fce949f2-…
+
+#1  TrustStatementIdentityV1
+  issuer:       did:tdw:QmWrXW…:2e246676-…
+  iat:          2026-04-19T12:32:18Z
+  nbf:          2026-01-01T00:00:00Z
+  exp:          2026-12-31T20:00:00Z
+  entity name:  de-CH: kacon GmbH
+                fr-CH: kacon Sàrl
+                it-CH: kacon Sagl
+  state actor:  no
+  status:       SwissTokenStatusList-1.0 idx=643
+                https://status-reg.trust-infra.swiyu-int.admin.ch/api/v1/statuslist/ad94b60b-….jwt
+```
+
+- `entity name` shows **all** locales present in the disclosed `entityName` map, sorted
+  alphabetically by language tag. Empty maps are rendered as `(none)`.
+- `state actor` renders booleans as `yes` / `no`.
+- The header line shows the queried DID once; the per-statement `sub` claim is not
+  repeated (it's identical to the queried DID by definition for `identity` statements).
+
+For zero statements: a single line on **stderr** (so stdout is still empty for piping):
+
+```
+no trust statements found for <did>
+```
+
+#### `--raw` output
+
+The registry response, pretty-printed:
+
+```json
+[
+  "eyJ2ZXIiOiIxLjAi…~WyJ…~WyJ…~WyJ…~"
+]
+```
+
+Compact-print is not offered; consumers who need it can pipe through `jq -c .`.
+
+#### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | One or more trust statements were returned and decoded successfully. |
+| `1` | The registry returned an empty array, or a `404` for the DID. **Semantically**: the entity is not vouched for by the SWIYU trust authorities. The DID may exist in the identifier registry but have no trust statement. |
+| `2` | Operational error: bad config, network failure, non-`404` non-`2xx` response, or malformed/undecodable trust statement. |
+
+The split lets scripts distinguish "this entity is untrusted" (`1`) from "I couldn't tell"
+(`2`). Pattern:
+
+```sh
+if didtool business-entity lookup --did "$DID" >/dev/null 2>&1; then
+    echo "trusted"
+else
+    case $? in
+        1) echo "untrusted (no statements)" ;;
+        2) echo "could not check (operational error)" ;;
+    esac
+fi
+```
+
+#### What `lookup` does internally
+
+1. Resolves `--did` to a DID string (parses directly, or looks up a 12-char hash via the
+   key store).
+2. Resolves `--trust-registry-url` from the flag or `SWIYU_TRUST_REGISTRY_URL`.
+3. Sends `GET <base>/api/v1/truststatements/identity/<encoded-did>`.
+4. Parses the response as a JSON array of strings; each string as an SD-JWT VC.
+5. For each VC: decodes header, payload, and disclosures (no signature check); pulls
+   `entityName`, `isStateActor`, `iss`, `iat`, `nbf`, `exp`, `vct`, and `status.status_list`
+   for display.
+6. Sorts by `iat` descending; renders one block per statement.
+
+#### Out of scope for this version
+
+- Signature verification (deferred to `verify-trust`).
+- Revocation/status-list checks (deferred to `verify-trust`).
+- Filtering by statement type — `identity` is hardcoded.
+- Pagination. Trust statements per entity are expected to be a small handful; no
+  `?limit` / `?offset` handling.
+- Caching. Each invocation hits the registry.
+- Authentication. The endpoint is public; `SWIYU_ACCESS_TOKEN` is not used.
+
 # Output conventions
 
 - Normal output (key material, lists) goes to **stdout**.
@@ -723,6 +863,12 @@ code. No stack traces or internal details are shown to the user.
 | Signature verification failed          | 1         | `error: signature verification failed`                         |
 | `iss` disagrees with expected DID      | 1         | `error: payload.iss '<iss>' does not match expected '<did>'`   |
 | `did:key` multikey not in `parameters.updateKeys` | 1 | `error: did:key multikey is not present in the latest entry's parameters.updateKeys of '<did>'` |
+| `business-entity lookup`: no statements (registry returned `[]` or `404`) | 1 | (none — empty stdout, message on stderr) |
+| `business-entity lookup`: `--trust-registry-url` and `SWIYU_TRUST_REGISTRY_URL` both unset | 2 | `error: --trust-registry-url or SWIYU_TRUST_REGISTRY_URL is required` |
+| `business-entity lookup`: trust registry HTTPS fetch failed | 2 | `error: cannot fetch '<url>': <reason>` |
+| `business-entity lookup`: trust registry returned non-`2xx`, non-`404` | 2 | `error: '<url>' returned <status>: <body>` |
+| `business-entity lookup`: response is not a JSON array of strings | 2 | `error: trust registry response is not a JSON array of JWT strings` |
+| `business-entity lookup`: trust statement is malformed | 2 | `error: trust statement #<n> is malformed: <reason>` |
 | JWT expired                            | 1         | `error: JWT expired at <iso8601> (<delta> ago)`                |
 | `iat` further than 60s in the future   | 1         | `error: JWT has iat in the future (<delta> ahead)`             |
 | `--nonce` mismatch                     | 1         | `error: payload.nonce '<actual>' does not match expected '<expected>'` |
