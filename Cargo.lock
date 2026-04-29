@@ -1999,6 +1999,7 @@ version = "0.1.5"
 dependencies = [
  "base64",
  "bs58",
+ "ed25519-dalek",
  "flate2",
  "multihash",
  "multihash-codetable",

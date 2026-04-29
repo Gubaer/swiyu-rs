@@ -6,7 +6,8 @@ use serde_json::Value;
 use tracing::debug;
 
 use swiyu_core::did::DID;
-use swiyu_core::didlog::{DIDDocState, DIDLog, DIDLogEntry, DIDLogError};
+use swiyu_core::didlog::verify::{DIDLogVerifyError, verify_log};
+use swiyu_core::didlog::{DIDDocState, DIDLog, DIDLogEntry, DIDLogError, LogEntryFormat};
 
 use crate::cmd::ResolveError;
 use crate::cmd::http::{FetchError, FetchOutcome};
@@ -46,6 +47,8 @@ pub enum LogError {
     KeyStore(#[from] KeyStoreError),
     #[error("DID log parse error: {0}")]
     LogParse(#[from] DIDLogError),
+    #[error("DID log failed verification: {0}")]
+    Verification(#[from] DIDLogVerifyError),
     #[error("invalid --at selector '{0}': must be 'latest' or a positive integer")]
     BadSelector(String),
     #[error("no entry at index {index} (log has {total} entries)")]
@@ -125,12 +128,12 @@ pub(crate) fn load_log(
     if did.is_some() && input.is_some() {
         return Err(LogError::AmbiguousSource);
     }
-    let (text, source_path) = match did {
+    let (text, source_path, target_did) = match did {
         Some(target) => {
             let resolved = crate::cmd::resolve_did(store, &target)?;
             let url = resolved.log_url();
             debug!("resolved DID to log URL: {}", url);
-            (fetch_log(&url)?, None)
+            (fetch_log(&url)?, None, Some(resolved))
         }
         None => {
             let path = input.unwrap_or_else(|| PathBuf::from(DEFAULT_INPUT));
@@ -139,17 +142,53 @@ pub(crate) fn load_log(
                 path: path.clone(),
                 source,
             })?;
-            (text, Some(path))
+            (text, Some(path), None)
         }
     };
     let raw_lines = collect_raw_lines(&text);
     let log = DIDLog::try_from_jsonl(&text)?;
     debug!("loaded {} log entries", log.entries().len());
+    verify_loaded_log(&log, target_did.as_ref())?;
     Ok(LoadedLog {
         raw_lines,
         log,
         source_path,
     })
+}
+
+/// Verifies the loaded DID log against the chain integrity rules of did:tdw 0.3.
+///
+/// `target_did` is the DID the user explicitly asked to resolve (`--did`); when
+/// present, the log MUST authenticate as that DID. When absent (a `--input`
+/// load), the log is verified against the DID it announces in its own genesis
+/// state — this catches accidental tampering but does not provide cryptographic
+/// provenance against an adversary who can rewrite the local file.
+///
+/// did:webvh logs are skipped (verifier not yet implemented).
+fn verify_loaded_log(log: &DIDLog, target_did: Option<&DID>) -> Result<(), LogError> {
+    let is_tdw = log
+        .entries()
+        .first()
+        .is_some_and(|e| matches!(e.format(), LogEntryFormat::TDW03));
+    if !is_tdw {
+        debug!("skipping log verification (not did:tdw 0.3)");
+        return Ok(());
+    }
+
+    let did_for_verify = match target_did {
+        Some(d) => d.clone(),
+        None => match current_did(log).and_then(|s| DID::parse(&s).ok()) {
+            Some(d) => d,
+            None => {
+                debug!("skipping log verification (no DID in genesis state)");
+                return Ok(());
+            }
+        },
+    };
+
+    verify_log(log, &did_for_verify)?;
+    debug!("DID log signature chain verified");
+    Ok(())
 }
 
 fn collect_raw_lines(text: &str) -> Vec<String> {
