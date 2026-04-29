@@ -6,10 +6,7 @@ use tracing::debug;
 
 use ed25519_dalek::Signer;
 use swiyu_core::did::{DID, DIDError};
-use swiyu_core::diddoc::public_keys::{
-    ECKey, PublicKey, PublicKeyJWK, ed25519_verifying_key_to_multikey,
-};
-use swiyu_core::diddoc::{DIDDoc, VerificationMethod, VerificationMethodOrRef};
+use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 use swiyu_core::didlog::eddsa_jcs_2022_hash;
 use swiyu_core::didlog::scid::derive_entry_hash;
 
@@ -136,7 +133,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
     debug!("authorized rotated: {}", authorized_rotated);
 
     // --- new DID document ---
-    let new_doc = build_did_doc(&did_str, &staged);
+    let new_doc = super::diddoc::build_did_doc(&did_str, &staged);
 
     // --- parameters: only changed fields ---
     let mut params = serde_json::Map::new();
@@ -347,45 +344,6 @@ fn stage_keys(entry: &KeyStoreEntry, version: u32, plan: &Plan) -> Result<Staged
         authentication,
         assertion,
     ))
-}
-
-// ---------------------------------------------------------------------------
-// Entry construction helpers
-
-fn build_did_doc(did: &str, staged: &StagedKeys) -> Value {
-    let auth_vm_id = format!("{did}#authentication-key-01");
-    let assert_vm_id = format!("{did}#assertion-key-01");
-
-    let (auth_x, auth_y) = staged.authentication_key_coords();
-    let (assert_x, assert_y) = staged.assertion_key_coords();
-
-    let auth_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
-        ECKey::from_p256_coordinates(&auth_x, &auth_y).with_kid("authentication-key-01".into()),
-    )));
-    let assert_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
-        ECKey::from_p256_coordinates(&assert_x, &assert_y).with_kid("assertion-key-01".into()),
-    )));
-
-    DIDDoc::new(did.to_string())
-        .with_context(json!([
-            "https://www.w3.org/ns/did/v1",
-            "https://w3id.org/security/jwk/v1"
-        ]))
-        .add_verification_method(VerificationMethod::new(
-            auth_vm_id.clone(),
-            "JsonWebKey2020".into(),
-            did.to_string(),
-            auth_key,
-        ))
-        .add_verification_method(VerificationMethod::new(
-            assert_vm_id.clone(),
-            "JsonWebKey2020".into(),
-            did.to_string(),
-            assert_key,
-        ))
-        .add_authentication(VerificationMethodOrRef::Reference(auth_vm_id))
-        .add_assertion_method(VerificationMethodOrRef::Reference(assert_vm_id))
-        .to_jsonld()
 }
 
 pub(super) fn build_proof(
