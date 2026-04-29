@@ -455,6 +455,97 @@ written — the deactivation entry cannot be signed without it.
 If the local write succeeded but the registry PUT fails, the local file is kept; the user
 can retry the upload manually with `curl` against the same `identifier-entries/<uuid>` path.
 
+---
+
+## `didtool create-pop`
+
+```
+didtool create-pop --did <did-or-hash>
+                   [--role authorized | authentication | assertion]
+                   [--nonce <string>]
+                   [--ttl <seconds>]
+                   [--out <file>] [--force]
+```
+
+Generates a Proof of Possession (PoP) JWT signed with one of the DID's keys. The resulting
+JWT proves cryptographically that the caller controls the corresponding private key. Typical
+uses are registry onboarding handshakes (where a verifier challenges the DID controller with
+a nonce) and low-level testing.
+
+### Flags
+
+| Flag | Required | Default | Description |
+|---|---|---|---|
+| `--did <did-or-hash>` | yes | — | Full DID string or 12-character BLAKE3 hash. Looked up in the key store. |
+| `--role <role>` | no | `assertion` | Which key signs the PoP: `authorized`, `authentication`, or `assertion`. Determines the JWT `alg` (Ed25519 → `EdDSA`, P-256 → `ES256`) and the `kid` value. |
+| `--nonce <string>` | no | _(auto-generated)_ | Value embedded in `payload.nonce`. When omitted, a 128-bit cryptographically random value is drawn from the OS CSPRNG, base64url-encoded (unpadded), and printed to stderr. For real verifier handshakes (registry onboarding, OID4VCI), pass the verifier-supplied challenge here instead of relying on auto-generation. |
+| `--ttl <seconds>` | no | `3600` | Validity in seconds from now: `iat = now`, `exp = now + ttl`. Must be a positive integer; `--ttl 0` is rejected. |
+| `--out <file>` | no | stdout | Write the JWT to a file instead of stdout. |
+| `--force` | no | off | Allow `--out` to overwrite an existing file. |
+
+### Resulting JWT
+
+The signed JWT has this shape (header and payload shown decoded):
+
+```
+header:  { "alg": "EdDSA", "kid": "did:tdw:Q…:example.com#assert-key-01" }
+payload: { "iss":   "did:tdw:Q…:example.com",
+           "iat":   1714400000,
+           "exp":   1714403600,
+           "nonce": "Your Nonce" }
+```
+
+- `alg` is derived from the key type of the chosen role; never user-controllable (a forced
+  mismatch would only produce JWTs no verifier can verify).
+- `kid` is the full verification method id (DID + `#fragment`) of the role's key in the
+  latest snapshot of the DID document.
+- `iss` is the DID itself.
+- `iat` / `exp` are Unix timestamps in seconds.
+
+### Output
+
+By default the JWT is written to stdout **without a trailing newline**, so shell redirection
+produces a byte-exact JWT file:
+
+```
+$ didtool create-pop --did 0a1b2c3d4e5f --nonce abc > pop.jwt
+```
+
+When `--out` is used, the same byte-exact JWT is written to the file. The command refuses to
+overwrite an existing `--out` target unless `--force` is given.
+
+When `--nonce` is omitted, the auto-generated nonce is printed to **stderr** (one line,
+prefixed `generated nonce: `) so the user can record it for later verification:
+
+```
+$ didtool create-pop --did 0a1b2c3d4e5f > pop.jwt
+generated nonce: 7Q3vKx2NfL9aB1cD4eFgHi
+```
+
+### What `create-pop` does internally
+
+1. Resolves `--did` to a key store entry (12-char hash or full DID).
+2. Loads the latest snapshot of that entry: the DID, the role's private key, and the matching
+   verification method id from the latest DID document.
+3. Computes the JWT `kid` (verification method id) and `alg` (from the key type).
+4. Generates a nonce if `--nonce` was not supplied.
+5. Builds the JWT header and payload, base64url-encodes each, signs the
+   `<header>.<payload>` signing input with the private key, and assembles the compact JWS.
+6. Writes the JWT to stdout (no trailing newline) or to `--out`.
+
+### Failure semantics
+
+If the key store entry is missing, or the role's verification method cannot be found in the
+latest DID-document snapshot, the command aborts before any output is produced.
+
+### Out of scope for this version
+
+- Selecting a key from a non-current snapshot (e.g. a rotated-out authorized key). v1 always
+  uses the latest snapshot.
+- OID4VCI-shaped proof JWTs (`typ: openid4vci-proof+jwt`, `aud` claim). A separate command,
+  `create-cred-proof`, will cover that case.
+- Reading the nonce from stdin or a file. Pass it via `--nonce <string>`.
+
 # Output conventions
 
 - Normal output (key material, lists) goes to **stdout**.
@@ -490,6 +581,8 @@ code. No stack traces or internal details are shown to the user.
 | Log file is not valid JSONL            | 1         | `error: '<source>': line <n>: <parse error>`                   |
 | `--at` selector matches no entry       | 1         | `error: no entry matches '<selector>'`                         |
 | Both `--raw` and `--pretty` given      | 1         | `error: --raw and --pretty are mutually exclusive`             |
+| `--ttl` is zero or negative            | 1         | `error: --ttl must be a positive integer`                      |
+| Role's verification method missing in latest snapshot | 1 | `error: no '<role>' verification method in latest snapshot`    |
 
 # Logging
 

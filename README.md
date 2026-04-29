@@ -82,6 +82,18 @@ didtool keystore show --did did:tdw:Qmb7D2murY...
 didtool keystore export --did did:tdw:Qmb7D2murY... --role authorized --out key.pem
 ```
 
+Produce a Proof of Possession (PoP) — a JWT signed with one of a DID's keys.
+Useful for registry onboarding handshakes and low-level testing:
+
+```sh
+# Sign with the assertion key; auto-generate a nonce (printed to stderr).
+didtool create-pop --did did:tdw:Qmb7D2murY... > pop.jwt
+
+# Sign with the authorized key, embed a verifier-supplied challenge, write to a file.
+didtool create-pop --did did:tdw:Qmb7D2murY... \
+    --role authorized --nonce "<challenge>" --out pop.jwt
+```
+
 ## Configuration
 
 See [`.env.example`](./.env.example).

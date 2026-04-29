@@ -113,6 +113,30 @@ enum Command {
         #[arg(long, env = "SWIYU_IDENTIFIER_REGISTRY_URL", value_parser = parse_https_url)]
         registry_url: Option<String>,
     },
+    /// Create a Proof of Possession (PoP) JWT signed with one of the DID's keys.
+    CreatePop {
+        /// Full DID string or 12-character BLAKE3 hash.
+        #[arg(long, required = true)]
+        did: String,
+        /// Which key to sign the PoP with.
+        #[arg(long, value_enum, default_value = "assertion")]
+        role: Role,
+        /// Nonce embedded in the JWT. If omitted, a 128-bit random nonce is generated and printed to stderr.
+        #[arg(long)]
+        nonce: Option<String>,
+        /// Validity in seconds from now. Must be positive.
+        #[arg(long, default_value_t = 3600)]
+        ttl: u64,
+        /// Snapshot version (defaults to latest).
+        #[arg(long)]
+        version: Option<u32>,
+        /// Write the JWT to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Allow `--out` to overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+    },
     /// Mark a DID as deactivated by appending a final entry to its log.
     Deactivate {
         /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
@@ -422,6 +446,27 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 no_publish,
                 partner_id,
                 registry_url,
+            },
+        )
+        .map_err(|e| e.into()),
+        Command::CreatePop {
+            did,
+            role,
+            nonce,
+            ttl,
+            version,
+            out,
+            force,
+        } => cmd::create_pop::cmd_create_pop(
+            &store,
+            cmd::create_pop::CreatePopArgs {
+                did,
+                role: role.into(),
+                nonce,
+                ttl,
+                version,
+                out,
+                force,
             },
         )
         .map_err(|e| e.into()),
