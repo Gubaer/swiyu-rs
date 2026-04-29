@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use tracing::debug;
@@ -43,16 +42,8 @@ pub enum UpdateError {
     NoChange,
     #[error("--rotate {role} and --{role}-key are mutually exclusive")]
     ConflictingRotation { role: &'static str },
-    #[error("--did/HTTPS source: --out is required (cannot append in place)")]
-    OutRequiredForRemote,
-    #[error("file '{}' already exists; pass --force to overwrite", path.display())]
-    FileExists { path: PathBuf },
-    #[error("cannot write '{}': {source}", path.display())]
-    WriteOutput {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    WriteLog(#[from] crate::cmd::file::WriteLogError),
     #[error("DID log is empty — nothing to update against")]
     EmptyLog,
     #[error("could not extract a DID from the log (no entry has a Value state)")]
@@ -173,7 +164,12 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
     // --- write log (atomic-rename or --out) ---
     let new_line = serde_json::to_string(&entry_value)?;
     let updated_log = build_updated_log(&loaded, &new_line);
-    let written_to = write_log(&updated_log, &loaded.source_path, &args)?;
+    let written_to = crate::cmd::file::write_log(
+        &updated_log,
+        loaded.source_path.as_deref(),
+        args.out.as_deref(),
+        args.force,
+    )?;
     debug!("wrote updated DID log to {}", written_to.display());
 
     // --- commit new keys to key store ---
@@ -375,42 +371,6 @@ pub(super) fn build_updated_log(loaded: &LoadedLog, new_line: &str) -> String {
         updated.push('\n');
     }
     updated
-}
-
-fn write_log(
-    content: &str,
-    source_path: &Option<PathBuf>,
-    args: &UpdateArgs,
-) -> Result<PathBuf, UpdateError> {
-    if let Some(path) = &args.out {
-        if path.exists() && !args.force {
-            return Err(UpdateError::FileExists { path: path.clone() });
-        }
-        fs::write(path, content).map_err(|source| UpdateError::WriteOutput {
-            path: path.clone(),
-            source,
-        })?;
-        return Ok(path.clone());
-    }
-
-    let source = source_path
-        .clone()
-        .ok_or(UpdateError::OutRequiredForRemote)?;
-    write_atomic(&source, content).map_err(|source_err| UpdateError::WriteOutput {
-        path: source.clone(),
-        source: source_err,
-    })?;
-    Ok(source)
-}
-
-/// Writes `content` to `target` via a sibling `.tmp` file followed by an atomic rename, so a
-/// crash mid-write cannot corrupt an existing file at `target`.
-pub(super) fn write_atomic(target: &Path, content: &str) -> std::io::Result<()> {
-    let mut tmp_name = target.as_os_str().to_os_string();
-    tmp_name.push(".tmp");
-    let tmp = PathBuf::from(tmp_name);
-    fs::write(&tmp, content)?;
-    fs::rename(&tmp, target)
 }
 
 #[cfg(test)]

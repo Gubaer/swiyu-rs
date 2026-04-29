@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use tracing::debug;
@@ -10,9 +9,7 @@ use swiyu_core::didlog::{DIDDocState, LogEntryFormat};
 
 use crate::cmd::log::{LogError, current_did, load_log};
 use crate::cmd::proof::build_proof;
-use crate::cmd::update::{
-    build_updated_log, compute_version_time, extract_registry_identifier, write_atomic,
-};
+use crate::cmd::update::{build_updated_log, compute_version_time, extract_registry_identifier};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
 
 pub struct DeactivateArgs {
@@ -41,16 +38,8 @@ pub enum DeactivateError {
     Did(String, DIDError),
     #[error("no key store entry for DID '{0}' — cannot sign deactivate entry")]
     KeyStoreMiss(String),
-    #[error("--did/HTTPS source: --out is required (cannot append in place)")]
-    OutRequiredForRemote,
-    #[error("file '{}' already exists; pass --force to overwrite", path.display())]
-    FileExists { path: PathBuf },
-    #[error("cannot write '{}': {source}", path.display())]
-    WriteOutput {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    WriteLog(#[from] crate::cmd::file::WriteLogError),
     #[error(transparent)]
     RegistryArgs(#[from] crate::cmd::RegistryArgsError),
     #[error("cannot extract registry identifier (UUID) from DID '{0}'")]
@@ -144,7 +133,12 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
     // --- write log ---
     let new_line = serde_json::to_string(&entry_value)?;
     let updated_log = build_updated_log(&loaded, &new_line);
-    let written_to = write_log(&updated_log, &loaded.source_path, &args)?;
+    let written_to = crate::cmd::file::write_log(
+        &updated_log,
+        loaded.source_path.as_deref(),
+        args.out.as_deref(),
+        args.force,
+    )?;
     debug!("wrote deactivation log to {}", written_to.display());
 
     // --- publish (unless --no-publish) ---
@@ -179,31 +173,4 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
     }
 
     Ok(())
-}
-
-fn write_log(
-    content: &str,
-    source_path: &Option<PathBuf>,
-    args: &DeactivateArgs,
-) -> Result<PathBuf, DeactivateError> {
-    if let Some(path) = &args.out {
-        if path.exists() && !args.force {
-            return Err(DeactivateError::FileExists { path: path.clone() });
-        }
-        fs::write(path, content).map_err(|source| DeactivateError::WriteOutput {
-            path: path.clone(),
-            source,
-        })?;
-        return Ok(path.clone());
-    }
-    let source: PathBuf = source_path
-        .clone()
-        .ok_or(DeactivateError::OutRequiredForRemote)?;
-    write_atomic(Path::new(&source), content).map_err(|source_err| {
-        DeactivateError::WriteOutput {
-            path: source.clone(),
-            source: source_err,
-        }
-    })?;
-    Ok(source)
 }

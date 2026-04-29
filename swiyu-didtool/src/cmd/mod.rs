@@ -3,6 +3,7 @@ pub mod create;
 pub mod create_pop;
 pub mod deactivate;
 pub mod diddoc;
+pub mod file;
 pub mod http;
 pub mod log;
 pub mod proof;
