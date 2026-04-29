@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -9,9 +9,8 @@ use swiyu_core::did::DID;
 use swiyu_core::didlog::{DIDDocState, DIDLog, DIDLogEntry, DIDLogError};
 
 use crate::cmd::ResolveError;
+use crate::cmd::http::{FetchError, FetchOutcome};
 use crate::keystore::{KeyStore, KeyStoreError};
-
-use crate::cmd::http::{DEFAULT_MAX_BYTES, ENV_MAX_BYTES, FETCH_BODY_SNIPPET};
 
 const DEFAULT_INPUT: &str = "did.jsonl";
 
@@ -40,33 +39,13 @@ pub enum LogError {
     #[error("write to stdout failed: {0}")]
     WriteStdout(#[source] std::io::Error),
     #[error(transparent)]
+    Fetch(#[from] FetchError),
+    #[error(transparent)]
     Resolve(#[from] ResolveError),
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
     #[error("DID log parse error: {0}")]
     LogParse(#[from] DIDLogError),
-    #[error("HTTPS request to '{url}' failed: {source}")]
-    Http {
-        url: String,
-        #[source]
-        source: reqwest::Error,
-    },
-    #[error("registry returned HTTP {status} for '{url}': {body}")]
-    HttpStatus {
-        url: String,
-        status: u16,
-        body: String,
-    },
-    #[error("reading response body for '{url}' failed: {source}")]
-    FetchRead {
-        url: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("response body for '{url}' exceeds {limit} bytes (override with {ENV_MAX_BYTES})")]
-    TooLarge { url: String, limit: usize },
-    #[error("response body for '{url}' is not valid UTF-8")]
-    NotUtf8 { url: String },
     #[error("invalid --at selector '{0}': must be 'latest' or a positive integer")]
     BadSelector(String),
     #[error("no entry at index {index} (log has {total} entries)")]
@@ -180,49 +159,19 @@ fn collect_raw_lines(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Fetches a DID log via HTTPS. A 404 response is *not* "absent" here — a
+/// missing log is a hard error, so we map it to the same `HttpStatus` shape
+/// the previous version produced.
 fn fetch_log(url: &str) -> Result<String, LogError> {
-    let max_bytes = std::env::var(ENV_MAX_BYTES)
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_MAX_BYTES);
-
-    let client = reqwest::blocking::Client::new();
-    debug!("GET {}", url);
-    let response = client.get(url).send().map_err(|e| LogError::Http {
-        url: url.to_string(),
-        source: e,
-    })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().unwrap_or_default();
-        let snippet: String = body.chars().take(FETCH_BODY_SNIPPET).collect();
-        return Err(LogError::HttpStatus {
+    debug!("GET {url}");
+    match crate::cmd::http::fetch_text(url)? {
+        FetchOutcome::Ok(text) => Ok(text),
+        FetchOutcome::NotFound => Err(LogError::Fetch(FetchError::HttpStatus {
             url: url.to_string(),
-            status: status.as_u16(),
-            body: snippet,
-        });
+            status: 404,
+            body: String::new(),
+        })),
     }
-
-    // Read at most max_bytes + 1 so we can detect "exceeded" cleanly.
-    let mut buf = Vec::with_capacity(max_bytes.min(1024 * 64));
-    response
-        .take((max_bytes + 1) as u64)
-        .read_to_end(&mut buf)
-        .map_err(|source| LogError::FetchRead {
-            url: url.to_string(),
-            source,
-        })?;
-
-    if buf.len() > max_bytes {
-        return Err(LogError::TooLarge {
-            url: url.to_string(),
-            limit: max_bytes,
-        });
-    }
-    String::from_utf8(buf).map_err(|_| LogError::NotUtf8 {
-        url: url.to_string(),
-    })
 }
 
 // ---------------------------------------------------------------------------

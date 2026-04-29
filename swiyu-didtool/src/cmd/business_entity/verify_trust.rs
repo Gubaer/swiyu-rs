@@ -11,13 +11,11 @@ use swiyu_core::did::DID;
 use swiyu_core::diddoc::{DIDDoc, PublicKey, PublicKeyJWK};
 use swiyu_core::didlog::{DIDDocState, DIDLog};
 
+use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
 use crate::keystore::KeyStore;
 
-use super::{
-    BusinessEntityError, DecodedStatement, FetchOutcome, build_endpoint, decode_statement,
-    fetch_text,
-};
+use super::{BusinessEntityError, DecodedStatement, build_endpoint, decode_statement};
 
 pub use super::BusinessEntityError as VerifyTrustError;
 

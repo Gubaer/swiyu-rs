@@ -1,12 +1,10 @@
 use tracing::debug;
 
+use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
 use crate::keystore::KeyStore;
 
-use super::{
-    BusinessEntityError, DecodedStatement, FetchOutcome, build_endpoint, decode_statement,
-    fetch_text,
-};
+use super::{BusinessEntityError, DecodedStatement, build_endpoint, decode_statement};
 
 // Re-export the shared error type as `LookupError` for clarity at call sites.
 pub use super::BusinessEntityError as LookupError;

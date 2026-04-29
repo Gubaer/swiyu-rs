@@ -2,7 +2,6 @@ pub mod lookup;
 pub mod verify_trust;
 
 use std::collections::{BTreeMap, HashSet};
-use std::io::Read;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::Value;
@@ -12,8 +11,7 @@ use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::DIDDocError;
 
 use crate::cmd::ResolveError;
-use crate::cmd::http::{DEFAULT_MAX_BYTES, ENV_MAX_BYTES, FETCH_BODY_SNIPPET};
-use crate::cmd::log::LogError;
+use crate::cmd::http::FetchError;
 use crate::keystore::KeyStoreError;
 
 #[derive(Debug, thiserror::Error)]
@@ -22,22 +20,6 @@ pub enum BusinessEntityError {
     TrustRegistryUrlMissing,
     #[error("--trust-issuer or SWIYU_TRUST_ISSUER_DID is required")]
     TrustIssuerMissing,
-    #[error("cannot fetch '{url}': {source}")]
-    Http {
-        url: String,
-        #[source]
-        source: reqwest::Error,
-    },
-    #[error("'{url}' returned {status}: {body}")]
-    HttpStatus {
-        url: String,
-        status: u16,
-        body: String,
-    },
-    #[error("response from '{url}' exceeds {max_bytes} bytes")]
-    ResponseTooLarge { url: String, max_bytes: usize },
-    #[error("response is not valid UTF-8")]
-    NonUtf8,
     #[error("trust registry response is not a JSON array of JWT strings")]
     ResponseShape,
     #[error("trust statement #{n} is malformed: {reason}")]
@@ -53,6 +35,8 @@ pub enum BusinessEntityError {
     #[error("status list idx {idx} exceeds bitstring length")]
     StatusListIdxOutOfRange { idx: u64 },
     #[error(transparent)]
+    Fetch(#[from] FetchError),
+    #[error(transparent)]
     Resolve(#[from] ResolveError),
     #[error(transparent)]
     Did(#[from] DIDError),
@@ -60,10 +44,6 @@ pub enum BusinessEntityError {
     DidDoc(#[from] DIDDocError),
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Log(#[from] LogError),
 }
 
 /// A SWIYU trust statement, decoded from its SD-JWT VC wire form.
@@ -133,62 +113,12 @@ pub(crate) struct StatusInfo {
     pub uri: String,
 }
 
-pub(crate) enum FetchOutcome {
-    Ok(String),
-    NotFound,
-}
-
 pub(crate) fn build_endpoint(base_url: &str, did: &DID) -> String {
     let trimmed = base_url.trim_end_matches('/');
     format!(
         "{trimmed}/api/v1/truststatements/identity/{}",
         did.url_path_segment()
     )
-}
-
-pub(crate) fn fetch_text(url: &str) -> Result<FetchOutcome, BusinessEntityError> {
-    let max_bytes = std::env::var(ENV_MAX_BYTES)
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_MAX_BYTES);
-
-    let client = reqwest::blocking::Client::new();
-    let response = client
-        .get(url)
-        .send()
-        .map_err(|e| BusinessEntityError::Http {
-            url: url.to_string(),
-            source: e,
-        })?;
-
-    let status = response.status();
-    if status.as_u16() == 404 {
-        return Ok(FetchOutcome::NotFound);
-    }
-    if !status.is_success() {
-        let body = response.text().unwrap_or_default();
-        let snippet: String = body.chars().take(FETCH_BODY_SNIPPET).collect();
-        return Err(BusinessEntityError::HttpStatus {
-            url: url.to_string(),
-            status: status.as_u16(),
-            body: snippet,
-        });
-    }
-
-    let mut buf = Vec::with_capacity(max_bytes.min(1024 * 64));
-    response
-        .take((max_bytes + 1) as u64)
-        .read_to_end(&mut buf)?;
-
-    if buf.len() > max_bytes {
-        return Err(BusinessEntityError::ResponseTooLarge {
-            url: url.to_string(),
-            max_bytes,
-        });
-    }
-
-    let text = String::from_utf8(buf).map_err(|_| BusinessEntityError::NonUtf8)?;
-    Ok(FetchOutcome::Ok(text))
 }
 
 pub(crate) fn decode_statement(jwt_text: &str) -> Result<DecodedStatement, String> {
