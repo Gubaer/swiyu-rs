@@ -25,6 +25,32 @@ pub(crate) fn iso8601(unix_secs: u64) -> String {
         .unwrap_or_else(|| unix_secs.to_string())
 }
 
+/// Errors raised when the SWIYU identifier-registry credentials are required but
+/// were not supplied. The `&'static str` is appended to the message verbatim — use
+/// `""` when `--no-publish` is not a meaningful escape (as in `create --swiyu`,
+/// where the registry interaction is mandatory), or `" (or use --no-publish)"`
+/// when it is (as in `update` / `deactivate`).
+#[derive(Debug, thiserror::Error)]
+pub enum RegistryArgsError {
+    #[error("provide --partner-id or set SWIYU_PARTNER_ID{0}")]
+    PartnerIdMissing(&'static str),
+    #[error("provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL{0}")]
+    RegistryUrlMissing(&'static str),
+}
+
+/// Validates that both `partner_id` and `registry_url` are present, returning
+/// the values as a tuple or a [`RegistryArgsError`] indicating which is missing.
+pub(crate) fn require_registry_credentials(
+    partner_id: Option<String>,
+    registry_url: Option<String>,
+    no_publish_hint: &'static str,
+) -> Result<(String, String), RegistryArgsError> {
+    let partner_id = partner_id.ok_or(RegistryArgsError::PartnerIdMissing(no_publish_hint))?;
+    let registry_url =
+        registry_url.ok_or(RegistryArgsError::RegistryUrlMissing(no_publish_hint))?;
+    Ok((partner_id, registry_url))
+}
+
 /// Errors common to the `<hash|did>` resolution helpers below. Each command's error
 /// type wraps this via `#[from] ResolveError` (transparent), so `?` propagates cleanly
 /// from `resolve_did` / `resolve_entry` into any command function.

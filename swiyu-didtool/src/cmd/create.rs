@@ -40,10 +40,8 @@ pub enum CreateError {
     NoUrlSource,
     #[error("<url> and --swiyu are mutually exclusive")]
     AmbiguousUrlSource,
-    #[error("provide --partner-id or set SWIYU_PARTNER_ID")]
-    PartnerIdMissing,
-    #[error("provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL")]
-    RegistryUrlMissing,
+    #[error(transparent)]
+    RegistryArgs(#[from] crate::cmd::RegistryArgsError),
     #[error("--no-publish requires --swiyu")]
     NoPublishWithoutSwiyu,
     #[error(
@@ -76,14 +74,11 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         (Some(_), true) => return Err(CreateError::AmbiguousUrlSource),
         (None, false) => return Err(CreateError::NoUrlSource),
         (None, true) => {
-            let partner_id = args
-                .partner_id
-                .clone()
-                .ok_or(CreateError::PartnerIdMissing)?;
-            let registry_url = args
-                .registry_url
-                .clone()
-                .ok_or(CreateError::RegistryUrlMissing)?;
+            let (partner_id, registry_url) = crate::cmd::require_registry_credentials(
+                args.partner_id.clone(),
+                args.registry_url.clone(),
+                "",
+            )?;
             debug!("allocating DID space via SWIYU identifier registry");
             let allocation = crate::swiyu::allocate_did_url(partner_id, registry_url)?;
             debug!(

@@ -51,10 +51,8 @@ pub enum DeactivateError {
         #[source]
         source: std::io::Error,
     },
-    #[error("provide --partner-id or set SWIYU_PARTNER_ID (or use --no-publish)")]
-    PartnerIdMissing,
-    #[error("provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL (or use --no-publish)")]
-    RegistryUrlMissing,
+    #[error(transparent)]
+    RegistryArgs(#[from] crate::cmd::RegistryArgsError),
     #[error("cannot extract registry identifier (UUID) from DID '{0}'")]
     IdentifierExtraction(String),
     #[error(
@@ -152,10 +150,11 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
     // --- publish (unless --no-publish) ---
     let mut published_url: Option<String> = None;
     if !args.no_publish {
-        let partner_id = args.partner_id.ok_or(DeactivateError::PartnerIdMissing)?;
-        let registry_url = args
-            .registry_url
-            .ok_or(DeactivateError::RegistryUrlMissing)?;
+        let (partner_id, registry_url) = crate::cmd::require_registry_credentials(
+            args.partner_id,
+            args.registry_url,
+            " (or use --no-publish)",
+        )?;
         let identifier = extract_registry_identifier(&did)
             .ok_or_else(|| DeactivateError::IdentifierExtraction(did_str.clone()))?;
         debug!("publishing deactivation to registry");
