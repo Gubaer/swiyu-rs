@@ -94,6 +94,18 @@ didtool create-pop --did did:tdw:Qmb7D2murY... \
     --role authorized --nonce "<challenge>" --out pop.jwt
 ```
 
+Verify a PoP — checks signature, freshness, and (optionally) the nonce. For a
+PoP signed with the authorized key, also verifies the multikey against the
+DID's `parameters.updateKeys` when a log source is supplied:
+
+```sh
+# Verify a PoP from a string.
+didtool verify-pop --jwt "$(cat pop.jwt)"
+
+# Verify against a fresh registry fetch, with an expected nonce.
+didtool verify-pop --jwt-file pop.jwt --did did:tdw:Qmb7D2murY... --nonce "<challenge>"
+```
+
 ## Configuration
 
 See [`.env.example`](./.env.example).

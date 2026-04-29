@@ -137,6 +137,27 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Verify a Proof of Possession (PoP) JWT against a DID's keys.
+    VerifyPop {
+        /// The JWT to verify, passed inline.
+        #[arg(long, conflicts_with = "jwt_file")]
+        jwt: Option<String>,
+        /// Path to a file containing the JWT.
+        #[arg(long)]
+        jwt_file: Option<PathBuf>,
+        /// Full DID string or 12-character BLAKE3 hash. Fetches the DID log via HTTPS.
+        #[arg(long, conflicts_with = "input")]
+        did: Option<String>,
+        /// Local DID log file.
+        #[arg(long)]
+        input: Option<PathBuf>,
+        /// Expected nonce; if given, payload.nonce must match exactly.
+        #[arg(long)]
+        nonce: Option<String>,
+        /// Skip the `exp` freshness check.
+        #[arg(long)]
+        allow_expired: bool,
+    },
     /// Mark a DID as deactivated by appending a final entry to its log.
     Deactivate {
         /// Full DID string or 12-character BLAKE3 hash; resolved to an HTTPS URL and fetched.
@@ -467,6 +488,25 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 version,
                 out,
                 force,
+            },
+        )
+        .map_err(|e| e.into()),
+        Command::VerifyPop {
+            jwt,
+            jwt_file,
+            did,
+            input,
+            nonce,
+            allow_expired,
+        } => cmd::verify_pop::cmd_verify_pop(
+            &store,
+            cmd::verify_pop::VerifyPopArgs {
+                jwt,
+                jwt_file,
+                did,
+                input,
+                nonce,
+                allow_expired,
             },
         )
         .map_err(|e| e.into()),

@@ -546,6 +546,138 @@ latest DID-document snapshot, the command aborts before any output is produced.
   `create-cred-proof`, will cover that case.
 - Reading the nonce from stdin or a file. Pass it via `--nonce <string>`.
 
+---
+
+## `didtool verify-pop`
+
+```
+didtool verify-pop [--jwt <string> | --jwt-file <path>]
+                   [--did <hash-or-did> | --input <log-file>]
+                   [--nonce <expected>]
+                   [--allow-expired]
+```
+
+Verifies a Proof of Possession JWT: parses it, resolves the verifying key, checks the
+signature, and validates the payload claims (`iss`, `exp`, `iat`, optionally `nonce`).
+Symmetric with `create-pop`: a JWT produced by `create-pop` round-trips through `verify-pop`.
+
+### Flags
+
+| Flag | Required | Default | Description |
+|---|---|---|---|
+| `--jwt <string>` | one of these two | — | The JWT to verify, passed inline. |
+| `--jwt-file <path>` | one of these two | — | Path to a file containing the JWT. Useful when the JWT is too long for the command line, or when scripting. Mutually exclusive with `--jwt`. |
+| `--did <hash-or-did>` | no | — | 12-character BLAKE3 hash *or* full DID. Resolves to an HTTPS URL and fetches the DID log via the same code path as `log show --did`. Mutually exclusive with `--input`. |
+| `--input <path>` | no | — | Read the DID log from a local file. Mutually exclusive with `--did`. |
+| `--nonce <string>` | no | — | If present, `payload.nonce` must equal this exactly. Without it, the nonce is reported but not enforced. |
+| `--allow-expired` | no | off | Skip the `exp` freshness check. By default, JWTs whose `exp` is at or before the current time are rejected. |
+
+### kid resolution
+
+The `kid` in the JWT header takes one of two shapes:
+
+- **`did:key:<multikey>#<multikey>`** — the kid encodes the verifying key directly. The
+  multikey decodes to an Ed25519 public key (P-256 reserved). The `iss` cross-check and the
+  multikey-vs-`updateKeys` check depend on whether `--did` / `--input` is supplied:
+
+  - **Without `--did` / `--input`**: signature is verified self-contained, and `payload.iss`
+    is reported but **not** cross-checked. The verifier is responsible for any out-of-band
+    identity binding (e.g. checking the multikey against a registry record).
+  - **With `--did` / `--input`**: the log is loaded; the kid's multikey **must** appear in
+    the latest entry's `parameters.updateKeys`, and `payload.iss` **must** equal the log's
+    DID. This binds the PoP to a specific DID's update authority.
+
+- **`<did>#<fragment>`** — references a verification method inside a DID document. The
+  document is resolved in priority order:
+
+  1. **`--did <hash-or-did>`**: HTTPS fetch via the standard `log show` code path.
+  2. **`--input <path>`**: read from the given local log file.
+  3. **Default (no flag)**: look up the kid's DID in the local key store; map known
+     fragments (`authentication-key-01` → Authentication, `assertion-key-01` → Assertion)
+     to the corresponding role's stored public key.
+
+  In all three branches, the DID derived from the resolved log/keystore must equal the DID
+  part of the kid. `payload.iss` must equal the kid's DID.
+
+### Validation order
+
+Checks run fail-closed in this order; the first failure aborts:
+
+1. JWT structurally well-formed: three dot-separated base64url parts; header and payload
+   decode to JSON objects; signature decodes to bytes.
+2. `header.alg` is one of `EdDSA` or `ES256`. **`alg: "none"` and any other algorithm are
+   rejected.**
+3. `header.kid` parses into one of the two supported shapes.
+4. **kid resolution** per the chain above. For `did:key` kids with `--did`/`--input`, this
+   includes verifying the multikey is in the log's `parameters.updateKeys`.
+5. `header.alg` matches the resolved key type (`EdDSA` ↔ Ed25519, `ES256` ↔ P-256).
+6. The signature verifies over `<base64url-header>.<base64url-payload>` with the resolved
+   verifying key.
+7. `iss` cross-check:
+    - For `<did>#<fragment>` kids: `payload.iss == kid_did`.
+    - For `did:key` kids with `--did`/`--input`: `payload.iss == log_did`.
+    - For `did:key` kids without `--did`/`--input`: skipped (informational only).
+8. Unless `--allow-expired`: `payload.exp > now` (Unix seconds).
+9. `payload.iat <= now + 60` (a 60-second clock-skew tolerance).
+10. If `--nonce <expected>` is given: `payload.nonce == expected`.
+
+The cross-check at step 7 prevents *confused-deputy* errors: a JWT signed with key K bound
+to DID A but claiming `iss = B` would otherwise let a verifier inadvertently vouch for B's
+identity. For `<did>#<fragment>` kids the binding is intrinsic (kid encodes the DID); for
+`did:key` kids, the binding requires looking up the log — which is why `iss` enforcement
+for `did:key` only kicks in when a log source is provided.
+
+### Output
+
+#### Success
+
+A multi-line summary on **stdout**, exit code 0:
+
+```
+PoP is valid
+  alg:    EdDSA
+  kid:    did:key:z6MktdAr3iUReU7HsCf7JnoCjQ5urpKTxZSC49KnjEVsA5CA
+  iss:    did:tdw:Qmb7…:example.com
+  iat:    2026-04-29T18:23:00Z
+  exp:    2026-04-29T19:23:00Z (in 59m 30s)
+  nonce:  bqjNtL55MStkosme9a4kMg
+```
+
+When `--allow-expired` is in effect and the JWT is past `exp`, the `exp` line reads
+`expired 1h 12m ago`.
+
+#### Failure
+
+A single-line `error: …` on **stderr**, exit code 1. The message identifies the first failed
+check; the JWT is treated as invalid as soon as any check fails.
+
+### What `verify-pop` does internally
+
+1. Reads the JWT from `--jwt` or `--jwt-file`.
+2. Parses and base64url-decodes the three segments.
+3. Validates `header.alg` against the supported set (`EdDSA`, `ES256`).
+4. Parses `header.kid`; resolves the verifying key via the chain above.
+5. Verifies the signature over the signing input (`<header>.<payload>`).
+6. Cross-checks `iss` against the kid's DID, then enforces `exp` (unless `--allow-expired`)
+   and `iat`.
+7. If `--nonce` was given, compares to `payload.nonce`.
+8. Prints the success summary to stdout.
+
+### Failure semantics
+
+`verify-pop` is read-only: no files are modified, no network calls beyond what `--did`
+triggers. A failed verification simply produces an error and a non-zero exit code; no state
+is left behind.
+
+### Out of scope for this version
+
+- HTTPS fetch outside the `--did` path (no resolver for kids that embed a DID we don't
+  know about and that wasn't passed via `--did` / `--input`).
+- Algorithms beyond `EdDSA` and `ES256`. RSA, secp256k1, etc. are rejected with
+  `UnsupportedAlg`.
+- DPoP-specific headers (`htu`, `htm`, `ath`).
+- A `--quiet` mode that suppresses the success summary. Add later if scripting demands it.
+
 # Output conventions
 
 - Normal output (key material, lists) goes to **stdout**.
@@ -583,6 +715,20 @@ code. No stack traces or internal details are shown to the user.
 | Both `--raw` and `--pretty` given      | 1         | `error: --raw and --pretty are mutually exclusive`             |
 | `--ttl` is zero or negative            | 1         | `error: --ttl must be a positive integer`                      |
 | Role's verification method missing in latest snapshot | 1 | `error: no '<role>' verification method in latest snapshot`    |
+| Both `--jwt` and `--jwt-file` given    | 1         | `error: --jwt and --jwt-file are mutually exclusive`           |
+| Neither `--jwt` nor `--jwt-file` given | 1         | `error: provide one of --jwt or --jwt-file`                    |
+| JWT not 3 base64url parts              | 1         | `error: JWT is malformed: <reason>`                            |
+| Unsupported `alg` (incl. `none`)       | 1         | `error: unsupported alg '<alg>'; expected EdDSA or ES256`      |
+| `alg` and key type disagree            | 1         | `error: alg '<alg>' does not match key type <key-type>`        |
+| Signature verification failed          | 1         | `error: signature verification failed`                         |
+| `iss` disagrees with expected DID      | 1         | `error: payload.iss '<iss>' does not match expected '<did>'`   |
+| `did:key` multikey not in `parameters.updateKeys` | 1 | `error: did:key multikey is not present in the latest entry's parameters.updateKeys of '<did>'` |
+| JWT expired                            | 1         | `error: JWT expired at <iso8601> (<delta> ago)`                |
+| `iat` further than 60s in the future   | 1         | `error: JWT has iat in the future (<delta> ahead)`             |
+| `--nonce` mismatch                     | 1         | `error: payload.nonce '<actual>' does not match expected '<expected>'` |
+| Verification method id missing in DID document | 1 | `error: no verification method with id '<kid>' in DID document` |
+| DID derived from kid disagrees with `--did`/`--input` | 1 | `error: DID '<source>' does not match kid's DID '<kid-did>'` |
+| `did:key` multikey decoding failed     | 1         | `error: cannot decode did:key multikey: <reason>`              |
 
 # Logging
 
