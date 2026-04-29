@@ -5,6 +5,7 @@ pub mod deactivate;
 pub mod diddoc;
 pub mod http;
 pub mod log;
+pub mod proof;
 pub mod update;
 pub mod verify_pop;
 

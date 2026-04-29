@@ -6,9 +6,7 @@ use tracing::debug;
 use swiyu_core::did::DID;
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
-use swiyu_core::didlog::{
-    DIDDocState, DIDLogEntry, LogEntryFormat, LogParameters, eddsa_jcs_2022_hash,
-};
+use swiyu_core::didlog::{DIDDocState, DIDLogEntry, LogEntryFormat, LogParameters};
 
 use crate::crypto::{CryptoError, generate_ecdsa_key_pair, generate_eddsa_key_pair};
 use crate::keystore::{KeyStore, KeyStoreError, StagedKeys};
@@ -159,8 +157,8 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         LogEntryFormat::TDW03 => "authentication",
         LogEntryFormat::WebVH10 => "assertionMethod",
     };
-    let proof = build_proof(
-        &staged,
+    let proof = super::proof::build_proof(
+        staged.authorized_signing(),
         &document_for_hash,
         &authorized_multikey,
         &version_id,
@@ -383,76 +381,6 @@ fn build_genesis_entry(
             DIDLogEntry::new_webvh("{SCID}".into(), now.into(), parameters, state, vec![])
         }
     }
-}
-
-fn build_proof(
-    staged: &StagedKeys,
-    entry: &Value,
-    authorized_multikey: &str,
-    version_id: &str,
-    proof_purpose: &str,
-    now: &str,
-) -> Value {
-    let vm_id = format!("did:key:{authorized_multikey}#{authorized_multikey}");
-    let proof_config = json!({
-        "type": "DataIntegrityProof",
-        "cryptosuite": "eddsa-jcs-2022",
-        "verificationMethod": vm_id,
-        "proofPurpose": proof_purpose,
-        "challenge": version_id,
-        "created": now
-    });
-
-    let proof_jcs = serde_jcs::to_vec(&proof_config).expect("proof config is serialisable");
-    let document_jcs = serde_jcs::to_vec(entry).expect("document is serialisable");
-    debug!(
-        "JCS proof_config ({} bytes): {}",
-        proof_jcs.len(),
-        String::from_utf8_lossy(&proof_jcs)
-    );
-    debug!(
-        "JCS document ({} bytes): {}",
-        document_jcs.len(),
-        String::from_utf8_lossy(&document_jcs)
-    );
-
-    let hash_data = eddsa_jcs_2022_hash(entry, &proof_config);
-    debug!("hash_data (64 bytes): {}", hex_encode(&hash_data));
-
-    let sig_bytes = staged.sign_with_authorized(&hash_data);
-    debug!("signature (64 bytes): {}", hex_encode(&sig_bytes));
-    debug!(
-        "public key (32 bytes): {}",
-        hex_encode(staged.authorized_key_bytes())
-    );
-    debug!("authorized multikey: {}", authorized_multikey);
-
-    // Local self-check: re-verify our own signature so we know the cryptography path
-    // is internally consistent (any failure here would point to a key/sign mismatch
-    // rather than a canonicalization issue).
-    {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let vk = VerifyingKey::from_bytes(staged.authorized_key_bytes()).unwrap();
-        let sig = Signature::from_bytes(&sig_bytes);
-        match vk.verify(&hash_data, &sig) {
-            Ok(_) => debug!("local self-verification: OK"),
-            Err(e) => debug!("local self-verification FAILED: {}", e),
-        }
-    }
-
-    let proof_value = format!("z{}", bs58::encode(sig_bytes).into_string());
-
-    let mut proof = proof_config.as_object().unwrap().clone();
-    proof.insert("proofValue".into(), json!(proof_value));
-    Value::Object(proof)
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{:02x}", b));
-    }
-    s
 }
 
 fn strip_proof_slot(entry: &mut Value, format: &LogEntryFormat) {

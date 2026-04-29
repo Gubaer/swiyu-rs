@@ -4,10 +4,8 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use tracing::debug;
 
-use ed25519_dalek::Signer;
 use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
-use swiyu_core::didlog::eddsa_jcs_2022_hash;
 use swiyu_core::didlog::scid::derive_entry_hash;
 
 use crate::cmd::log::{LoadedLog, LogError, current_did, load_log};
@@ -162,7 +160,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
     entry_value[0] = json!(new_version_id);
 
     // --- proof: signed by previous authorized key, hashes only the DID document ---
-    let proof = build_proof(
+    let proof = super::proof::build_proof(
         &prev_authorized,
         &entry_value[3]["value"],
         &prev_authorized_multikey,
@@ -344,33 +342,6 @@ fn stage_keys(entry: &KeyStoreEntry, version: u32, plan: &Plan) -> Result<Staged
         authentication,
         assertion,
     ))
-}
-
-pub(super) fn build_proof(
-    signer: &ed25519_dalek::SigningKey,
-    document: &Value,
-    authorized_multikey: &str,
-    version_id: &str,
-    proof_purpose: &str,
-    now: &str,
-) -> Value {
-    let vm_id = format!("did:key:{authorized_multikey}#{authorized_multikey}");
-    let proof_config = json!({
-        "type": "DataIntegrityProof",
-        "cryptosuite": "eddsa-jcs-2022",
-        "verificationMethod": vm_id,
-        "proofPurpose": proof_purpose,
-        "challenge": version_id,
-        "created": now,
-    });
-
-    let hash_data = eddsa_jcs_2022_hash(document, &proof_config);
-    let signature = signer.sign(&hash_data);
-    let proof_value = format!("z{}", bs58::encode(signature.to_bytes()).into_string());
-
-    let mut proof = proof_config.as_object().unwrap().clone();
-    proof.insert("proofValue".into(), json!(proof_value));
-    Value::Object(proof)
 }
 
 pub(super) fn compute_version_time(prev_version_time: &str) -> String {

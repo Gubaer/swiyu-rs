@@ -9,8 +9,9 @@ use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::didlog::{DIDDocState, LogEntryFormat};
 
 use crate::cmd::log::{LogError, current_did, load_log};
+use crate::cmd::proof::build_proof;
 use crate::cmd::update::{
-    build_proof, build_updated_log, compute_version_time, extract_registry_identifier, write_atomic,
+    build_updated_log, compute_version_time, extract_registry_identifier, write_atomic,
 };
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
 

@@ -116,6 +116,12 @@ impl StagedKeys {
         self.authorized_signing.sign(message).to_bytes()
     }
 
+    /// Borrows the authorized EdDSA signing key. Used by code paths that need
+    /// the signer directly (e.g. proof construction shared with `update`).
+    pub fn authorized_signing(&self) -> &ed25519_dalek::SigningKey {
+        &self.authorized_signing
+    }
+
     /// Raw 32-byte Ed25519 public key for the `authorized` role (signs DID log entries).
     pub fn authorized_key_bytes(&self) -> &[u8; 32] {
         self.authorized_verifying.as_bytes()
