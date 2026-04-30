@@ -24,6 +24,12 @@ This tutorial walks through that onboarding end-to-end with `didtool`. If you ar
 
    *In this tutorial:* after SWIYU's manual onboarding, a Trust Statement linking kacon gmbh's DID back to kacon gmbh's Base Registry entry is published here.
 
+4. **Status List Registry**
+
+   Stores **status lists** — used by issuers to revoke previously-issued credentials or Trust Statements, and by verifiers to confirm an item is still valid.
+
+   *In this tutorial:* the Trust Statement that SWIYU issues for kacon gmbh's DID points into a SWIYU-managed status list here — that is how revocation of the Trust Statement would be signalled. Later on, once kacon gmbh starts issuing verifiable credentials to its students, kacon gmbh will publish its own status lists in this registry to be able to revoke individual credentials.
+
 ## Becoming a business partner in SWIYU
 
 kacon gmbh first has to become a registered **business partner** (also called *business entity*) in the SWIYU ecosystem. The registration process is purely manual; the required steps are described in [Onboarding the swiyu Base & Trust Registry][swiyu-onboarding]. There are two major steps:
