@@ -28,9 +28,9 @@ pub(crate) fn iso8601(unix_secs: u64) -> String {
 
 /// Errors raised when the SWIYU identifier-registry credentials are required but
 /// were not supplied. The `&'static str` is appended to the message verbatim — use
-/// `""` when `--no-publish` is not a meaningful escape (as in `create --swiyu`,
-/// where the registry interaction is mandatory), or `" (or use --no-publish)"`
-/// when it is (as in `update` / `deactivate`).
+/// `""` when `--no-publish` is not a meaningful escape (as in `create`, where the
+/// POST to allocate the DID URL is mandatory regardless of `--no-publish`), or
+/// `" (or use --no-publish)"` when it is (as in `update` / `deactivate`).
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryArgsError {
     #[error("provide --partner-id or set SWIYU_PARTNER_ID{0}")]

@@ -36,13 +36,13 @@ pub enum CreateError {
     AssertionKey(CryptoError),
     #[error("--authentication-key and --assertion-key must differ")]
     IdenticalKeys,
-    #[error("provide a <url> or --swiyu")]
+    #[error("neither URL nor SWIYU mode set")]
     NoUrlSource,
-    #[error("<url> and --swiyu are mutually exclusive")]
+    #[error("URL and SWIYU mode are mutually exclusive")]
     AmbiguousUrlSource,
     #[error(transparent)]
     RegistryArgs(#[from] crate::cmd::RegistryArgsError),
-    #[error("--no-publish requires --swiyu")]
+    #[error("--no-publish requires SWIYU mode")]
     NoPublishWithoutSwiyu,
     #[error(
         "DID created and saved locally, but registry upload failed: {source} — retry manually with the file at {path}"
@@ -69,7 +69,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         return Err(CreateError::NoPublishWithoutSwiyu);
     }
 
-    // --- resolve URL (and, for --swiyu, the registry-assigned identifier) ---
+    // --- resolve URL (and, in SWIYU mode, the registry-assigned identifier) ---
     let (url, allocation) = match (&args.url, args.swiyu) {
         (Some(_), true) => return Err(CreateError::AmbiguousUrlSource),
         (None, false) => return Err(CreateError::NoUrlSource),
@@ -171,7 +171,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
     let entry = store.commit(staged, &real_did)?;
     debug!("committed keys to key store (hash: {})", entry.hash());
 
-    // --- publish to registry (--swiyu only, unless --no-publish) ---
+    // --- publish to registry (SWIYU mode only, unless --no-publish) ---
     let published_url = if let Some(allocation) = &allocation
         && !args.no_publish
     {

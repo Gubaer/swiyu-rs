@@ -186,38 +186,27 @@ existing file unless `--force` is given.
   compared to realistic data (DID logs in the hundreds of KB; trust statements and
   status lists in the tens of KB) and applies to every HTTPS fetch didtool performs
   (DID log, trust registry, status list). The cap is fixed — there is no override.
-- The fetch is synchronous (`reqwest` blocking client), consistent with the `--swiyu` form of
-  `didtool create`. No async runtime is introduced.
+- The fetch is synchronous (`reqwest` blocking client), consistent with the registry calls
+  made by `didtool create`. No async runtime is introduced.
 
 ## `didtool create`
 
-Creates a new DID, generates (or imports) key pairs, writes the initial DID log, and stores the
-keys in the key store.
-
-The URL that becomes part of the DID can be supplied in two ways — exactly one must be provided.
-
-### Form 1 — explicit URL
-
 ```
-didtool create <url> [options]
+didtool create [--partner-id <id>] [--registry-url <url>] [--no-publish] [options]
 ```
 
-`<url>` is the HTTPS URL where the DID log will be served
-(e.g. `https://example.com/.well-known/did.jsonl`). The domain and path components are extracted
-to form the DID identifier.
-
-### Form 2 — SWIYU partner
-
-```
-didtool create --swiyu [--partner-id <id>] [--registry-url <url>] [options]
-```
+Creates a new DID via the SWIYU identifier registry, generates (or imports) key pairs, writes
+the initial DID log, stores the keys in the key store, and (unless `--no-publish`) publishes
+the DID log to the registry.
 
 Calls the SWIYU identifier registry API to allocate a new DID space, then uses the
 `identifierRegistryUrl` from the response as the DID URL. After the local DID log entry is
 constructed and signed, it is uploaded back to the registry via a PUT request, completing the
-registration in a single command. Use `--no-publish` to skip the upload step (e.g. for dry-run
-testing). Requires `SWIYU_ACCESS_TOKEN` to be set in the environment — it is intentionally not
-accepted as a flag to keep it out of shell history and process listings.
+registration in a single command. Use `--no-publish` to skip the PUT (e.g. for dry-run
+testing) — the POST that allocates the DID space still runs, since the URL must exist before
+the SCID and proof can be computed. Requires `SWIYU_ACCESS_TOKEN` to be set in the
+environment — it is intentionally not accepted as a flag to keep it out of shell history and
+process listings.
 
 | Flag | Env var | Description |
 |---|---|---|
@@ -252,9 +241,9 @@ The API calls made are:
 If the registry POST succeeds but the PUT fails, the registry has an allocated-but-empty entry
 and the local files (`did.jsonl` + keystore entry) are written but not published. The CLI keeps
 the local files (so the keys aren't lost), reports the error, and exits non-zero. **Re-running
-`didtool create --swiyu` will allocate a fresh identifier and orphan the previous one** —
-instead, retry the upload manually with the local `did.jsonl` (e.g. via `curl`). A `didtool
-publish` subcommand to automate retry is not currently provided.
+`didtool create` will allocate a fresh identifier and orphan the previous one** — instead,
+retry the upload manually with the local `did.jsonl` (e.g. via `curl`). A `didtool publish`
+subcommand to automate retry is not currently provided.
 
 ### Common options
 
@@ -265,7 +254,7 @@ publish` subcommand to automate retry is not currently provided.
 | `--authorized-key <pem-file>` | Private EdDSA (Ed25519) key to use for the `authorized` role. Generated if omitted. |
 | `--authentication-key <pem-file>` | Private ECDSA (P-256) key to use for the `authentication` role. Generated if omitted. |
 | `--assertion-key <pem-file>` | Private ECDSA (P-256) key to use for the `assertion` role. Generated if omitted. |
-| `--no-publish` | (with `--swiyu` only) skip the PUT upload step. The DID is created locally but not published to the registry. |
+| `--no-publish` | Skip the PUT upload step. The DID is allocated and signed locally but not published to the registry. |
 
 When a private key file is supplied, the public key is derived from it — no separate public key
 file is needed. Key pairs not supplied by the user are generated fresh.
@@ -283,29 +272,35 @@ the DID log is written to disk.
 On success, the full DID string is printed to stdout:
 
 ```
-$ didtool create https://example.com/.well-known/did.jsonl
-did:webvh:Qm…:example.com
+$ didtool create --format tdw
+Generated DID: did:tdw:Qm…:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:<uuid>
+Saved DID log entry: did.jsonl
+Keystore hash: <12-char hash>
+Published to registry: https://identifier-reg.trust-infra.swiyu-int.admin.ch/api/v1/did/<uuid>/did.jsonl
 ```
 
-A confirmation line (log file path, key store hash) is printed to stderr.
+The `Published to registry:` line is omitted when `--no-publish` is given.
 
 ### What `create` does internally
 
-1. Generates or reads the three private keys; derives the public keys.
-2. Builds the genesis DID document from the public keys and the URL.
-3. Derives the SCID and constructs the full DID.
-4. Writes the initial DID log entry to `--out`.
-5. Commits the keys to the key store.
-6. **For `--swiyu` (unless `--no-publish`)**: PUTs the DID log entry to the registry at the
-   allocated identifier endpoint. On failure, the local files (DID log + keystore entry) are
-   kept; the error message instructs the user to retry the upload manually.
-7. Prints the DID to stdout.
+1. POSTs to the SWIYU registry to allocate a DID space; the response yields the
+   `identifierRegistryUrl` that becomes the DID's URL.
+2. Generates or reads the three private keys; derives the public keys.
+3. Builds the genesis DID document from the public keys and the URL.
+4. Derives the SCID and constructs the full DID.
+5. Writes the initial DID log entry to `--out`.
+6. Commits the keys to the key store.
+7. **Unless `--no-publish`**: PUTs the DID log entry to the registry at the allocated
+   identifier endpoint. On failure, the local files (DID log + keystore entry) are kept; the
+   error message instructs the user to retry the upload manually.
+8. Prints the DID and a publish confirmation (or omits the publish line under `--no-publish`)
+   to stdout.
 
 ### Dependencies
 
-The `--swiyu` form requires an HTTP client (`reqwest`), which is an unconditional dependency.
-`didtool` is a standalone CLI with no downstream consumers, so a feature flag to opt out would
-add complexity without benefit.
+`create` requires an HTTP client (`reqwest`), which is an unconditional dependency. `didtool`
+is a standalone CLI with no downstream consumers, so a feature flag to opt out would add
+complexity without benefit.
 
 `reqwest` is used in blocking mode — there is only one HTTP call and no concurrency needed, so
 introducing an async runtime (tokio) would be unnecessary complexity for a CLI tool.
@@ -1034,8 +1029,6 @@ code. No stack traces or internal details are shown to the user.
 | SWIYU_ACCESS_TOKEN not set             | 1         | `error: SWIYU_ACCESS_TOKEN is not set`                         |
 | SWIYU API request failed               | 1         | `error: registry API error: HTTP <status>`                     |
 | DID created locally but registry upload failed | 1 | `error: DID created and saved locally, but registry upload failed (HTTP <status>) — retry manually with the file at <path>` |
-| Neither `<url>` nor `--swiyu` given    | 1         | `error: provide a <url> or --swiyu`                            |
-| Both `<url>` and `--swiyu` given       | 1         | `error: <url> and --swiyu are mutually exclusive`              |
 | Both `--did` and `--input` given       | 1         | `error: --did and --input are mutually exclusive`              |
 | `--did` value is neither a DID nor a 12-char hex hash | 1 | `error: '<value>' is neither a DID nor a 12-character hex hash` |
 | Hash given to `--did` not in key store | 1         | `error: no entry found for '<hash>'`                           |

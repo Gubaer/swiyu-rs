@@ -33,14 +33,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create a new DID, generate key pairs, and write the initial DID log.
+    /// Create a new DID via the SWIYU identifier registry, generate key pairs, write the initial DID log, and (unless --no-publish) publish the log to the registry.
     Create {
-        /// HTTPS URL where the DID log will be served (e.g. https://example.com/.well-known/did.jsonl).
-        #[arg(value_parser = parse_https_url)]
-        url: Option<String>,
-        /// Allocate a DID space via the SWIYU identifier registry instead of supplying a URL.
-        #[arg(long)]
-        swiyu: bool,
         #[command(flatten)]
         registry: SwiyuRegistryArgs,
         /// DID method to use.
@@ -379,8 +373,6 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let store = open_store(cli.keystore)?;
     match cli.command {
         Command::Create {
-            url,
-            swiyu,
             registry:
                 SwiyuRegistryArgs {
                     no_publish,
@@ -395,8 +387,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         } => cmd::create::cmd_create(
             &store,
             cmd::create::CreateArgs {
-                url,
-                swiyu,
+                url: None,
+                swiyu: true,
                 partner_id,
                 registry_url,
                 no_publish,
