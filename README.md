@@ -13,6 +13,15 @@ The workspace contains two crates:
   DID-log entries, SCID + entryHash derivation, JsonWebKey types, and
   Data Integrity Proof signing.
 
+## Learn by example
+
+If you like specific real-world examples, walk through the
+[sample use case](./swiyu-didtool/doc/sample-use-case.md): a small Swiss consulting
+company onboards as a SWIYU issuer, registers a DID against the Identifier Registry,
+gets a Trust Statement issued for it, rotates its keys, and finally deactivates it.
+Every command is shown together with its real output, so you can follow along verbatim
+against the SWIYU integration environment or adapt the steps to your own organisation.
+
 ## Status
 
 Work in progress. The `didtool` CLI is usable end-to-end against the SWIYU integration environment; APIs are not yet stable.
