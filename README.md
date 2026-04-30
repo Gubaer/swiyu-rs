@@ -109,7 +109,7 @@ Create a DID, rotate a key, deactivate:
 
 ```sh
 # Allocate a DID space, sign the genesis log entry, publish to the registry.
-didtool create --format tdw
+didtool create
 
 # Append a new entry that rotates the authentication key; publish.
 didtool update --did did:tdw:Qmb7D2murY... --rotate authentication

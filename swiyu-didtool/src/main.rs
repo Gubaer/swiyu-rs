@@ -38,7 +38,7 @@ enum Command {
         #[command(flatten)]
         registry: SwiyuRegistryArgs,
         /// DID method to use.
-        #[arg(long, default_value = "webvh")]
+        #[arg(long, default_value = "tdw")]
         format: Format,
         /// Path to write the initial DID log (default: did.jsonl in the current directory).
         #[arg(long, default_value = "did.jsonl")]

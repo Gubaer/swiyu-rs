@@ -249,7 +249,7 @@ subcommand to automate retry is not currently provided.
 
 | Option | Description |
 |---|---|
-| `--format tdw\|webvh` | DID method to use. Default: `webvh`. |
+| `--format tdw\|webvh` | DID method to use. Default: `tdw` — the only method currently testable end-to-end against the SWIYU integration registry. `webvh` code paths exist but are not registry-validated. |
 | `--out <file>` | Where to write the initial DID log. Default: `did.jsonl` in the current directory. |
 | `--authorized-key <pem-file>` | Private EdDSA (Ed25519) key to use for the `authorized` role. Generated if omitted. |
 | `--authentication-key <pem-file>` | Private ECDSA (P-256) key to use for the `authentication` role. Generated if omitted. |
@@ -272,7 +272,7 @@ the DID log is written to disk.
 On success, the full DID string is printed to stdout:
 
 ```
-$ didtool create --format tdw
+$ didtool create
 Generated DID: did:tdw:Qm…:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:<uuid>
 Saved DID log entry: did.jsonl
 Keystore hash: <12-char hash>
