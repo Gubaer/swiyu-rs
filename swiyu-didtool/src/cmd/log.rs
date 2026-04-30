@@ -279,6 +279,12 @@ fn print_list(store: &KeyStore, log: &DIDLog) -> Result<(), LogError> {
         .max()
         .unwrap_or(10)
         .max("VERSION-ID".len());
+    let version_time_width = entries
+        .iter()
+        .map(|e| e.version_time().len())
+        .max()
+        .unwrap_or(0)
+        .max("VERSION-TIME".len());
 
     let did_str = current_did(log);
     let keystore_hash = did_str.as_deref().and_then(|d| keystore_hash_for(store, d));
@@ -300,18 +306,27 @@ fn print_list(store: &KeyStore, log: &DIDLog) -> Result<(), LogError> {
 
     writeln!(
         out,
-        "{vid:<vid_w$}  VERSION-TIME",
+        "{vid:<vid_w$}  {vt:<vt_w$}  DEACTIVATED",
         vid = "VERSION-ID",
         vid_w = version_id_width,
+        vt = "VERSION-TIME",
+        vt_w = version_time_width,
     )
     .map_err(LogError::WriteStdout)?;
     for entry in entries {
+        let deactivated = if entry.parameters().deactivated() == Some(true) {
+            "yes"
+        } else {
+            "no"
+        };
         writeln!(
             out,
-            "{vid:<vid_w$}  {vt}",
+            "{vid:<vid_w$}  {vt:<vt_w$}  {d}",
             vid = entry.version_id(),
             vid_w = version_id_width,
             vt = entry.version_time(),
+            vt_w = version_time_width,
+            d = deactivated,
         )
         .map_err(LogError::WriteStdout)?;
     }

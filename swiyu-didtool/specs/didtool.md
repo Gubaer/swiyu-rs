@@ -126,10 +126,10 @@ header identifying the DID, followed by a blank line and the entry rows:
 DID:            did:tdw:QmXyZ…:example.com:dids:issuer
 Keystore hash:  9a4964f818df
 
-VERSION-ID                                   VERSION-TIME
-1-QmXyZ…                                     2026-04-27T08:11:42Z
-2-QmAbC…                                     2026-04-27T09:02:11Z
-3-QmDeF…                                     2026-04-30T14:55:00Z
+VERSION-ID                                   VERSION-TIME          DEACTIVATED
+1-QmXyZ…                                     2026-04-27T08:11:42Z  no
+2-QmAbC…                                     2026-04-27T09:02:11Z  no
+3-QmDeF…                                     2026-04-30T14:55:00Z  yes
 ```
 
 Header lines:
@@ -143,6 +143,10 @@ Header lines:
 Columns:
 - `VERSION-ID` — the full `versionId` of the entry.
 - `VERSION-TIME` — the `versionTime` of the entry.
+- `DEACTIVATED` — `yes` if the entry's `parameters.deactivated` is `true`, `no` otherwise.
+  did:tdw 0.3 only writes `deactivated: true` on the deactivation entry itself; earlier
+  entries omit the field and read as `no`. Deactivation is one-way, so at most one row can
+  read `yes` and it is always the last entry.
 
 ### `didtool log show [--did <did-or-hash> | --input <path>] [--out <file>] [--force] [--raw | --pretty]`
 
