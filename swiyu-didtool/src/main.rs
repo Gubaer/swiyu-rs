@@ -85,7 +85,7 @@ enum Command {
         /// Existing P-256 private key to install as the new assertion key (PEM).
         #[arg(long)]
         assertion_key: Option<PathBuf>,
-        /// Write the full updated log to this file (default: append in place to the source).
+        /// Write the full updated log to this file. With --input or the default `did.jsonl`, the source file is updated in place if --out is omitted; with --did the new log is not written locally unless --out is given (persistence is via registry publish).
         #[arg(long)]
         out: Option<PathBuf>,
         /// Allow `--out` to overwrite an existing file.
@@ -144,7 +144,7 @@ enum Command {
     Deactivate {
         #[command(flatten)]
         source: DidOrInputArgs,
-        /// Write the full updated log to this file (default: append in place to the source).
+        /// Write the full updated log to this file. With --input or the default `did.jsonl`, the source file is updated in place if --out is omitted; with --did the new log is not written locally unless --out is given (persistence is via registry publish).
         #[arg(long)]
         out: Option<PathBuf>,
         /// Allow `--out` to overwrite an existing file.

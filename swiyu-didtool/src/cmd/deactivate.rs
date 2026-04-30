@@ -52,6 +52,18 @@ pub enum DeactivateError {
         source: crate::swiyu::SwiyuError,
         path: PathBuf,
     },
+    #[error(
+        "registry upload of deactivation entry failed: {source} — entry saved to fallback file {}; retry manually with this file", path.display()
+    )]
+    PublishFailedPending {
+        #[source]
+        source: crate::swiyu::SwiyuError,
+        path: PathBuf,
+    },
+    #[error(
+        "--did used without --out and --no-publish set: the deactivation entry would have nowhere to go (use --out to save it locally, or drop --no-publish to publish to the registry)"
+    )]
+    NoTarget,
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
     #[error(transparent)]
@@ -61,6 +73,13 @@ pub enum DeactivateError {
 }
 
 pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), DeactivateError> {
+    // With --did, the log is fetched over HTTPS and there is no local file to
+    // append to. Combined with --no-publish and no --out, the deactivation
+    // entry would be discarded — reject early.
+    if args.did.is_some() && args.out.is_none() && args.no_publish {
+        return Err(DeactivateError::NoTarget);
+    }
+
     // --- load existing log ---
     let loaded = load_log(store, args.did.clone(), args.input.clone())?;
     if loaded.log.entries().is_empty() {
@@ -130,7 +149,7 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
         arr.push(json!([proof]));
     }
 
-    // --- write log ---
+    // --- write log (atomic-rename, --out, or skip for --did without --out) ---
     let new_line = serde_json::to_string(&entry_value)?;
     let updated_log = build_updated_log(&loaded, &new_line);
     let written_to = crate::cmd::file::write_log(
@@ -139,7 +158,11 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
         args.out.as_deref(),
         args.force,
     )?;
-    debug!("wrote deactivation log to {}", written_to.display());
+    if let Some(path) = &written_to {
+        debug!("wrote deactivation log to {}", path.display());
+    } else {
+        debug!("no local log file written; persistence relies on registry publish");
+    }
 
     // --- publish (unless --no-publish) ---
     let mut published_url: Option<String> = None;
@@ -152,22 +175,34 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
         let identifier = extract_registry_identifier(&did)
             .ok_or_else(|| DeactivateError::IdentifierExtraction(did_str.clone()))?;
         debug!("publishing deactivation to registry");
-        crate::swiyu::publish_entry(
+        if let Err(source) = crate::swiyu::publish_entry(
             &registry_url,
             &partner_id,
             &identifier,
             updated_log.trim_end(),
-        )
-        .map_err(|source| DeactivateError::PublishFailed {
-            source,
-            path: written_to.clone(),
-        })?;
+        ) {
+            return Err(match &written_to {
+                Some(path) => DeactivateError::PublishFailed {
+                    source,
+                    path: path.clone(),
+                },
+                None => {
+                    let pending = crate::cmd::file::write_pending_log(&updated_log)?;
+                    DeactivateError::PublishFailedPending {
+                        source,
+                        path: pending,
+                    }
+                }
+            });
+        }
         published_url = Some(did.log_url());
     }
 
     println!("Deactivated DID: {did_str}");
     println!("New versionId: {new_version_id}");
-    println!("Saved DID log: {}", written_to.display());
+    if let Some(path) = &written_to {
+        println!("Saved DID log: {}", path.display());
+    }
     if let Some(url) = published_url {
         println!("Published to registry: {url}");
     }

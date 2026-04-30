@@ -72,6 +72,18 @@ pub enum UpdateError {
         source: crate::swiyu::SwiyuError,
         path: PathBuf,
     },
+    #[error(
+        "registry upload of new DID log failed: {source} — new entry saved to fallback file {}; retry manually with this file", path.display()
+    )]
+    PublishFailedPending {
+        #[source]
+        source: crate::swiyu::SwiyuError,
+        path: PathBuf,
+    },
+    #[error(
+        "--did used without --out and --no-publish set: the new log entry would have nowhere to go (use --out to save it locally, or drop --no-publish to publish to the registry)"
+    )]
+    NoTarget,
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
     #[error(transparent)]
@@ -82,6 +94,13 @@ pub enum UpdateError {
 
 pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError> {
     let plan = plan_rotation(&args)?;
+
+    // With --did, the log is fetched over HTTPS and there is no local file to
+    // append to. Combined with --no-publish and no --out, the new entry would
+    // be discarded — reject early.
+    if args.did.is_some() && args.out.is_none() && args.no_publish {
+        return Err(UpdateError::NoTarget);
+    }
 
     // --- load existing log ---
     let loaded = load_log(store, args.did.clone(), args.input.clone())?;
@@ -161,7 +180,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
         arr.push(json!([proof]));
     }
 
-    // --- write log (atomic-rename or --out) ---
+    // --- write log (atomic-rename, --out, or skip for --did without --out) ---
     let new_line = serde_json::to_string(&entry_value)?;
     let updated_log = build_updated_log(&loaded, &new_line);
     let written_to = crate::cmd::file::write_log(
@@ -170,7 +189,11 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
         args.out.as_deref(),
         args.force,
     )?;
-    debug!("wrote updated DID log to {}", written_to.display());
+    if let Some(path) = &written_to {
+        debug!("wrote updated DID log to {}", path.display());
+    } else {
+        debug!("no local log file written; persistence relies on registry publish");
+    }
 
     // --- commit new keys to key store ---
     let new_version = entry.add_version(staged)?;
@@ -187,23 +210,35 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
         let identifier = extract_registry_identifier(&did)
             .ok_or_else(|| UpdateError::IdentifierExtraction(did_str.clone()))?;
         debug!("publishing updated DID log to registry");
-        crate::swiyu::publish_entry(
+        if let Err(source) = crate::swiyu::publish_entry(
             &registry_url,
             &partner_id,
             &identifier,
             updated_log.trim_end(),
-        )
-        .map_err(|source| UpdateError::PublishFailed {
-            source,
-            path: written_to.clone(),
-        })?;
+        ) {
+            return Err(match &written_to {
+                Some(path) => UpdateError::PublishFailed {
+                    source,
+                    path: path.clone(),
+                },
+                None => {
+                    let pending = crate::cmd::file::write_pending_log(&updated_log)?;
+                    UpdateError::PublishFailedPending {
+                        source,
+                        path: pending,
+                    }
+                }
+            });
+        }
         published_url = Some(did.log_url());
         debug!("published to {}", published_url.as_deref().unwrap_or(""));
     }
 
     println!("Updated DID: {did_str}");
     println!("New versionId: {new_version_id}");
-    println!("Saved DID log: {}", written_to.display());
+    if let Some(path) = &written_to {
+        println!("Saved DID log: {}", path.display());
+    }
     println!("Keystore hash: {}", entry.hash());
     println!("Keystore version: {new_version}");
     if let Some(url) = published_url {

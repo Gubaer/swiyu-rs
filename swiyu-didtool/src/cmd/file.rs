@@ -1,10 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const MAX_PENDING_INDEX: u32 = 9999;
+
 #[derive(Debug, thiserror::Error)]
 pub enum WriteLogError {
-    #[error("--did/HTTPS source: --out is required (cannot append in place)")]
-    OutRequiredForRemote,
     #[error("file '{}' already exists; pass --force to overwrite", path.display())]
     FileExists { path: PathBuf },
     #[error("cannot write '{}': {source}", path.display())]
@@ -13,20 +13,24 @@ pub enum WriteLogError {
         #[source]
         source: std::io::Error,
     },
+    #[error(
+        "could not allocate a fallback file: did-pending-1.jsonl through did-pending-{max}.jsonl all exist; remove old pending files and retry"
+    )]
+    PendingExhausted { max: u32 },
 }
 
 /// Writes the DID log to either an explicit `out` path (with overwrite gated
 /// by `force`) or atomically back to `source_path` when `out` is `None`.
-/// Returns the path that was written.
-///
-/// `source_path` is `None` when the log was fetched over HTTPS (no local
-/// source file to write back to); in that case `out` must be provided.
+/// Returns the written path, or `None` if neither destination was provided
+/// (i.e. the log was loaded over HTTPS via `--did` and the caller did not
+/// pass `--out`). In that case the caller is expected to publish the log to
+/// the registry; persistence relies on the publish step.
 pub(crate) fn write_log(
     content: &str,
     source_path: Option<&Path>,
     out: Option<&Path>,
     force: bool,
-) -> Result<PathBuf, WriteLogError> {
+) -> Result<Option<PathBuf>, WriteLogError> {
     if let Some(path) = out {
         if path.exists() && !force {
             return Err(WriteLogError::FileExists {
@@ -37,21 +41,42 @@ pub(crate) fn write_log(
             path: path.to_path_buf(),
             source,
         })?;
-        return Ok(path.to_path_buf());
+        return Ok(Some(path.to_path_buf()));
     }
 
-    let source = source_path.ok_or(WriteLogError::OutRequiredForRemote)?;
-    write_atomic(source, content).map_err(|source_err| WriteLogError::WriteOutput {
-        path: source.to_path_buf(),
-        source: source_err,
-    })?;
-    Ok(source.to_path_buf())
+    if let Some(source) = source_path {
+        write_atomic(source, content).map_err(|source_err| WriteLogError::WriteOutput {
+            path: source.to_path_buf(),
+            source: source_err,
+        })?;
+        return Ok(Some(source.to_path_buf()));
+    }
+
+    Ok(None)
 }
 
-/// Writes `content` to `target` via a sibling `.tmp` file followed by an
-/// atomic rename, so a crash mid-write cannot corrupt an existing file at
-/// `target`.
-pub(crate) fn write_atomic(target: &Path, content: &str) -> std::io::Result<()> {
+/// Writes `content` to the lowest-numbered free `did-pending-<N>.jsonl` in the
+/// current working directory, where `N` is a positive integer. Used as a
+/// recovery path when a registry publish fails and there is no local log file
+/// to retry from. Returns the chosen path.
+pub(crate) fn write_pending_log(content: &str) -> Result<PathBuf, WriteLogError> {
+    for n in 1..=MAX_PENDING_INDEX {
+        let path = PathBuf::from(format!("did-pending-{n}.jsonl"));
+        if path.exists() {
+            continue;
+        }
+        fs::write(&path, content).map_err(|source| WriteLogError::WriteOutput {
+            path: path.clone(),
+            source,
+        })?;
+        return Ok(path);
+    }
+    Err(WriteLogError::PendingExhausted {
+        max: MAX_PENDING_INDEX,
+    })
+}
+
+fn write_atomic(target: &Path, content: &str) -> std::io::Result<()> {
     let mut tmp_name = target.as_os_str().to_os_string();
     tmp_name.push(".tmp");
     let tmp = PathBuf::from(tmp_name);

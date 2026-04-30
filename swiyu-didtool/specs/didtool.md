@@ -307,11 +307,11 @@ Same selectors as `didtool log`:
 
 | Flag | Behavior |
 |---|---|
-| `--did <did-or-hash>` | Resolves to a DID (hash via key store, otherwise direct DID parse), fetches the existing log via HTTPS. |
+| `--did <did-or-hash>` | Resolves to a DID (hash via key store, otherwise direct DID parse), fetches the existing log via HTTPS. The log is treated as a transient input — no local log file is read or written unless `--out` is given. |
 | `--input <path>` | Reads the existing log from a local file. |
 | _(neither)_ | Defaults to `--input ./did.jsonl`. |
 
-`--did` and `--input` are mutually exclusive.
+`--did` and `--input` are mutually exclusive. When `--did` is used, any `did.jsonl` in the working directory is ignored — the registry copy is the source of truth.
 
 ### Key rotation
 
@@ -334,7 +334,8 @@ error.
 |---|---|
 | `--out <file>` | Write the **full updated log** to this path. |
 | `--force` | Allow `--out` to overwrite an existing file. |
-| _(no `--out`)_ | Append to the source file in place. The write is performed via a temporary file followed by an atomic rename, so a crash mid-write cannot corrupt the existing log. |
+| _(no `--out`, with `--input` or default)_ | Append to the source file in place via temp-file-and-rename, so a crash mid-write cannot corrupt the existing log. |
+| _(no `--out`, with `--did`)_ | The new log is **not** written to any local file. Persistence relies on the registry publish — see *Publish* below. |
 
 ### Publish
 
@@ -342,7 +343,8 @@ error.
 |---|---|
 | `--no-publish` | Skip the registry update; produce only the local files. |
 
-The SWIYU registry accepts updates via the **same call used by `create`**: a `PUT` to
+When publish is enabled (the default), the SWIYU registry is updated via the **same call used
+by `create`**: a `PUT` to
 `<registry-url>/api/v1/identifier/business-entities/<partner>/identifier-entries/<uuid>` with
 `Content-Type: application/jsonl+json` and the **full updated log** as the body (genesis entry
 + all subsequent updates). The registry treats it as an idempotent replace; subsequent `GET`s
@@ -350,10 +352,9 @@ on the public DID URL serve the body byte-for-byte. The reference DID Toolbox (J
 *not* publish updates of any kind — its `update` command is purely local — so this behavior
 is specific to the SWIYU registry, not the did:tdw spec.
 
-The CLI does **not yet** make this call. `--no-publish` is currently the only behavior and the
-flag is a no-op, accepted so the surface doesn't change when publish lands. Once implemented,
-omitting `--no-publish` will PUT the updated log as described above; failure semantics will
-mirror `create` (local files kept, error message instructing manual retry).
+When `--did` is used without `--out`, the registry is the **only** persistence path for the
+new entry. Combining `--did`, no `--out`, and `--no-publish` is therefore rejected — the new
+log entry would have nowhere to go.
 
 ### What `update` does internally
 
@@ -372,17 +373,24 @@ mirror `create` (local files kept, error message instructing manual retry).
      the final on-disk `versionId` is `"<n+1>-<entryHash>"`.
    - Signs with the *previous* authorized key; `proof.challenge` is the new `versionId`.
 5. Commits the new key pairs to the key store at version `current+1`.
-6. Writes the resulting log (atomic-rename to the source path, or to `--out` if given).
-7. (Once publish is implemented) PUTs the updated log to the SWIYU registry. On failure the
-   local files are kept; the error message instructs the user to retry manually.
+6. If a local target is in scope (`--out`, or `--input`/default file with no `--out`), writes
+   the resulting log atomically. With `--did` and no `--out`, this step is skipped.
+7. (Unless `--no-publish`) PUTs the updated log to the SWIYU registry.
 
 ### Failure semantics
 
 If the key store lookup fails (DID not present, current authorized key unreadable), the
-command aborts before any file is written.
+command aborts before any file or registry write.
 
-If the new entry has been written locally but a future publish step fails, the local files
-(DID log + new key store version) are kept, mirroring `create`.
+If a local log file was written and the registry publish then fails, the local file holds the
+new entry; the error message instructs the user to retry manually.
+
+If `--did` was used without `--out` (registry-only persistence) and publish fails, the new
+log entry is salvaged to a fallback file `did-pending-<N>.jsonl` in the current directory,
+where `<N>` is the lowest free positive integer. The error message points at this file so the
+user can retry the upload manually. The key store has already advanced to the new version, so
+the fallback file is the only record of the new entry's DID-document state outside the
+key store.
 
 ### Out of scope for this version
 
@@ -414,12 +422,16 @@ has `parameters.deactivated == true`.
 
 Identical to `didtool update`:
 
-- `--did <did-or-hash>` / `--input <path>` (mutually exclusive; default `./did.jsonl`).
-- `--out <file>` writes the full log; without it, the source file is updated atomically via
-  temp-file-and-rename. `--force` allows `--out` to overwrite an existing file.
+- `--did <did-or-hash>` / `--input <path>` (mutually exclusive; default `./did.jsonl`). With
+  `--did`, the registry copy is the source of truth and any local `did.jsonl` is ignored.
+- `--out <file>` writes the full log; with `--input` (or default) and no `--out`, the source
+  file is updated atomically via temp-file-and-rename. `--force` allows `--out` to overwrite
+  an existing file. With `--did` and no `--out`, no local log file is written and persistence
+  relies on the registry publish.
 - `--no-publish` skips the registry PUT. With publish enabled (the default),
   `--partner-id` / `SWIYU_PARTNER_ID` and `--registry-url` / `SWIYU_IDENTIFIER_REGISTRY_URL`
-  are required.
+  are required. Combining `--did`, no `--out`, and `--no-publish` is rejected — the new
+  entry would have nowhere to go.
 
 There are no key-rotation flags. Deactivation does not rotate any keys.
 
@@ -440,21 +452,27 @@ There are no key-rotation flags. Deactivation does not rotate any keys.
    - Computes `entryHash` over the 4-element entry (proof slot excluded), JCS-canonicalised;
      final on-disk `versionId` is `"<n+1>-<entryHash>"`.
    - Signs with the current authorized key; `proof.challenge` is the new `versionId`.
-5. Writes the resulting log (atomic-rename to the source path, or to `--out` if given).
+5. If a local target is in scope (`--out`, or `--input`/default file with no `--out`), writes
+   the resulting log atomically. With `--did` and no `--out`, this step is skipped.
 6. (Unless `--no-publish`) PUTs the full updated log to the SWIYU registry, mirroring
-   `update`. On failure the local files are kept; the error message instructs the user to
-   retry manually.
+   `update`.
 
 The key store is **not** advanced to a new version: deactivation does not change any key
 material, so no new snapshot is needed.
 
 ### Failure semantics
 
-If the key store entry for the DID is missing, the command aborts before any file is
-written — the deactivation entry cannot be signed without it.
+If the key store entry for the DID is missing, the command aborts before any file or
+registry write — the deactivation entry cannot be signed without it.
 
-If the local write succeeded but the registry PUT fails, the local file is kept; the user
-can retry the upload manually with `curl` against the same `identifier-entries/<uuid>` path.
+If a local log file was written and the registry PUT then fails, the local file holds the
+deactivation entry; the user can retry the upload manually with `curl` against the same
+`identifier-entries/<uuid>` path.
+
+If `--did` was used without `--out` and publish fails, the deactivation entry is salvaged to
+a fallback file `did-pending-<N>.jsonl` in the current directory, where `<N>` is the lowest
+free positive integer. The error message points at this file so the user can retry the upload
+manually.
 
 ---
 
