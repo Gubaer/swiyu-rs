@@ -38,6 +38,33 @@ Lists all entries in the key store, one per line, sorted by hash:
 
 Two-column output (hash, DID separated by two spaces) for easy `grep`/`awk` use.
 
+### `didtool keystore versions --did <did-or-hash>`
+
+Lists all key-pair sets ("versions") stored for a single DID, one per line, sorted by
+version number ascending:
+
+```
+1  initial
+2  authorized authentication assertion
+3  authorized
+```
+
+Each line is `<version>  <change-tag>` separated by two spaces. The change tag is either:
+
+- `initial` — for version 1, which has no predecessor to compare against.
+- a space-separated list of role names (`authorized`, `authentication`, `assertion`) whose
+  public key differs from the immediately previous version. Roles whose key was kept are
+  omitted. The order is fixed: authorized, authentication, assertion (so output is stable
+  and greppable).
+
+Two-column output mirrors `keystore list`. `--did` accepts either the full DID string or
+its 12-character BLAKE3 hash, following the same resolution rule as `keystore show` and
+`keystore export`.
+
+This command is purely a key-store view — it does not consult the DID log. The version
+numbers are the same ones used by `keystore show --version <n>` and
+`keystore export --version <n>`.
+
 ### `didtool keystore show --did <did-or-hash> [--role authorized|authentication|assertion] [--version <n>]`
 
 Displays public key(s) to stdout in PEM format.

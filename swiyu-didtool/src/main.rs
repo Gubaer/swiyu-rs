@@ -284,6 +284,12 @@ enum BusinessEntityCommand {
 enum KeystoreCommand {
     /// List all entries in the key store.
     List,
+    /// List the snapshot versions stored for one DID.
+    Versions {
+        /// Full DID string or 12-character BLAKE3 hash.
+        #[arg(long, required = true)]
+        did: String,
+    },
     /// Display public key(s) for an entry.
     Show {
         /// Full DID string or 12-character BLAKE3 hash.
@@ -404,6 +410,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| e.into()),
         Command::Keystore { command } => match command {
             KeystoreCommand::List => cmd_list(&store),
+            KeystoreCommand::Versions { did } => cmd_versions(&store, &did),
             KeystoreCommand::Show { did, role, version } => cmd_show(&store, &did, role, version),
             KeystoreCommand::Export {
                 did,
@@ -609,6 +616,48 @@ fn cmd_list(store: &KeyStore) -> Result<(), Box<dyn std::error::Error>> {
     debug!("found {} entries in key store", entries.len());
     for entry in entries {
         println!("{}  {}", entry.hash, entry.did);
+    }
+    Ok(())
+}
+
+fn cmd_versions(store: &KeyStore, target: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let entry = cmd::resolve_entry(store, target)?;
+    let versions = entry.all_versions()?;
+    debug!(
+        "entry {} has {} version(s) on disk",
+        entry.hash(),
+        versions.len()
+    );
+    let roles = [
+        ("authorized", KeyRole::Authorized),
+        ("authentication", KeyRole::Authentication),
+        ("assertion", KeyRole::Assertion),
+    ];
+    let mut prev: Option<[String; 3]> = None;
+    for v in versions {
+        let pems = [
+            entry.public_key_pem(roles[0].1, Some(v))?,
+            entry.public_key_pem(roles[1].1, Some(v))?,
+            entry.public_key_pem(roles[2].1, Some(v))?,
+        ];
+        let tag = match &prev {
+            None => "initial".to_string(),
+            Some(prev_pems) => {
+                let mut changed: Vec<&str> = Vec::with_capacity(3);
+                for (i, (label, _)) in roles.iter().enumerate() {
+                    if prev_pems[i] != pems[i] {
+                        changed.push(label);
+                    }
+                }
+                if changed.is_empty() {
+                    "(unchanged)".to_string()
+                } else {
+                    changed.join(" ")
+                }
+            }
+        };
+        println!("{v}  {tag}");
+        prev = Some(pems);
     }
     Ok(())
 }

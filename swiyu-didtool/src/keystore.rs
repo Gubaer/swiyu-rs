@@ -188,6 +188,27 @@ impl KeyStoreEntry {
             .ok_or_else(|| KeyStoreError::NotFound(self.hash.clone()))
     }
 
+    /// All snapshot version numbers present on disk, sorted ascending.
+    pub fn all_versions(&self) -> KeyStoreResult<Vec<u32>> {
+        let mut versions: Vec<u32> = std::fs::read_dir(&self.entry_dir)?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name();
+                let s = name.to_string_lossy().into_owned();
+                if s.len() == 4 && s.chars().all(|c| c.is_ascii_digit()) {
+                    s.parse::<u32>().ok()
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if versions.is_empty() {
+            return Err(KeyStoreError::NotFound(self.hash.clone()));
+        }
+        versions.sort_unstable();
+        Ok(versions)
+    }
+
     /// Returns the PEM content of the public key for `role` at `version` (latest if `None`).
     pub fn public_key_pem(&self, role: KeyRole, version: Option<u32>) -> KeyStoreResult<String> {
         let path = self.key_path(self.resolve_version(version)?, role, false);
@@ -688,6 +709,17 @@ mod tests {
             .commit(KeyStore::generate().unwrap(), &test_did())
             .unwrap();
         assert_eq!(entry.latest_version().unwrap(), 1);
+    }
+
+    #[test]
+    fn all_versions_returns_sorted_list() {
+        let (_dir, store) = temp_store();
+        let entry = store
+            .commit(KeyStore::generate().unwrap(), &test_did())
+            .unwrap();
+        entry.add_version(KeyStore::generate().unwrap()).unwrap();
+        entry.add_version(KeyStore::generate().unwrap()).unwrap();
+        assert_eq!(entry.all_versions().unwrap(), vec![1, 2, 3]);
     }
 
     #[test]

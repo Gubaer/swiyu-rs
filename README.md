@@ -132,6 +132,7 @@ Manage the local key store:
 
 ```sh
 didtool keystore list
+didtool keystore versions --did did:tdw:Qmb7D2murY...
 didtool keystore show --did did:tdw:Qmb7D2murY...
 didtool keystore export --did did:tdw:Qmb7D2murY... --role authorized --out key.pem
 ```
