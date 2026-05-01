@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:communal:local-residence-id:schema:v1",
+  "title": "Communal local residence ID, v1",
+  "description": "Validates the application-level claims of a credential with vct urn:communal:local-residence-id. The credential entitles the holder to discounts and services available to residents of the asserting Swiss commune, identified by its BFS number. The asserting commune is carried as claims rather than encoded in the vct, so a single issuer (typically an e-government organisation operating on behalf of multiple communes) can issue under one vct. Protocol-level claims (iss, iat, exp, cnf, status) are validated separately by the SD-JWT VC verifier.",
+  "type": "object",
+  "required": [
+    "family_name",
+    "given_name",
+    "birth_date",
+    "commune_bfs",
+    "commune_name",
+    "valid_until"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "family_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Holder's family name (surname), exactly as recorded in the commune's resident register."
+    },
+    "given_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Holder's given name(s), exactly as recorded in the commune's resident register. Multiple given names are space-separated on a single line."
+    },
+    "birth_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Holder's date of birth, ISO 8601 calendar-date form (YYYY-MM-DD)."
+    },
+    "commune_bfs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9999,
+      "description": "BFS commune number (Bundesamt für Statistik) of the Swiss commune asserting the holder's residency. Uniquely identifies the commune."
+    },
+    "commune_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Human-readable name of the commune asserting the holder's residency. Includes a canton suffix when the bare name is ambiguous in Switzerland (e.g. \"Buchs SG\" vs. \"Buchs ZH\")."
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date",
+      "description": "Last calendar date on which this credential is intended to be honoured. Independent of the JWT exp claim, which marks the cryptographic signature's validity end. Verifiers reject if the current date is past valid_until even if the signature is still cryptographically valid."
+    }
+  }
+}
