@@ -52,4 +52,6 @@ pub struct GetCredentialOfferResponse {
     pub state: String,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    pub issued_at: Option<DateTime<Utc>>,
+    pub cancelled_at: Option<DateTime<Utc>>,
 }

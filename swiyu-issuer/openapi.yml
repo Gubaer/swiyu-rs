@@ -104,6 +104,38 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/issuers/{issuer_id}/credential-offers/{offer_id}/cancel:
+    post:
+      summary: Cancel a credential offer
+      description: |
+        Marks the offer `cancelled` and stamps `cancelled_at`. Returns the
+        full offer body in the same shape as `getCredentialOffer`.
+
+        Idempotent: re-cancelling a cancelled offer succeeds with 200 and
+        the existing `cancelled_at` value (no overwrite). Cancelling a
+        stored-`pending` offer whose `expires_at` has passed is allowed and
+        reported back as `cancelled` — the expiry-on-read rule governs how
+        `state` is reported, not which transitions are legal.
+
+        No request body.
+      operationId: cancelCredentialOffer
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+        - $ref: '#/components/parameters/OfferId'
+      responses:
+        '200':
+          description: Offer is `cancelled` (newly transitioned or already so).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetCredentialOfferResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
 components:
   parameters:
     IssuerId:
@@ -204,7 +236,16 @@ components:
 
     GetCredentialOfferResponse:
       type: object
-      required: [id, issuer_id, vct, claims, state, expires_at, created_at]
+      required:
+        - id
+        - issuer_id
+        - vct
+        - claims
+        - state
+        - expires_at
+        - created_at
+        - issued_at
+        - cancelled_at
       properties:
         id:
           type: string
@@ -230,6 +271,20 @@ components:
         created_at:
           type: string
           format: date-time
+        issued_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            Timestamp at which the offer transitioned to `issued`.
+            `null` until the wallet has redeemed the offer. Always
+            present so consumers can rely on the field's existence.
+        cancelled_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            Timestamp at which the offer transitioned to `cancelled`.
+            `null` until cancelled. Always present so consumers can
+            rely on the field's existence.
 
     ErrorBody:
       type: object

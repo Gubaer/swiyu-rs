@@ -1,9 +1,11 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 
-use crate::domain::{CredentialOffer, CredentialOfferId, IssuerId, PreAuthCode};
+use crate::domain::{
+    CredentialOffer, CredentialOfferId, CredentialOfferState, IssuerId, PreAuthCode,
+};
 use crate::persistence;
 
 use super::AppState;
@@ -130,13 +132,8 @@ pub async fn get(
         "credential offer fetch requested",
     );
 
-    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })?;
-    let offer_id =
-        CredentialOfferId::from_bare(&offer_id_str).map_err(|err| ApiError::InvalidInput {
-            details: format!("offer_id path parameter: {err}"),
-        })?;
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let offer_id = parse_offer_id(&offer_id_str)?;
 
     let mut conn = state
         .pool
@@ -154,9 +151,87 @@ pub async fn get(
     )
     .await?;
 
-    let observed = offer.observed_state(Utc::now());
+    Ok(Json(offer_to_response(offer, Utc::now())))
+}
 
-    let response = GetCredentialOfferResponse {
+pub async fn cancel(
+    State(state): State<AppState>,
+    Path((issuer_id_str, offer_id_str)): Path<(String, String)>,
+    tenant_context: TenantContext,
+) -> Result<Json<GetCredentialOfferResponse>, ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
+        offer_id = %offer_id_str,
+        "credential offer cancel requested",
+    );
+
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let offer_id = parse_offer_id(&offer_id_str)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+
+    let mut offer = persistence::credential_offers::find_by_id(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+        &offer_id,
+    )
+    .await?;
+
+    let now = Utc::now();
+
+    match offer.state {
+        CredentialOfferState::Cancelled => {
+            // Idempotent: re-cancelling a cancelled offer returns the
+            // existing record unchanged. The original cancelled_at
+            // stamp is preserved.
+        }
+        CredentialOfferState::Pending => {
+            offer.try_cancel(now)?;
+            persistence::credential_offers::cancel(
+                &mut conn,
+                &tenant_context.tenant_id,
+                &issuer_id,
+                &offer_id,
+                now,
+            )
+            .await?;
+        }
+        CredentialOfferState::Issued | CredentialOfferState::Expired => {
+            // Expired is never written by this codebase but is part of the
+            // enum; treat any non-Pending, non-Cancelled stored state as a
+            // refusal to transition.
+            return Err(ApiError::Conflict {
+                details: format!("cannot cancel offer in state {}", offer.state.as_str()),
+            });
+        }
+    }
+
+    Ok(Json(offer_to_response(offer, now)))
+}
+
+fn parse_issuer_id(raw: &str) -> Result<IssuerId, ApiError> {
+    IssuerId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
+        details: format!("issuer_id path parameter: {err}"),
+    })
+}
+
+fn parse_offer_id(raw: &str) -> Result<CredentialOfferId, ApiError> {
+    CredentialOfferId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
+        details: format!("offer_id path parameter: {err}"),
+    })
+}
+
+fn offer_to_response(offer: CredentialOffer, now: DateTime<Utc>) -> GetCredentialOfferResponse {
+    let observed = offer.observed_state(now);
+    GetCredentialOfferResponse {
         id: offer.id.to_string(),
         issuer_id: offer.issuer_id.to_string(),
         vct: offer.vct,
@@ -164,14 +239,82 @@ pub async fn get(
         state: observed.as_str().to_string(),
         expires_at: offer.expires_at,
         created_at: offer.created_at,
-    };
-
-    Ok(Json(response))
+        issued_at: offer.issued_at,
+        cancelled_at: offer.cancelled_at,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{PreAuthCode, TenantId};
+    use serde_json::json;
+
+    fn make_pending_offer(expires_in: Duration) -> CredentialOffer {
+        let pre_auth_code_hash = PreAuthCode::generate().hash();
+        CredentialOffer::new(
+            TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap(),
+            IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap(),
+            "urn:communal:local-residence-id".to_string(),
+            json!({}),
+            pre_auth_code_hash,
+            Utc::now() + expires_in,
+        )
+    }
+
+    #[test]
+    fn offer_to_response_pending_unexpired_reports_pending() {
+        let offer = make_pending_offer(Duration::minutes(10));
+        let response = offer_to_response(offer, Utc::now());
+        assert_eq!(response.state, "pending");
+        assert!(response.issued_at.is_none());
+        assert!(response.cancelled_at.is_none());
+    }
+
+    #[test]
+    fn offer_to_response_pending_past_expiry_reports_expired() {
+        let offer = make_pending_offer(Duration::seconds(-1));
+        let response = offer_to_response(offer, Utc::now());
+        assert_eq!(response.state, "expired");
+        assert!(response.cancelled_at.is_none());
+    }
+
+    #[test]
+    fn offer_to_response_cancelled_carries_timestamp() {
+        let mut offer = make_pending_offer(Duration::minutes(10));
+        let cancelled_at = Utc::now();
+        offer.try_cancel(cancelled_at).unwrap();
+        let response = offer_to_response(offer, Utc::now());
+        assert_eq!(response.state, "cancelled");
+        assert_eq!(response.cancelled_at, Some(cancelled_at));
+    }
+
+    #[test]
+    fn offer_to_response_cancelled_past_expiry_still_reports_cancelled() {
+        // Once cancelled, the observed-state projection must not flip
+        // back to expired even if expires_at has passed.
+        let mut offer = make_pending_offer(Duration::seconds(-1));
+        offer.try_cancel(Utc::now()).unwrap();
+        let response = offer_to_response(offer, Utc::now());
+        assert_eq!(response.state, "cancelled");
+    }
+
+    #[test]
+    fn parse_issuer_id_accepts_valid_base58() {
+        assert!(parse_issuer_id("9hXq2vRtL8pK7f").is_ok());
+    }
+
+    #[test]
+    fn parse_issuer_id_rejects_invalid_character() {
+        let err = parse_issuer_id("notValid0").unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn parse_offer_id_rejects_invalid_character() {
+        let err = parse_offer_id("notValid0").unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
 
     #[test]
     fn deeplink_url_encodes_the_offer_uri() {

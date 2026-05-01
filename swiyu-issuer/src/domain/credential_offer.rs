@@ -94,6 +94,16 @@ pub struct CredentialOffer {
     /// Set at construction time. The DB column also has a
     /// `DEFAULT NOW()` as a safety net for any direct INSERTs.
     pub created_at: DateTime<Utc>,
+
+    /// Stamped when the offer transitions to `Issued`. `None` until
+    /// then. The OIDC binary owns the transition itself; the field
+    /// is kept on this aggregate so the management API can surface
+    /// it without joining other tables.
+    pub issued_at: Option<DateTime<Utc>>,
+
+    /// Stamped when the offer transitions to `Cancelled`. `None`
+    /// until then.
+    pub cancelled_at: Option<DateTime<Utc>>,
 }
 
 impl CredentialOffer {
@@ -115,6 +125,8 @@ impl CredentialOffer {
             pre_auth_code_hash,
             expires_at,
             created_at: Utc::now(),
+            issued_at: None,
+            cancelled_at: None,
         }
     }
 
@@ -157,6 +169,7 @@ impl CredentialOffer {
         match self.state {
             CredentialOfferState::Pending if !self.is_expired_at(now) => {
                 self.state = CredentialOfferState::Issued;
+                self.issued_at = Some(now);
                 Ok(())
             }
             _ => Err(DomainError::StateTransitionNotAllowed),
@@ -174,14 +187,20 @@ impl CredentialOffer {
     /// past its `expires_at` may be cancelled cleanly so the row
     /// reflects an explicit terminal state.
     ///
+    /// `now` is a parameter rather than read from the system clock so
+    /// the caller can supply a stable reference time — deterministic
+    /// in tests, consistent with other time checks made within the
+    /// same request.
+    ///
     /// # Errors
     ///
     /// Returns [`DomainError::StateTransitionNotAllowed`] if the offer
     /// is not currently `Pending`.
-    pub fn try_cancel(&mut self) -> Result<(), DomainError> {
+    pub fn try_cancel(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
         match self.state {
             CredentialOfferState::Pending => {
                 self.state = CredentialOfferState::Cancelled;
+                self.cancelled_at = Some(now);
                 Ok(())
             }
             _ => Err(DomainError::StateTransitionNotAllowed),
@@ -239,15 +258,48 @@ mod tests {
     #[test]
     fn try_cancel_pending_succeeds() {
         let mut offer = make_offer(Duration::minutes(10));
-        offer.try_cancel().unwrap();
+        let now = Utc::now();
+        offer.try_cancel(now).unwrap();
         assert_eq!(offer.state, CredentialOfferState::Cancelled);
+        assert_eq!(offer.cancelled_at, Some(now));
     }
 
     #[test]
     fn try_cancel_issued_fails() {
         let mut offer = make_offer(Duration::minutes(10));
         offer.try_issue(Utc::now()).unwrap();
-        assert!(offer.try_cancel().is_err());
+        assert!(offer.try_cancel(Utc::now()).is_err());
+        // cancelled_at must remain unset after a rejected transition.
+        assert!(offer.cancelled_at.is_none());
+    }
+
+    #[test]
+    fn try_cancel_pending_past_expiry_succeeds() {
+        let mut offer = make_offer(Duration::seconds(-1));
+        let now = Utc::now();
+        offer.try_cancel(now).unwrap();
+        assert_eq!(offer.state, CredentialOfferState::Cancelled);
+        assert_eq!(offer.cancelled_at, Some(now));
+    }
+
+    #[test]
+    fn try_cancel_already_cancelled_fails() {
+        let mut offer = make_offer(Duration::minutes(10));
+        let first = Utc::now();
+        offer.try_cancel(first).unwrap();
+        let second = first + Duration::seconds(5);
+        assert!(offer.try_cancel(second).is_err());
+        // cancelled_at is the original stamp, not overwritten on retry.
+        assert_eq!(offer.cancelled_at, Some(first));
+    }
+
+    #[test]
+    fn try_issue_stamps_issued_at() {
+        let mut offer = make_offer(Duration::minutes(10));
+        let now = Utc::now();
+        offer.try_issue(now).unwrap();
+        assert_eq!(offer.issued_at, Some(now));
+        assert!(offer.cancelled_at.is_none());
     }
 
     #[test]
@@ -298,7 +350,7 @@ mod tests {
     #[test]
     fn observed_state_cancelled_stays_cancelled() {
         let mut offer = make_offer(Duration::minutes(10));
-        offer.try_cancel().unwrap();
+        offer.try_cancel(Utc::now()).unwrap();
         let later = Utc::now() + Duration::days(365);
         assert_eq!(offer.observed_state(later), CredentialOfferState::Cancelled);
     }
