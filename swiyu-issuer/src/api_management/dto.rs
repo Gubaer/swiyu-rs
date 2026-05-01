@@ -55,3 +55,20 @@ pub struct GetCredentialOfferResponse {
     pub issued_at: Option<DateTime<Utc>>,
     pub cancelled_at: Option<DateTime<Utc>>,
 }
+
+/// Response body returned by
+/// `GET .../credential-offers/{offer_id}/status` on success
+/// (HTTP 200).
+///
+/// Lightweight projection for polling business applications: no
+/// claims, no PII, no `vct`, no `created_at`. `state` is the
+/// *observed* state, identical to the field surfaced by the full
+/// fetch endpoint.
+#[derive(Debug, Serialize)]
+pub struct OfferStatusResponse {
+    pub id: String,
+    pub state: String,
+    pub expires_at: DateTime<Utc>,
+    pub issued_at: Option<DateTime<Utc>>,
+    pub cancelled_at: Option<DateTime<Utc>>,
+}

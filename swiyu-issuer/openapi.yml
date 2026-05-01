@@ -136,6 +136,30 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /api/v1/issuers/{issuer_id}/credential-offers/{offer_id}/status:
+    get:
+      summary: Fetch credential offer status
+      description: |
+        Lightweight status check for polling business applications. Returns
+        only the lifecycle fields — no claims, no PII, no `vct`, no
+        `created_at`. The `state` field follows the same observed-state
+        rule as `getCredentialOffer`.
+      operationId: getCredentialOfferStatus
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+        - $ref: '#/components/parameters/OfferId'
+      responses:
+        '200':
+          description: Status retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferStatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   parameters:
     IssuerId:
@@ -285,6 +309,40 @@ components:
             Timestamp at which the offer transitioned to `cancelled`.
             `null` until cancelled. Always present so consumers can
             rely on the field's existence.
+
+    OfferStatusResponse:
+      type: object
+      required:
+        - id
+        - state
+        - expires_at
+        - issued_at
+        - cancelled_at
+      properties:
+        id:
+          type: string
+          example: offer_9hXq2vRtL8pK7f
+        state:
+          type: string
+          enum: [pending, issued, cancelled, expired]
+          description: |
+            Observed state. May report `expired` even when the database
+            row is still `pending` (v0.1.0 evaluates expiry on read).
+        expires_at:
+          type: string
+          format: date-time
+        issued_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            Timestamp at which the offer transitioned to `issued`.
+            `null` until the wallet has redeemed the offer.
+        cancelled_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            Timestamp at which the offer transitioned to `cancelled`.
+            `null` until cancelled.
 
     ErrorBody:
       type: object

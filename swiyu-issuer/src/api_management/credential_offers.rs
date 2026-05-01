@@ -12,6 +12,7 @@ use super::AppState;
 use super::auth::{TenantContext, require_issuer_owned_by_tenant};
 use super::dto::{
     CreateCredentialOfferRequest, CreateCredentialOfferResponse, GetCredentialOfferResponse,
+    OfferStatusResponse,
 };
 use super::error::ApiError;
 
@@ -217,6 +218,40 @@ pub async fn cancel(
     Ok(Json(offer_to_response(offer, now)))
 }
 
+pub async fn status(
+    State(state): State<AppState>,
+    Path((issuer_id_str, offer_id_str)): Path<(String, String)>,
+    tenant_context: TenantContext,
+) -> Result<Json<OfferStatusResponse>, ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
+        offer_id = %offer_id_str,
+        "credential offer status requested",
+    );
+
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let offer_id = parse_offer_id(&offer_id_str)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+
+    let offer = persistence::credential_offers::find_by_id(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+        &offer_id,
+    )
+    .await?;
+
+    Ok(Json(offer_to_status_response(&offer, Utc::now())))
+}
+
 fn parse_issuer_id(raw: &str) -> Result<IssuerId, ApiError> {
     IssuerId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
         details: format!("issuer_id path parameter: {err}"),
@@ -239,6 +274,17 @@ fn offer_to_response(offer: CredentialOffer, now: DateTime<Utc>) -> GetCredentia
         state: observed.as_str().to_string(),
         expires_at: offer.expires_at,
         created_at: offer.created_at,
+        issued_at: offer.issued_at,
+        cancelled_at: offer.cancelled_at,
+    }
+}
+
+fn offer_to_status_response(offer: &CredentialOffer, now: DateTime<Utc>) -> OfferStatusResponse {
+    let observed = offer.observed_state(now);
+    OfferStatusResponse {
+        id: offer.id.to_string(),
+        state: observed.as_str().to_string(),
+        expires_at: offer.expires_at,
         issued_at: offer.issued_at,
         cancelled_at: offer.cancelled_at,
     }
@@ -297,6 +343,47 @@ mod tests {
         offer.try_cancel(Utc::now()).unwrap();
         let response = offer_to_response(offer, Utc::now());
         assert_eq!(response.state, "cancelled");
+    }
+
+    #[test]
+    fn offer_to_status_response_pending_unexpired_reports_pending() {
+        let offer = make_pending_offer(Duration::minutes(10));
+        let response = offer_to_status_response(&offer, Utc::now());
+        assert_eq!(response.state, "pending");
+        assert!(response.issued_at.is_none());
+        assert!(response.cancelled_at.is_none());
+        assert_eq!(response.id, offer.id.to_string());
+    }
+
+    #[test]
+    fn offer_to_status_response_pending_past_expiry_reports_expired() {
+        let offer = make_pending_offer(Duration::seconds(-1));
+        let response = offer_to_status_response(&offer, Utc::now());
+        assert_eq!(response.state, "expired");
+        assert!(response.issued_at.is_none());
+        assert!(response.cancelled_at.is_none());
+    }
+
+    #[test]
+    fn offer_to_status_response_cancelled_surfaces_timestamp() {
+        let mut offer = make_pending_offer(Duration::minutes(10));
+        let cancelled_at = Utc::now();
+        offer.try_cancel(cancelled_at).unwrap();
+        let response = offer_to_status_response(&offer, Utc::now());
+        assert_eq!(response.state, "cancelled");
+        assert_eq!(response.cancelled_at, Some(cancelled_at));
+        assert!(response.issued_at.is_none());
+    }
+
+    #[test]
+    fn offer_to_status_response_issued_surfaces_timestamp() {
+        let mut offer = make_pending_offer(Duration::minutes(10));
+        let issued_at = Utc::now();
+        offer.try_issue(issued_at).unwrap();
+        let response = offer_to_status_response(&offer, Utc::now());
+        assert_eq!(response.state, "issued");
+        assert_eq!(response.issued_at, Some(issued_at));
+        assert!(response.cancelled_at.is_none());
     }
 
     #[test]
