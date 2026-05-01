@@ -92,7 +92,16 @@ pub async fn create(
 
     persistence::credential_offers::insert(&mut conn, &offer).await?;
 
-    let deeplink = build_offer_deeplink(&state.config.issuer_base_url, &offer.id);
+    // Persist the bare pre-auth code in the OIDC bridge so the
+    // /credential-offer/{offer_id} endpoint can return it. The two
+    // writes are not currently transactional; a failure between them
+    // leaves an orphaned offer with no bridge, which 404s on the
+    // wallet's offer-uri fetch and is recoverable by re-creating.
+    // See `specs/impl_api_oidc.md`.
+    persistence::oidc::offer_bridge::insert(&mut conn, &offer.id, &pre_auth_code, expires_at)
+        .await?;
+
+    let deeplink = build_offer_deeplink(&state.config.issuer_base_url, &offer.issuer_id, &offer.id);
 
     let response = CreateCredentialOfferResponse {
         id: offer.id.to_string(),
@@ -139,10 +148,20 @@ fn resolve_expires_in(requested: Option<u32>) -> Result<Duration, ApiError> {
     Ok(Duration::seconds(seconds.into()))
 }
 
-fn build_offer_deeplink(issuer_base_url: &str, offer_id: &CredentialOfferId) -> String {
+fn build_offer_deeplink(
+    issuer_base_url: &str,
+    issuer_id: &IssuerId,
+    offer_id: &CredentialOfferId,
+) -> String {
+    // The wallet path lives on the issuer-oidc binary at
+    // /i/{issuer_id}/credential-offer/{offer_id} (see
+    // `specs/impl_api_oidc.md`), so the credential_offer_uri must
+    // resolve there. Both binaries serve under the same external
+    // ISSUER_BASE_URL via reverse proxy.
     let credential_offer_uri = format!(
-        "{}/o/{}",
+        "{}/i/{}/credential-offer/{}",
         issuer_base_url.trim_end_matches('/'),
+        issuer_id.bare(),
         offer_id.bare()
     );
     let encoded = urlencoding::encode(&credential_offer_uri);
@@ -232,6 +251,10 @@ pub async fn cancel(
                 now,
             )
             .await?;
+            // Drop the OIDC bridge entry so the wallet path no longer
+            // sees the bare pre-auth code. Idempotent — a missing row
+            // is treated as success by the persistence helper.
+            persistence::oidc::offer_bridge::delete_for_offer(&mut conn, &offer_id).await?;
         }
         CredentialOfferState::Issued | CredentialOfferState::Expired => {
             // Expired is never written by this codebase but is part of the
@@ -548,20 +571,22 @@ mod tests {
 
     #[test]
     fn deeplink_url_encodes_the_offer_uri() {
+        let issuer_id = IssuerId::from_bare("4Mk7yK5pQR7sN3").unwrap();
         let offer_id = CredentialOfferId::from_bare("9hXq2vRtL8pK7f").unwrap();
-        let deeplink = build_offer_deeplink("https://issuer.example.com", &offer_id);
+        let deeplink = build_offer_deeplink("https://issuer.example.com", &issuer_id, &offer_id);
         assert_eq!(
             deeplink,
-            "openid-credential-offer://?credential_offer_uri=https%3A%2F%2Fissuer.example.com%2Fo%2F9hXq2vRtL8pK7f"
+            "openid-credential-offer://?credential_offer_uri=https%3A%2F%2Fissuer.example.com%2Fi%2F4Mk7yK5pQR7sN3%2Fcredential-offer%2F9hXq2vRtL8pK7f"
         );
     }
 
     #[test]
     fn deeplink_strips_trailing_slash_from_base_url() {
+        let issuer_id = IssuerId::from_bare("4Mk7yK5pQR7sN3").unwrap();
         let offer_id = CredentialOfferId::from_bare("9hXq2vRtL8pK7f").unwrap();
-        let deeplink = build_offer_deeplink("https://issuer.example.com/", &offer_id);
-        assert!(deeplink.contains("com%2Fo%2F9hXq2vRtL8pK7f"));
-        assert!(!deeplink.contains("com%2F%2Fo"));
+        let deeplink = build_offer_deeplink("https://issuer.example.com/", &issuer_id, &offer_id);
+        assert!(deeplink.contains("com%2Fi%2F4Mk7yK5pQR7sN3%2Fcredential-offer%2F9hXq2vRtL8pK7f"));
+        assert!(!deeplink.contains("com%2F%2Fi"));
     }
 
     #[test]

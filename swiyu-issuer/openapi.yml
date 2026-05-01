@@ -306,7 +306,7 @@ components:
           description: |
             `openid-credential-offer://` URI suitable for rendering as a
             QR code or handing to the holder's wallet.
-          example: openid-credential-offer://?credential_offer_uri=https%3A%2F%2Fissuer.example.com%2Fo%2F9hXq2vRtL8pK7f
+          example: openid-credential-offer://?credential_offer_uri=https%3A%2F%2Fissuer.example.com%2Fi%2F4Mk7yK5pQR7sN3%2Fcredential-offer%2F9hXq2vRtL8pK7f
         expires_at:
           type: string
           format: date-time

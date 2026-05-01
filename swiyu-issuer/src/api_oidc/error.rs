@@ -19,6 +19,8 @@ use crate::persistence::PersistenceError;
 pub enum OidcError {
     #[error("not found")]
     NotFound,
+    #[error("expired")]
+    Expired,
     #[error("invalid input: {details}")]
     InvalidInput { details: String },
     #[error("internal error")]
@@ -38,6 +40,11 @@ impl IntoResponse for OidcError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 "resource not found".to_string(),
+            ),
+            OidcError::Expired => (
+                StatusCode::GONE,
+                "expired",
+                "the requested resource has expired".to_string(),
             ),
             OidcError::InvalidInput { details } => {
                 (StatusCode::BAD_REQUEST, "invalid_input", details.clone())

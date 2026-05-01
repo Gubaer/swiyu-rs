@@ -1,3 +1,4 @@
+mod credential_offer;
 mod error;
 mod metadata;
 mod state;
@@ -21,6 +22,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/i/{issuer_id}/.well-known/oauth-authorization-server",
             get(metadata::oauth_authorization_server_metadata),
+        )
+        .route(
+            "/i/{issuer_id}/credential-offer/{offer_id}",
+            get(credential_offer::credential_offer),
         )
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

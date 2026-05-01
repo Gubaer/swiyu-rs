@@ -1,0 +1,347 @@
+openapi: 3.1.0
+
+info:
+  title: swiyu-issuer OIDC API (wallet-facing)
+  version: 0.1.3
+  description: |
+    Wallet-facing OID4VCI endpoints served by the `issuer-oidc`
+    binary. Audience is the holder's wallet, not a business
+    application — these endpoints are public (no `Authorization`
+    header) and follow OAuth / OID4VCI conventions on the wire.
+
+    All endpoints live under the issuer-scoped prefix
+    `/i/{issuer_id}/…`. The bare base58 issuer id keeps deeplinked
+    URLs short enough to render as QR codes; the management API
+    uses the same prefix convention. The two binaries (mgmt + oidc)
+    sit behind the same reverse proxy and share `ISSUER_BASE_URL`;
+    see `specs/impl_api_oidc.md` (Deployment topology).
+
+    Error bodies on the metadata and offer-uri endpoints use the
+    `{ error, details }` shape inherited from the management API.
+    The token and credential endpoints (not yet shipped) will emit
+    OAuth's `{ error, error_description }` shape per OID4VCI; this
+    document is updated alongside those slices.
+
+    See `specs/impl_api_oidc.md` for the full design.
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8081
+    description: Local development (cargo run --bin issuer-oidc)
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Always returns 200. No database check; for orchestrator liveness only.
+      operationId: oidcHealthz
+      responses:
+        '200':
+          description: Service is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: Returns 200 if a database connection can be acquired.
+      operationId: oidcReadyz
+      responses:
+        '200':
+          description: Service is ready to accept requests.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+        '503':
+          description: Database is not reachable.
+
+  /i/{issuer_id}/.well-known/openid-credential-issuer:
+    get:
+      summary: OID4VCI Credential Issuer Metadata
+      description: |
+        Issuer metadata document the wallet uses to discover the
+        credential endpoint, supported credential configurations,
+        signing algorithms, and display metadata. Public endpoint;
+        no authentication.
+      operationId: getCredentialIssuerMetadata
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+      responses:
+        '200':
+          description: Metadata returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialIssuerMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /i/{issuer_id}/.well-known/oauth-authorization-server:
+    get:
+      summary: OAuth Authorization Server Metadata
+      description: |
+        RFC 8414 metadata extended for OID4VCI's pre-authorised-code
+        grant. The credential issuer is also the authorization
+        server — this binary supports no other mode.
+      operationId: getOauthAuthorizationServerMetadata
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+      responses:
+        '200':
+          description: Metadata returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OauthAuthorizationServerMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /i/{issuer_id}/credential-offer/{offer_id}:
+    get:
+      summary: Fetch the OID4VCI CredentialOffer body
+      description: |
+        Returns the `CredentialOffer` body the wallet expects behind
+        the `credential_offer_uri` from the deeplink. The body
+        carries the **bare** pre-authorised code — a single-use
+        bearer secret. HTTPS-only in any non-development deployment.
+
+        Observed-state rules:
+
+        - 200 if the offer is `pending` and not past `expires_at`.
+        - 404 if the offer is unknown, `cancelled`, or `issued`.
+        - 410 if the stored state is `pending` but `expires_at` has
+          passed.
+
+        See `specs/impl_api_oidc.md` for the bridge mechanism that
+        carries the bare code from the management API to this
+        endpoint without violating the "store hashed only" rule for
+        long-lived secrets.
+      operationId: getCredentialOffer
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+        - $ref: '#/components/parameters/OfferId'
+      responses:
+        '200':
+          description: Pending unexpired offer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialOffer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+
+components:
+  parameters:
+    IssuerId:
+      name: issuer_id
+      in: path
+      required: true
+      description: Bare base58 issuer identifier (no `issuer_` prefix).
+      schema:
+        type: string
+        pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'
+        example: 9hXq2vRtL8pK7f
+
+    OfferId:
+      name: offer_id
+      in: path
+      required: true
+      description: Bare base58 credential offer identifier (no `offer_` prefix).
+      schema:
+        type: string
+        pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'
+        example: 9hXq2vRtL8pK7f
+
+  responses:
+    BadRequest:
+      description: Invalid input. Possible `error` codes include `invalid_input`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+    NotFound:
+      description: |
+        Resource not found. Used for unknown issuers, unknown offers,
+        and offers in a non-redeemable terminal state. The single
+        404 covers all of these so a wallet cannot probe for issuer
+        or offer existence.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+    Gone:
+      description: |
+        The offer existed but its `expires_at` has passed. Distinct
+        from 404 so the wallet can present a clearer error to the
+        holder ("offer expired" vs "offer not found").
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+  schemas:
+    CredentialIssuerMetadata:
+      type: object
+      required:
+        - credential_issuer
+        - credential_endpoint
+        - authorization_servers
+        - credential_configurations_supported
+      properties:
+        credential_issuer:
+          type: string
+          format: uri
+          example: https://issuer.example.com/i/9hXq2vRtL8pK7f
+        credential_endpoint:
+          type: string
+          format: uri
+          example: https://issuer.example.com/i/9hXq2vRtL8pK7f/credential
+        authorization_servers:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: |
+            URLs of the authorization servers the issuer trusts for
+            this credential. Currently a single-element array
+            containing the issuer URL itself — the credential
+            issuer is also the authorization server.
+        credential_configurations_supported:
+          type: object
+          additionalProperties: true
+          description: |
+            Object keyed by credential configuration id. Each entry
+            carries the format, vct, supported binding methods,
+            signing algorithms, and proof types.
+          example:
+            urn:communal:local-residence-id:
+              format: vc+sd-jwt
+              vct: urn:communal:local-residence-id
+              cryptographic_binding_methods_supported: [jwk]
+              credential_signing_alg_values_supported: [ES256]
+              proof_types_supported:
+                jwt:
+                  proof_signing_alg_values_supported: [ES256]
+        display:
+          type: array
+          description: |
+            Optional locale-keyed display metadata. Omitted entirely
+            if the issuer row has no `display_name`.
+          items:
+            $ref: '#/components/schemas/DisplayEntry'
+
+    DisplayEntry:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        locale:
+          type: [string, "null"]
+        logo:
+          oneOf:
+            - $ref: '#/components/schemas/DisplayLogo'
+            - type: 'null'
+
+    DisplayLogo:
+      type: object
+      required: [uri]
+      properties:
+        uri:
+          type: string
+          format: uri
+
+    OauthAuthorizationServerMetadata:
+      type: object
+      required:
+        - issuer
+        - token_endpoint
+        - grant_types_supported
+        - token_endpoint_auth_methods_supported
+        - pre-authorized_grant_anonymous_access_supported
+      properties:
+        issuer:
+          type: string
+          format: uri
+          example: https://issuer.example.com/i/9hXq2vRtL8pK7f
+        token_endpoint:
+          type: string
+          format: uri
+          example: https://issuer.example.com/i/9hXq2vRtL8pK7f/token
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+          example: [urn:ietf:params:oauth:grant-type:pre-authorized_code]
+        token_endpoint_auth_methods_supported:
+          type: array
+          items:
+            type: string
+          description: |
+            `none` because the pre-authorised code itself authenticates
+            the wallet at the token endpoint; no client credentials.
+          example: [none]
+        pre-authorized_grant_anonymous_access_supported:
+          type: boolean
+          description: |
+            OID4VCI extension to RFC 8414. The hyphenated field name
+            is per the OID4VCI registration of this metadata field
+            and must not be normalised to snake_case.
+          example: true
+
+    CredentialOffer:
+      type: object
+      required: [credential_issuer, credential_configuration_ids, grants]
+      properties:
+        credential_issuer:
+          type: string
+          format: uri
+          example: https://issuer.example.com/i/9hXq2vRtL8pK7f
+        credential_configuration_ids:
+          type: array
+          items:
+            type: string
+          example: [urn:communal:local-residence-id]
+        grants:
+          type: object
+          description: |
+            Object keyed by OAuth grant-type URI. Currently a single
+            entry for `urn:ietf:params:oauth:grant-type:pre-authorized_code`
+            whose value carries the bare `pre-authorized_code` (a
+            single-use bearer secret).
+          additionalProperties: true
+          example:
+            urn:ietf:params:oauth:grant-type:pre-authorized_code:
+              pre-authorized_code: 4Mk7yK5pQR7sN3DevDevDevDevDevDe
+
+    ErrorBody:
+      type: object
+      required: [error, details]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable error code.
+          enum:
+            - not_found
+            - expired
+            - invalid_input
+            - internal_error
+        details:
+          type: string
+          description: Human-readable explanation.

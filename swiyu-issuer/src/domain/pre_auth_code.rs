@@ -35,6 +35,15 @@ impl PreAuthCode {
         self.0
     }
 
+    /// Reconstructs a `PreAuthCode` from a bare value the persistence
+    /// layer just read out of `oidc_offer_bridge`. Mirrors the
+    /// `PreAuthCodeHash::from_stored` discipline: the only callers
+    /// are inside `persistence`, and the redacted `Debug` impl keeps
+    /// the secret out of any incidental log line.
+    pub fn from_stored(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
     pub fn hash(&self) -> PreAuthCodeHash {
         let mut hasher = Sha256::new();
         hasher.update(self.0.as_bytes());
