@@ -1,3 +1,4 @@
+pub mod api_tokens;
 pub mod credential_offers;
 mod errors;
 pub mod issuers;

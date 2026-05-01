@@ -230,10 +230,12 @@ record.
 
 Per [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md):
 
-- `TenantContext` is an axum extractor. At v0.1.0 it returns the
-  seeded tenant id from the `DEFAULT_TENANT_ID` env var. Real
-  API-token authentication replaces the body of the extractor in a
-  later slice; handler signatures do not change.
+- `TenantContext` is an axum extractor. As of v0.1.2 it derives the
+  tenant from the API token presented in
+  `Authorization: Bearer tok_<base58>`; see
+  [`impl_auth.md`](impl_auth.md). Handler signatures are unchanged
+  from v0.1.0 — the swap was local to the extractor body, as
+  promised when the stub was introduced.
 - A single helper
   `require_issuer_owned_by_tenant(&mut conn, &tenant_id, &issuer_id)`
   runs once at the start of every handler that takes an `issuer_id`
@@ -279,8 +281,10 @@ Environment variables consumed by `issuer-mgmt`:
 - `ISSUER_BASE_URL` — public base URL embedded into the
   `offer_deeplink` (used as the host of the wallet-facing
   `credential_offer_uri`).
-- `DEFAULT_TENANT_ID` — bare base58 tenant id used by the
-  `TenantContext` stub. Removed when API-token auth lands.
+- (Authentication is now driven by API tokens; the
+  `DEFAULT_TENANT_ID` stub from v0.1.0 is gone. See
+  [`impl_auth.md`](impl_auth.md) for the dev-token convenience used
+  by `cargo run` and the `test-commands.txt` examples.)
 
 No config file at v0.1.0.
 

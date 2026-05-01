@@ -9,9 +9,11 @@ info:
     wallet over OID4VCI; the wallet-facing endpoints live in a separate
     binary and are not described here.
 
-    Authentication is a stub at v0.1.0: every request resolves to a
-    seeded tenant id from `DEFAULT_TENANT_ID`. Real API-token auth
-    lands in a later slice without changing endpoint shapes.
+    Authentication: every request must carry
+    `Authorization: Bearer tok_<base58>`. Tokens are tenant-scoped
+    and minted via the `issuer-mgmt mint-token` CLI; alpha/beta
+    deployments ship with a documented dev token for the seeded
+    tenant. See `specs/impl_auth.md` for the full design.
 
     See `specs/impl_api_management.md` for design rationale.
   license:

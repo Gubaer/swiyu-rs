@@ -74,7 +74,10 @@ fn validate_bare(s: &str) -> Result<(), DomainError> {
 }
 
 // Bitcoin base58 alphabet excludes 0 (zero), O (capital o), I (capital i), l (lowercase L).
-fn is_base58_char(c: char) -> bool {
+//
+// Exposed to sibling modules in `domain` because api-token wire bodies
+// share the same alphabet and validate independently of the ID newtypes.
+pub(super) fn is_base58_char(c: char) -> bool {
     matches!(
         c,
         '1'..='9' | 'A'..='H' | 'J'..='N' | 'P'..='Z' | 'a'..='k' | 'm'..='z'
@@ -142,6 +145,7 @@ macro_rules! define_id {
 define_id!(TenantId, "tenant");
 define_id!(IssuerId, "issuer");
 define_id!(CredentialOfferId, "offer");
+define_id!(ApiTokenId, "apitok");
 
 #[cfg(test)]
 mod tests {

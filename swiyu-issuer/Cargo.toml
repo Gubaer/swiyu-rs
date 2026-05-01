@@ -9,7 +9,9 @@ swiyu-core = { path = "../swiyu-core" }
 axum = "0.8"
 bs58 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
 getrandom = "0.4"
+humantime = "2"
 jsonschema = "0.46"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.11"
