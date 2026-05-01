@@ -21,6 +21,9 @@ const RESIDENCE_ID_VCT: &str = "urn:communal:local-residence-id";
 /// `swiyu-didtool`'s assertion key emits.
 const SIGNING_ALG: &str = "ES256";
 
+/// OID4VCI's pre-authorised-code grant URI.
+const PRE_AUTHORIZED_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
+
 /// Wallet-facing OID4VCI metadata document.
 ///
 /// Field order and naming follow the OID4VCI draft we target — see
@@ -97,6 +100,64 @@ pub async fn credential_issuer_metadata(
     }))
 }
 
+/// OAuth authorization server metadata document (RFC 8414 + the
+/// OID4VCI extensions). Required by the OID4VCI draft when the
+/// credential issuer is also the authorization server, which is the
+/// only mode this binary supports.
+///
+/// Field naming uses RFC 8414 spelling — note `pre-authorized_grant_
+/// anonymous_access_supported` carries a hyphen, not an underscore,
+/// per the OID4VCI registration of that metadata field.
+#[derive(Debug, Serialize)]
+pub struct OauthAuthorizationServerMetadata {
+    pub issuer: String,
+    pub token_endpoint: String,
+    pub grant_types_supported: Vec<&'static str>,
+    pub token_endpoint_auth_methods_supported: Vec<&'static str>,
+    #[serde(rename = "pre-authorized_grant_anonymous_access_supported")]
+    pub pre_authorized_grant_anonymous_access_supported: bool,
+}
+
+pub async fn oauth_authorization_server_metadata(
+    State(state): State<AppState>,
+    Path(issuer_id_str): Path<String>,
+) -> Result<Json<OauthAuthorizationServerMetadata>, OidcError> {
+    tracing::debug!(
+        issuer_id = %issuer_id_str,
+        "oauth authorization-server metadata requested",
+    );
+
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| OidcError::Internal(Box::new(err)))?;
+
+    // Verify the issuer exists. The response body is a function of
+    // the URL alone, but a wallet asking metadata for a non-existent
+    // issuer should get the same 404 every other unknown-issuer path
+    // returns — no probing for issuer existence.
+    persistence::issuers::find_by_id(&mut conn, &issuer_id)
+        .await?
+        .ok_or(OidcError::NotFound)?;
+
+    let base = state.config.issuer_base_url.trim_end_matches('/');
+    let issuer_url = format!("{base}/i/{}", issuer_id.bare());
+    let token_endpoint = format!("{issuer_url}/token");
+
+    Ok(Json(OauthAuthorizationServerMetadata {
+        issuer: issuer_url,
+        token_endpoint,
+        grant_types_supported: vec![PRE_AUTHORIZED_GRANT_TYPE],
+        // Pre-auth flow does not authenticate the client at the token
+        // endpoint; the pre-authorised code itself is the credential.
+        token_endpoint_auth_methods_supported: vec!["none"],
+        pre_authorized_grant_anonymous_access_supported: true,
+    }))
+}
+
 fn parse_issuer_id(raw: &str) -> Result<IssuerId, OidcError> {
     IssuerId::from_bare(raw).map_err(|err| OidcError::InvalidInput {
         details: format!("issuer_id path parameter: {err}"),
@@ -132,6 +193,35 @@ mod tests {
     fn parse_issuer_id_rejects_invalid_character() {
         let err = parse_issuer_id("notValid0").unwrap_err();
         assert!(matches!(err, OidcError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn oauth_metadata_serializes_with_hyphenated_field_name() {
+        // Round-trip the struct to make sure the OID4VCI-specific
+        // hyphenated field name is honoured by serde's rename, not
+        // silently emitted as snake_case.
+        let m = OauthAuthorizationServerMetadata {
+            issuer: "https://example.com/i/abc".to_string(),
+            token_endpoint: "https://example.com/i/abc/token".to_string(),
+            grant_types_supported: vec![PRE_AUTHORIZED_GRANT_TYPE],
+            token_endpoint_auth_methods_supported: vec!["none"],
+            pre_authorized_grant_anonymous_access_supported: true,
+        };
+        let json = serde_json::to_value(&m).unwrap();
+        assert_eq!(json["issuer"], "https://example.com/i/abc");
+        assert_eq!(json["token_endpoint"], "https://example.com/i/abc/token");
+        assert_eq!(
+            json["grant_types_supported"][0],
+            "urn:ietf:params:oauth:grant-type:pre-authorized_code"
+        );
+        assert_eq!(
+            json["pre-authorized_grant_anonymous_access_supported"],
+            true
+        );
+        assert!(
+            json.get("pre_authorized_grant_anonymous_access_supported")
+                .is_none()
+        );
     }
 
     #[test]
