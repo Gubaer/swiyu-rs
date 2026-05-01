@@ -1,6 +1,7 @@
 pub mod api_tokens;
 pub mod credential_offers;
 mod errors;
+mod helpers;
 pub mod issuers;
 mod pool;
 

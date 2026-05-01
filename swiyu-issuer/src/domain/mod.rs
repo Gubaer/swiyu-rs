@@ -4,6 +4,7 @@ mod errors;
 pub mod ids;
 pub mod issuer;
 pub mod pre_auth_code;
+pub mod vct;
 
 pub use api_token::{ApiToken, ApiTokenHash, ApiTokenSecret};
 pub use credential_offer::{CredentialOffer, CredentialOfferState};

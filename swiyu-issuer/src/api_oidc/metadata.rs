@@ -1,19 +1,14 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::domain::IssuerId;
+use crate::domain::vct::CATALOGUE;
 use crate::persistence;
 
 use super::AppState;
 use super::error::OidcError;
-
-/// The single credential configuration this binary advertises.
-/// Hardcoded here because the issuers table only holds DID + key-id
-/// at this stage; per-issuer credential-config catalogues are a
-/// later slice.
-const RESIDENCE_ID_VCT: &str = "urn:communal:local-residence-id";
 
 /// Hardcoded signing algorithm. `impl_api_oidc.md` notes that real
 /// per-issuer algorithm advertising lands when a second algorithm
@@ -165,19 +160,24 @@ fn parse_issuer_id(raw: &str) -> Result<IssuerId, OidcError> {
 }
 
 fn build_credential_configurations() -> Value {
-    json!({
-        RESIDENCE_ID_VCT: {
-            "format": "vc+sd-jwt",
-            "vct": RESIDENCE_ID_VCT,
-            "cryptographic_binding_methods_supported": ["jwk"],
-            "credential_signing_alg_values_supported": [SIGNING_ALG],
-            "proof_types_supported": {
-                "jwt": {
-                    "proof_signing_alg_values_supported": [SIGNING_ALG]
+    let mut map = Map::with_capacity(CATALOGUE.len());
+    for entry in CATALOGUE {
+        map.insert(
+            entry.vct.to_string(),
+            json!({
+                "format": "vc+sd-jwt",
+                "vct": entry.vct,
+                "cryptographic_binding_methods_supported": ["jwk"],
+                "credential_signing_alg_values_supported": [SIGNING_ALG],
+                "proof_types_supported": {
+                    "jwt": {
+                        "proof_signing_alg_values_supported": [SIGNING_ALG]
+                    }
                 }
-            }
-        }
-    })
+            }),
+        );
+    }
+    Value::Object(map)
 }
 
 #[cfg(test)]
@@ -225,24 +225,28 @@ mod tests {
     }
 
     #[test]
-    fn build_credential_configurations_advertises_residence_id() {
+    fn build_credential_configurations_advertises_every_catalogue_entry() {
         let v = build_credential_configurations();
         let obj = v.as_object().unwrap();
-        assert!(obj.contains_key(RESIDENCE_ID_VCT));
-        let cfg = &obj[RESIDENCE_ID_VCT];
-        assert_eq!(cfg["format"], "vc+sd-jwt");
-        assert_eq!(cfg["vct"], RESIDENCE_ID_VCT);
-        assert_eq!(
-            cfg["cryptographic_binding_methods_supported"]
-                .as_array()
-                .unwrap()[0],
-            "jwk"
-        );
-        assert_eq!(
-            cfg["credential_signing_alg_values_supported"]
-                .as_array()
-                .unwrap()[0],
-            SIGNING_ALG
-        );
+        assert_eq!(obj.len(), CATALOGUE.len());
+        for entry in CATALOGUE {
+            let cfg = obj
+                .get(entry.vct)
+                .unwrap_or_else(|| panic!("missing entry for {}", entry.vct));
+            assert_eq!(cfg["format"], "vc+sd-jwt");
+            assert_eq!(cfg["vct"], entry.vct);
+            assert_eq!(
+                cfg["cryptographic_binding_methods_supported"]
+                    .as_array()
+                    .unwrap()[0],
+                "jwk"
+            );
+            assert_eq!(
+                cfg["credential_signing_alg_values_supported"]
+                    .as_array()
+                    .unwrap()[0],
+                SIGNING_ALG
+            );
+        }
     }
 }

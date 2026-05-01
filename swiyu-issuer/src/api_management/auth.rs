@@ -2,6 +2,8 @@ use axum::extract::FromRequestParts;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use chrono::Utc;
+use sqlx::Postgres;
+use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgConnection;
 
 use crate::domain::{ApiTokenSecret, IssuerId, TenantId};
@@ -103,6 +105,24 @@ pub async fn require_issuer_owned_by_tenant(
     } else {
         Err(ApiError::NotFound)
     }
+}
+
+/// Acquires a pool connection and verifies issuer ownership before
+/// returning it. Every issuer-scoped management handler runs through
+/// this so the ownership check cannot be skipped by accident: a
+/// handler that needs a connection at all gets the check for free.
+pub async fn acquire_for_issuer(
+    state: &AppState,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+) -> Result<PoolConnection<Postgres>, ApiError> {
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    require_issuer_owned_by_tenant(&mut conn, tenant_id, issuer_id).await?;
+    Ok(conn)
 }
 
 #[cfg(test)]
