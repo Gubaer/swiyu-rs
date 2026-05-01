@@ -88,8 +88,23 @@ Every row carries an `expires_at`; expired rows are removed by a
 periodic cleanup (pg_cron, an external sweeper, or a Postgres
 background worker).
 
-One-shot secrets (pre-auth codes, transaction codes) are stored
-**hashed**, never as plaintext. Indexed lookup is by hash.
+One-shot secrets are stored **hashed**, never as plaintext, with one
+named exception. Access tokens, `c_nonce`s, and (when they land)
+transaction codes follow the rule: only `SHA-256(secret)` is on disk,
+indexed lookup is by hash, and the bare value lives outside the
+database.
+
+The exception is the **OID4VCI pre-authorised code**. Its by-reference
+issuance flow forces the bare value to be retrievable at request
+time: the wallet fetches `/credential-offer/{offer_id}` and the
+response body must include the bare code. The code therefore lives on
+the `credential_offers` row in a nullable `pre_auth_code` column
+during the offer's pending window, and is set to `NULL` at the first
+terminal-state transition (cancel or issue). The exposure is bounded
+by the offer's `expires_at` (≤ 1 hour by config). A separate "bridge"
+table was tried first; it added structural complexity without
+narrowing the leak surface, since both the row and the bridge sat in
+the same database with the same access pattern.
 
 Higher write/delete churn than configuration or issuance data, so
 vacuum/autovacuum behaviour is worth watching.

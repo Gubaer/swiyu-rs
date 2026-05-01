@@ -51,7 +51,6 @@ pub async fn token(
 
     let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let pre_auth_code = PreAuthCode::from_stored(payload.pre_authorized_code);
-    let pre_auth_code_hash = pre_auth_code.hash();
 
     let mut conn = state
         .pool
@@ -69,11 +68,11 @@ pub async fn token(
             description: "no offer matches the presented pre-authorised code".to_string(),
         })?;
 
-    let offer = persistence::oidc::credential_offers::find_by_pre_auth_code_hash(
+    let offer = persistence::oidc::credential_offers::find_by_pre_auth_code(
         &mut conn,
         &issuer.tenant_id,
         &issuer_id,
-        &pre_auth_code_hash,
+        &pre_auth_code,
     )
     .await
     .map_err(OAuthError::from)?

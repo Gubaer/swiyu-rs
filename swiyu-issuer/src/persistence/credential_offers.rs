@@ -4,7 +4,7 @@ use sqlx::Row;
 use sqlx::postgres::{PgConnection, PgRow};
 
 use crate::domain::{
-    CredentialOffer, CredentialOfferId, CredentialOfferState, IssuerId, PreAuthCodeHash, TenantId,
+    CredentialOffer, CredentialOfferId, CredentialOfferState, IssuerId, PreAuthCode, TenantId,
 };
 
 use super::PersistenceError;
@@ -18,7 +18,7 @@ pub async fn insert(
         r#"
         INSERT INTO credential_offers (
             id, tenant_id, issuer_id, vct, claims, state,
-            pre_auth_code_hash, expires_at, created_at,
+            pre_auth_code, expires_at, created_at,
             issued_at, cancelled_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -30,7 +30,7 @@ pub async fn insert(
     .bind(&offer.vct)
     .bind(&offer.claims)
     .bind(offer.state.as_str())
-    .bind(offer.pre_auth_code_hash.as_str())
+    .bind(offer.pre_auth_code.as_ref().map(PreAuthCode::as_str))
     .bind(offer.expires_at)
     .bind(offer.created_at)
     .bind(offer.issued_at)
@@ -51,7 +51,7 @@ pub async fn find_by_id(
     let row = sqlx::query(
         r#"
         SELECT id, tenant_id, issuer_id, vct, claims, state,
-               pre_auth_code_hash, expires_at, created_at,
+               pre_auth_code, expires_at, created_at,
                issued_at, cancelled_at
         FROM credential_offers
         WHERE id = $1 AND tenant_id = $2 AND issuer_id = $3
@@ -115,7 +115,7 @@ pub async fn list(
     let rows = sqlx::query(
         r#"
         SELECT id, tenant_id, issuer_id, vct, claims, state,
-               pre_auth_code_hash, expires_at, created_at,
+               pre_auth_code, expires_at, created_at,
                issued_at, cancelled_at
         FROM credential_offers
         WHERE tenant_id = $1
@@ -175,7 +175,9 @@ pub async fn cancel(
     let result = sqlx::query(
         r#"
         UPDATE credential_offers
-        SET state = 'cancelled', cancelled_at = $4
+        SET state = 'cancelled',
+            cancelled_at = $4,
+            pre_auth_code = NULL
         WHERE id = $1 AND tenant_id = $2 AND issuer_id = $3
               AND state = 'pending'
         "#,
@@ -200,7 +202,7 @@ fn row_to_offer(row: &PgRow) -> Result<CredentialOffer, PersistenceError> {
     let vct: String = row.try_get("vct")?;
     let claims: Value = row.try_get("claims")?;
     let state_str: String = row.try_get("state")?;
-    let pre_auth_code_hash: String = row.try_get("pre_auth_code_hash")?;
+    let pre_auth_code: Option<String> = row.try_get("pre_auth_code")?;
     let expires_at: DateTime<Utc> = row.try_get("expires_at")?;
     let created_at: DateTime<Utc> = row.try_get("created_at")?;
     let issued_at: Option<DateTime<Utc>> = row.try_get("issued_at")?;
@@ -213,7 +215,7 @@ fn row_to_offer(row: &PgRow) -> Result<CredentialOffer, PersistenceError> {
         vct,
         claims,
         state: CredentialOfferState::parse(&state_str).map_err(integrity_from)?,
-        pre_auth_code_hash: PreAuthCodeHash::from_stored(pre_auth_code_hash),
+        pre_auth_code: pre_auth_code.map(PreAuthCode::from_stored),
         expires_at,
         created_at,
         issued_at,

@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use super::DomainError;
 use super::ids::{CredentialOfferId, IssuerId, TenantId};
-use super::pre_auth_code::PreAuthCodeHash;
+use super::pre_auth_code::PreAuthCode;
 
 /// Lifecycle state of a `CredentialOffer`.
 ///
@@ -51,8 +51,11 @@ impl CredentialOfferState {
 /// Created by the management API when a business application asks
 /// `swiyu-issuer` to mint an offer for a holder; consumed by the
 /// wallet over the OID4VCI flow at the issuance endpoints. The
-/// secret pre-authorisation code is returned to the caller exactly
-/// once at creation; only its hash is kept on this aggregate.
+/// pre-authorisation code lives on this aggregate **plaintext during
+/// the pending window** because the OID4VCI by-reference flow makes
+/// the bare value retrievable at request time; it is set to `None`
+/// at the first terminal-state transition. See
+/// `specs/aspect-persistence.md` for the rationale.
 #[derive(Debug, Clone)]
 pub struct CredentialOffer {
     /// Generated at construction time by the application, not by
@@ -82,10 +85,11 @@ pub struct CredentialOffer {
     /// Current lifecycle state. See `CredentialOfferState`.
     pub state: CredentialOfferState,
 
-    /// Hash of the OID4VCI pre-authorised code. The bare secret is
-    /// returned to the caller exactly once at offer creation and
-    /// is never persisted.
-    pub pre_auth_code_hash: PreAuthCodeHash,
+    /// Bare OID4VCI pre-authorised code. Held here for the offer's
+    /// pending window so the wallet's by-reference offer-uri fetch
+    /// can return it. Set to `None` at the first terminal-state
+    /// transition (`try_cancel`, `try_issue`).
+    pub pre_auth_code: Option<PreAuthCode>,
 
     /// Last moment the offer is honoured for issuance. After this
     /// instant, reads treat the offer as `Expired`.
@@ -112,7 +116,7 @@ impl CredentialOffer {
         issuer_id: IssuerId,
         vct: String,
         claims: Value,
-        pre_auth_code_hash: PreAuthCodeHash,
+        pre_auth_code: PreAuthCode,
         expires_at: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -122,7 +126,7 @@ impl CredentialOffer {
             vct,
             claims,
             state: CredentialOfferState::Pending,
-            pre_auth_code_hash,
+            pre_auth_code: Some(pre_auth_code),
             expires_at,
             created_at: Utc::now(),
             issued_at: None,
@@ -170,6 +174,7 @@ impl CredentialOffer {
             CredentialOfferState::Pending if !self.is_expired_at(now) => {
                 self.state = CredentialOfferState::Issued;
                 self.issued_at = Some(now);
+                self.pre_auth_code = None;
                 Ok(())
             }
             _ => Err(DomainError::StateTransitionNotAllowed),
@@ -201,6 +206,7 @@ impl CredentialOffer {
             CredentialOfferState::Pending => {
                 self.state = CredentialOfferState::Cancelled;
                 self.cancelled_at = Some(now);
+                self.pre_auth_code = None;
                 Ok(())
             }
             _ => Err(DomainError::StateTransitionNotAllowed),
@@ -215,13 +221,13 @@ mod tests {
     use serde_json::json;
 
     fn make_offer(expires_in: Duration) -> CredentialOffer {
-        let pre_auth_code_hash = crate::domain::pre_auth_code::PreAuthCode::generate().hash();
+        let pre_auth_code = PreAuthCode::generate();
         CredentialOffer::new(
             TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap(),
             IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap(),
             "urn:communal:local-residence-id".to_string(),
             json!({}),
-            pre_auth_code_hash,
+            pre_auth_code,
             Utc::now() + expires_in,
         )
     }
@@ -300,6 +306,26 @@ mod tests {
         offer.try_issue(now).unwrap();
         assert_eq!(offer.issued_at, Some(now));
         assert!(offer.cancelled_at.is_none());
+    }
+
+    #[test]
+    fn new_offer_carries_the_pre_auth_code() {
+        let offer = make_offer(Duration::minutes(10));
+        assert!(offer.pre_auth_code.is_some());
+    }
+
+    #[test]
+    fn try_cancel_clears_the_pre_auth_code() {
+        let mut offer = make_offer(Duration::minutes(10));
+        offer.try_cancel(Utc::now()).unwrap();
+        assert!(offer.pre_auth_code.is_none());
+    }
+
+    #[test]
+    fn try_issue_clears_the_pre_auth_code() {
+        let mut offer = make_offer(Duration::minutes(10));
+        offer.try_issue(Utc::now()).unwrap();
+        assert!(offer.pre_auth_code.is_none());
     }
 
     #[test]

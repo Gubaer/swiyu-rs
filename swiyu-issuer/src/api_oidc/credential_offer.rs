@@ -75,19 +75,17 @@ pub async fn credential_offer(
         }
     }
 
-    let bare_code = persistence::oidc::offer_bridge::find_by_offer_id(&mut conn, &offer_id)
-        .await?
-        .ok_or_else(|| {
-            // The offer is pending+unexpired but the bridge is gone.
-            // This is an inconsistency (a pending offer should always
-            // have a live bridge); 404 from the wallet's point of view
-            // since we cannot honour the request.
-            tracing::warn!(
-                %offer_id,
-                "pending offer has no bridge entry; treating as not found",
-            );
-            OidcError::NotFound
-        })?;
+    let bare_code = offer.pre_auth_code.as_ref().ok_or_else(|| {
+        // The offer is pending+unexpired but the column is NULL.
+        // This is an inconsistency (a pending offer should always
+        // carry the bare code); 404 from the wallet's point of view
+        // since we cannot honour the request.
+        tracing::warn!(
+            %offer_id,
+            "pending offer has no pre_auth_code; treating as not found",
+        );
+        OidcError::NotFound
+    })?;
 
     let base = state.config.issuer_base_url.trim_end_matches('/');
     let issuer_url = format!("{base}/i/{}", issuer_id.bare());

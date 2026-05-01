@@ -85,17 +85,15 @@ writer of the `issued` state on `credential_offers`.
   [`impl_api_management.md`](impl_api_management.md)).
 - `access_tokens.rs` — insert, find-by-hash, delete-expired.
 - `nonces.rs` — insert, consume-by-hash, delete-expired.
-- `offer_bridge.rs` — `insert` (called from the management binary
-  at offer creation), `find_by_offer_id` (called from the OIDC
-  binary's offer-uri handler), `delete_for_offer` (called from
-  the management binary on cancellation and from the OIDC binary
-  on issuance). Holds the bare pre-auth code so the by-reference
-  offer fetch can return it; see *GET /credential-offer/{offer_id}*.
-  Cross-binary use is intentional: the bridge exists specifically
-  to deliver data to the OIDC binary, so the management binary's
-  insert/delete calls are part of its purpose. The tighter rule
-  — that the management binary may not call `mark_issued` — is
-  unchanged.
+
+The bare OID4VCI pre-auth code lives in a nullable `pre_auth_code`
+column on `credential_offers` directly — see *GET
+/credential-offer/{offer_id}* and `aspect-persistence.md` for the
+"pending-window plaintext" rationale. An earlier design used a
+separate `oidc_offer_bridge` table; that table added complexity
+without isolating a leak surface from its parent row, and the column
+on `credential_offers` is the simpler design that covers the same
+durability and lifecycle requirements.
 
 `swiyu-issuer/src/bin/issuer-oidc.rs` stays thin: load config →
 connect pool → run migrations → load issuer signing keys →
@@ -186,26 +184,21 @@ behind the `credential_offer_uri` from the deeplink:
 ```
 
 The pre-auth code in this body is **the bare secret** the
-management API minted at offer creation. Because that secret
-cannot be recovered from its hash, the management API persists it
-in an ephemeral `oidc_offer_bridge` table keyed by `offer_id` (see
-*Schema additions*). The OIDC binary reads from that table here;
-this endpoint is the only path on which the bare code ever leaves
-the server.
+management API minted at offer creation. The bare value lives on
+the `credential_offers` row in a nullable `pre_auth_code` column
+during the offer's pending window — the by-reference flow forces
+this exception to the otherwise-strict "store secrets hashed" rule
+(see [`aspect-persistence.md`](aspect-persistence.md)). The OIDC
+binary reads the column directly here; this endpoint is the only
+path on which the bare code ever leaves the server.
 
-The bridge row is removed at the first terminal-state transition:
-the management binary deletes it on cancellation, the OIDC binary
-deletes it in the same transaction as `mark_issued` on successful
-issuance. Expired rows are reclaimed by the periodic cleanup that
-also handles `oidc_access_tokens` and `oidc_nonces` (deferred).
-
-The bridge means the bare pre-auth code transits the database
-during the offer's pending window (≤ 1h per offer config). The
-exposure is identical in spirit to any short-lived ephemeral
-secret store; the column is plaintext only because hashing would
-break the by-reference fetch the OID4VCI flow requires. Mitigations
-are the deletion-on-terminal-state rule above and a hard
-`expires_at` ceiling.
+The column is set to `NULL` at the first terminal-state transition:
+the management binary clears it on cancellation (in the same
+UPDATE that flips `state` to `cancelled`), and the OIDC binary
+clears it on issuance (in the same UPDATE that flips `state` to
+`issued`). The exposure window is bounded by `expires_at` (≤ 1h
+per offer config); a periodic cleanup sweep that NULLs expired
+rows lands with the wider OIDC sweeper slice.
 
 The offer body is sensitive in transit: it carries a single-use
 bearer secret. Two consequences:
@@ -353,20 +346,17 @@ governs (see *Open*).
   null default now())`. No unique constraint on `offer_id`:
   multiple nonces may be live for one offer (current spec uses
   one, future batch credential issuance uses several).
-- `oidc_offer_bridge(offer_id text primary key references
-  credential_offers(id) on delete cascade, pre_auth_code text
-  not null, expires_at timestamptz not null, created_at
-  timestamptz not null default now())`. Carries the **bare**
-  pre-auth code for the by-reference offer fetch (see
-  *GET /credential-offer/{offer_id}*). Written by the
-  management binary at offer creation, deleted at first
-  terminal-state transition by whichever binary effects it. The
-  `ON DELETE CASCADE` is defence in depth — nothing currently
-  deletes a `credential_offers` row, but if a hard delete is
-  ever introduced the bridge entry must not outlive the parent.
-- Indexes: `oidc_access_tokens(expires_at)`,
-  `oidc_nonces(expires_at)`, `oidc_offer_bridge(expires_at)`
-  for the periodic cleanup sweep.
+- `credential_offers.pre_auth_code text` (nullable) — replaces the
+  earlier `pre_auth_code_hash` column outright. Carries the **bare**
+  pre-auth code for the by-reference offer fetch (see *GET
+  /credential-offer/{offer_id}*). Written at offer creation by the
+  management binary, NULLed in the same UPDATE as the state
+  transition by both the cancel and issue paths. An earlier design
+  used a separate `oidc_offer_bridge` table; that added complexity
+  without isolating a leak surface from the parent row, so the
+  column-on-credential_offers form is what we use.
+- Indexes: `oidc_access_tokens(expires_at)` and
+  `oidc_nonces(expires_at)` for the periodic cleanup sweep.
 
 The `issuers` row gains the columns the issuer metadata endpoint
 needs to render display metadata and locate the signing key:

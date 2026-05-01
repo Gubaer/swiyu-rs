@@ -70,7 +70,6 @@ pub async fn create(
     let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let pre_auth_code = PreAuthCode::generate();
-    let pre_auth_code_hash = pre_auth_code.hash();
     let expires_at = Utc::now() + expires_in;
 
     let offer = CredentialOffer::new(
@@ -78,20 +77,11 @@ pub async fn create(
         issuer_id,
         payload.vct,
         payload.claims,
-        pre_auth_code_hash,
+        pre_auth_code.clone(),
         expires_at,
     );
 
     persistence::credential_offers::insert(&mut conn, &offer).await?;
-
-    // Persist the bare pre-auth code in the OIDC bridge so the
-    // /credential-offer/{offer_id} endpoint can return it. The two
-    // writes are not currently transactional; a failure between them
-    // leaves an orphaned offer with no bridge, which 404s on the
-    // wallet's offer-uri fetch and is recoverable by re-creating.
-    // See `specs/impl_api_oidc.md`.
-    persistence::oidc::offer_bridge::insert(&mut conn, &offer.id, &pre_auth_code, expires_at)
-        .await?;
 
     let deeplink = build_offer_deeplink(&state.config.issuer_base_url, &offer.issuer_id, &offer.id);
 
@@ -223,6 +213,8 @@ pub async fn cancel(
         }
         CredentialOfferState::Pending => {
             offer.try_cancel(now)?;
+            // The cancel UPDATE also NULLs `pre_auth_code` so the
+            // wallet path can no longer fetch the bare value.
             persistence::credential_offers::cancel(
                 &mut conn,
                 &tenant_context.tenant_id,
@@ -231,10 +223,6 @@ pub async fn cancel(
                 now,
             )
             .await?;
-            // Drop the OIDC bridge entry so the wallet path no longer
-            // sees the bare pre-auth code. Idempotent — a missing row
-            // is treated as success by the persistence helper.
-            persistence::oidc::offer_bridge::delete_for_offer(&mut conn, &offer_id).await?;
         }
         CredentialOfferState::Issued | CredentialOfferState::Expired => {
             // Expired is never written by this codebase but is part of the
@@ -431,13 +419,13 @@ mod tests {
     use serde_json::json;
 
     fn make_pending_offer(expires_in: Duration) -> CredentialOffer {
-        let pre_auth_code_hash = PreAuthCode::generate().hash();
+        let pre_auth_code = PreAuthCode::generate();
         CredentialOffer::new(
             TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap(),
             IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap(),
             "urn:communal:local-residence-id".to_string(),
             json!({}),
-            pre_auth_code_hash,
+            pre_auth_code,
             Utc::now() + expires_in,
         )
     }

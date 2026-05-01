@@ -15,4 +15,4 @@ pub use errors::DomainError;
 pub use ids::{ApiTokenId, CredentialOfferId, IssuerId, TenantId};
 pub use issuer::Issuer;
 pub use nonce::{NonceHash, NonceSecret};
-pub use pre_auth_code::{PreAuthCode, PreAuthCodeHash};
+pub use pre_auth_code::PreAuthCode;
