@@ -7,9 +7,12 @@ license = "MIT"
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
 axum = "0.8"
+bs58 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
-jsonschema = "0.30"
+getrandom = "0.4"
+jsonschema = "0.46"
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.11"
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "chrono", "json"] }
 thiserror = "2"

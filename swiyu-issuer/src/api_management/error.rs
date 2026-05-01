@@ -110,6 +110,10 @@ impl From<PersistenceError> for ApiError {
             PersistenceError::UniqueViolation { what } => ApiError::Conflict {
                 details: format!("unique constraint violated: {what}"),
             },
+            PersistenceError::DataIntegrity { details } => {
+                tracing::error!(details, "data integrity violation in persistence layer");
+                ApiError::Internal(Box::new(std::io::Error::other(details)))
+            }
             PersistenceError::Db(err) => ApiError::Internal(Box::new(err)),
         }
     }

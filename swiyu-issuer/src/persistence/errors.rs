@@ -6,6 +6,8 @@ pub enum PersistenceError {
     NotFound,
     #[error("unique constraint violated: {what}")]
     UniqueViolation { what: String },
+    #[error("data integrity violation: {details}")]
+    DataIntegrity { details: String },
     #[error("database error")]
     Db(#[from] sqlx::Error),
 }
