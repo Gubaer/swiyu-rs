@@ -1,0 +1,173 @@
+# Test commands for swiyu-issuer (HTTPie / `http` CLI).
+#
+# Prereqs:
+#   docker compose up -d                # Postgres on host port 5433
+#   cargo run --bin issuer-mgmt         # listens on 0.0.0.0:8080
+#
+# Tip: install HTTPie via your package manager (apt, brew, pacman, ...)
+#      or `pip install httpie`. Pipe through `| jq .` for extra polish.
+#
+# Authentication: every /api/v1/... request needs an
+# Authorization: Bearer tok_<...> header. The migration seeds a
+# documented dev token bound to the seeded tenant; use it inline
+# below or export it as a shell variable to avoid repetition:
+#
+#   TOK="tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+#
+# /healthz and /readyz are operational probes and are NOT
+# authenticated.
+
+
+# -----------------------------------------------------------------------------
+# Sanity checks (unauthenticated)
+# -----------------------------------------------------------------------------
+
+http :8080/healthz
+http :8080/readyz
+
+
+# -----------------------------------------------------------------------------
+# Happy path: create a credential offer
+# -----------------------------------------------------------------------------
+# Expected: 201 Created with { id, pre_auth_code, offer_deeplink, expires_at }.
+
+http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  vct=urn:communal:local-residence-id \
+  claims:='{
+    "family_name": "Müller",
+    "given_name": "Anna",
+    "birth_date": "1990-04-12",
+    "commune_bfs": 4003,
+    "commune_name": "Buchs SG",
+    "valid_until": "2026-12-31"
+  }'
+
+
+# -----------------------------------------------------------------------------
+# Happy path: fetch the credential offer just created
+# -----------------------------------------------------------------------------
+# Replace <bare-offer-id> with the bare part of the `id` returned by
+# the create above (the bit after `offer_`). Expected: 200 OK with
+# the offer details. The `state` field is "pending" until the wallet
+# picks it up, "expired" once `expires_at` has passed, "cancelled"
+# after a cancel, "issued" after wallet redemption.
+
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id> \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+
+
+# -----------------------------------------------------------------------------
+# Cancel an offer
+# -----------------------------------------------------------------------------
+# Expected: 200 with the full offer body, state=cancelled.
+# Idempotent: re-running on a cancelled offer returns the same body.
+# A 409 is returned if the offer is already issued.
+
+http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id>/cancel \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+
+
+# -----------------------------------------------------------------------------
+# Lightweight status check
+# -----------------------------------------------------------------------------
+# Expected: 200 with { id, state, expires_at, issued_at, cancelled_at }.
+# No claims, no PII; suitable for polling.
+
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id>/status \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+
+
+# -----------------------------------------------------------------------------
+# List offers (cursor-paginated, newest first)
+# -----------------------------------------------------------------------------
+# Expected: 200 with { items: [...], next_cursor: "..." | null }.
+
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  limit==10
+
+# Filter by observed state (pending | issued | cancelled | expired):
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  state==pending
+
+
+# -----------------------------------------------------------------------------
+# Auth error paths
+# -----------------------------------------------------------------------------
+
+# Missing Authorization header -> 401 unauthorised
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz
+
+# Wrong scheme -> 401 unauthorised
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz \
+  "Authorization:Basic dXNlcjpwYXNz"
+
+# Unknown token (right shape, wrong secret) -> 401 unauthorised
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz \
+  "Authorization:Bearer tok_NotARealTokenAtAll1NotARealTokenAtAll1"
+
+
+# -----------------------------------------------------------------------------
+# Application error paths (all require a valid Authorization header)
+# -----------------------------------------------------------------------------
+
+# Unknown vct -> 400 unknown_vct
+http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  vct=urn:bogus \
+  claims:='{}'
+
+# Wrong issuer for this tenant -> 404 not_found
+# (zzzzzzzzzzzzzz parses as a valid bare base58 id; persistence
+# returns "not found" because no such issuer is registered for the
+# seeded tenant.)
+http POST :8080/api/v1/issuers/zzzzzzzzzzzzzz/credential-offers \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  vct=urn:communal:local-residence-id \
+  claims:='{}'
+
+# Malformed issuer id (non-base58 character) -> 400 invalid_input
+http POST :8080/api/v1/issuers/notValid0/credential-offers \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  vct=urn:communal:local-residence-id \
+  claims:='{}'
+
+# Schema mismatch (missing required fields) -> 400 claims_validation_failed
+http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  vct=urn:communal:local-residence-id \
+  claims:='{"family_name": "Test"}'
+
+# Get with unknown offer id (valid base58 but no such row) -> 404 not_found
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+
+# Get with malformed offer id (non-base58 character) -> 400 invalid_input
+http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/notValid0 \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+
+# expires_in_seconds out of range -> 400 invalid_input
+http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
+  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  vct=urn:communal:local-residence-id \
+  expires_in_seconds:=10 \
+  claims:='{
+    "family_name": "Müller",
+    "given_name": "Anna",
+    "birth_date": "1990-04-12",
+    "commune_bfs": 4003,
+    "commune_name": "Buchs SG",
+    "valid_until": "2026-12-31"
+  }'
+
+
+# -----------------------------------------------------------------------------
+# Mint a fresh token (CLI; no HTTP)
+# -----------------------------------------------------------------------------
+# Prints a tok_... wire form once on stdout; only the hash is persisted.
+#   cargo run --bin issuer-mgmt -- mint-token \
+#     --tenant 4Mk7yK5pQR7sN3 --name local-dev
+#   cargo run --bin issuer-mgmt -- mint-token \
+#     --tenant 4Mk7yK5pQR7sN3 --name short-lived --expires-in 1h
