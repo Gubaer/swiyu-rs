@@ -1,15 +1,18 @@
 mod credential_offer;
 mod error;
 mod metadata;
+mod oauth_error;
 mod state;
+mod token;
 
 pub use error::OidcError;
+pub use oauth_error::OAuthError;
 pub use state::{AppState, Config};
 
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::get;
+use axum::routing::{get, post};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -27,6 +30,7 @@ pub fn router(state: AppState) -> Router {
             "/i/{issuer_id}/credential-offer/{offer_id}",
             get(credential_offer::credential_offer),
         )
+        .route("/i/{issuer_id}/token", post(token::token))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }

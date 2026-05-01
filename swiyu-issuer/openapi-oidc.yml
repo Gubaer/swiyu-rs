@@ -106,6 +106,61 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /i/{issuer_id}/token:
+    post:
+      summary: Exchange a pre-authorised code for an access token
+      description: |
+        OAuth token endpoint, restricted to OID4VCI's pre-authorised
+        code grant. Returns an opaque access token (used at
+        `/credential`) and a `c_nonce` (bound into the wallet's
+        proof JWT). Both are returned exactly once; only their
+        hashes are persisted.
+
+        Errors follow the OAuth shape `{ error, error_description }`
+        rather than the management API's `{ error, details }`.
+
+        Notable error mappings:
+
+        - 400 `unsupported_grant_type` if `grant_type` is anything
+          other than `urn:ietf:params:oauth:grant-type:pre-authorized_code`.
+        - 400 `invalid_grant` if the pre-auth code does not match a
+          pending unexpired offer for this issuer, **or** if the
+          code has already been redeemed (the unique constraint on
+          `oidc_access_tokens.offer_id` rejects the second insert).
+        - 400 `invalid_request` for malformed bodies / bad
+          path parameters.
+
+        The token endpoint does **not** transition the offer to
+        `issued`; that happens at the credential endpoint.
+      operationId: postToken
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: Token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid request, grant type, or grant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorBody'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorBody'
+
   /i/{issuer_id}/credential-offer/{offer_id}:
     get:
       summary: Fetch the OID4VCI CredentialOffer body
@@ -343,5 +398,72 @@ components:
             - invalid_input
             - internal_error
         details:
+          type: string
+          description: Human-readable explanation.
+
+    TokenRequest:
+      type: object
+      required: [grant_type, pre-authorized_code]
+      properties:
+        grant_type:
+          type: string
+          enum:
+            - urn:ietf:params:oauth:grant-type:pre-authorized_code
+        pre-authorized_code:
+          type: string
+          description: |
+            The bare single-use bearer secret minted by the
+            management API at offer creation. The hyphen is
+            mandated by OID4VCI and must not be normalised to
+            snake_case.
+
+    TokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in
+        - c_nonce
+        - c_nonce_expires_in
+      properties:
+        access_token:
+          type: string
+          description: |
+            Opaque bearer token. Presented as
+            `Authorization: Bearer <access_token>` at `/credential`.
+            Returned exactly once; only its hash is persisted.
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Lifetime of `access_token` in seconds.
+          example: 300
+        c_nonce:
+          type: string
+          description: |
+            Opaque nonce the wallet binds into its proof JWT at
+            `/credential`. Returned exactly once; only its hash is
+            persisted.
+        c_nonce_expires_in:
+          type: integer
+          description: Lifetime of `c_nonce` in seconds.
+          example: 300
+
+    OAuthErrorBody:
+      type: object
+      required: [error, error_description]
+      properties:
+        error:
+          type: string
+          description: |
+            OAuth / OID4VCI error code. See RFC 6749 §5.2 plus the
+            OID4VCI extensions.
+          enum:
+            - invalid_grant
+            - invalid_request
+            - unsupported_grant_type
+            - server_error
+        error_description:
           type: string
           description: Human-readable explanation.

@@ -1,6 +1,7 @@
 use std::env;
 use std::net::SocketAddr;
 
+use chrono::Duration;
 use swiyu_issuer::api_oidc::{AppState, Config, router};
 use swiyu_issuer::persistence;
 use tokio::net::TcpListener;
@@ -19,11 +20,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
     let issuer_base_url =
         env::var("ISSUER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let access_token_ttl = read_duration_env(
+        "ACCESS_TOKEN_TTL_SECONDS",
+        Config::DEFAULT_ACCESS_TOKEN_TTL_SECONDS,
+    )?;
+    let c_nonce_ttl =
+        read_duration_env("C_NONCE_TTL_SECONDS", Config::DEFAULT_C_NONCE_TTL_SECONDS)?;
 
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
 
-    let state = AppState::new(pool, Config { issuer_base_url });
+    let state = AppState::new(
+        pool,
+        Config {
+            issuer_base_url,
+            access_token_ttl,
+            c_nonce_ttl,
+        },
+    );
     let app = router(state);
 
     let listener = TcpListener::bind(bind_addr).await?;
@@ -33,6 +47,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     Ok(())
+}
+
+fn read_duration_env(
+    key: &str,
+    default_seconds: i64,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    let seconds = match env::var(key) {
+        Ok(s) => s
+            .parse::<i64>()
+            .map_err(|err| format!("{key} must be an integer number of seconds: {err}"))?,
+        Err(_) => default_seconds,
+    };
+    if seconds <= 0 {
+        return Err(format!("{key} must be positive, got {seconds}").into());
+    }
+    Ok(Duration::seconds(seconds))
 }
 
 async fn shutdown_signal() {

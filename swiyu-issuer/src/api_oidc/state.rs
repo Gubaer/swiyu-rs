@@ -10,6 +10,26 @@ pub struct Config {
     /// reverse proxy in front of the two is the canonical layout
     /// (see `impl_api_oidc.md` Deployment topology).
     pub issuer_base_url: String,
+
+    /// Lifetime of an access token minted at `POST /token`. Mirrors
+    /// the `c_nonce_ttl` in v0.1.x so the wallet's `expires_in` and
+    /// `c_nonce_expires_in` line up.
+    pub access_token_ttl: chrono::Duration,
+
+    /// Lifetime of a `c_nonce` minted at `POST /token`. Currently
+    /// equal to `access_token_ttl`; rotated independently when batch
+    /// credential issuance arrives.
+    pub c_nonce_ttl: chrono::Duration,
+}
+
+impl Config {
+    /// Default value for `access_token_ttl` when the binary's
+    /// `ACCESS_TOKEN_TTL_SECONDS` env var is unset, in seconds.
+    pub const DEFAULT_ACCESS_TOKEN_TTL_SECONDS: i64 = 300;
+
+    /// Default value for `c_nonce_ttl` when the binary's
+    /// `C_NONCE_TTL_SECONDS` env var is unset, in seconds.
+    pub const DEFAULT_C_NONCE_TTL_SECONDS: i64 = 300;
 }
 
 #[derive(Clone)]

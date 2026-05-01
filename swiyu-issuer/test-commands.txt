@@ -3,6 +3,7 @@
 # Prereqs:
 #   docker compose up -d                # Postgres on host port 5433
 #   cargo run --bin issuer-mgmt         # listens on 0.0.0.0:8080
+#   cargo run --bin issuer-oidc         # listens on 0.0.0.0:8081
 #
 # Tip: install HTTPie via your package manager (apt, brew, pacman, ...)
 #      or `pip install httpie`. Pipe through `| jq .` for extra polish.
@@ -161,6 +162,41 @@ http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
     "commune_name": "Buchs SG",
     "valid_until": "2026-12-31"
   }'
+
+
+# -----------------------------------------------------------------------------
+# Wallet flow (issuer-oidc on :8081, no Authorization header)
+# -----------------------------------------------------------------------------
+
+# Issuer metadata
+http :8081/i/9hXq2vRtL8pK7f/.well-known/openid-credential-issuer
+
+# OAuth authorization-server metadata
+http :8081/i/9hXq2vRtL8pK7f/.well-known/oauth-authorization-server
+
+# Fetch the credential offer body (requires the offer to be pending and
+# unexpired). Replace <bare-offer-id> with the bare part of the `id`
+# returned by create above.
+http :8081/i/9hXq2vRtL8pK7f/credential-offer/<bare-offer-id>
+
+# Exchange a pre-authorised code for an access token + c_nonce. The
+# bare pre-auth code is what the management API returned in the
+# `pre_auth_code` field at offer creation. Form-encoded body; note the
+# hyphen in `pre-authorized_code`.
+http --form POST :8081/i/9hXq2vRtL8pK7f/token \
+  grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code \
+  pre-authorized_code=<bare-pre-auth-code>
+
+# Replaying the same pre-auth code -> 400 invalid_grant (the unique
+# constraint on oidc_access_tokens.offer_id rejects the second insert).
+http --form POST :8081/i/9hXq2vRtL8pK7f/token \
+  grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code \
+  pre-authorized_code=<bare-pre-auth-code>
+
+# Wrong grant type -> 400 unsupported_grant_type
+http --form POST :8081/i/9hXq2vRtL8pK7f/token \
+  grant_type=client_credentials \
+  pre-authorized_code=anything
 
 
 # -----------------------------------------------------------------------------
