@@ -26,7 +26,7 @@ CREATE TABLE credential_offers (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
     issuer_id TEXT NOT NULL REFERENCES issuers(id),
-    credential_type TEXT NOT NULL,
+    vct TEXT NOT NULL,
     claims JSONB NOT NULL,
     -- state held as TEXT, not a Postgres ENUM, to keep migrations simple.
     state TEXT NOT NULL,
