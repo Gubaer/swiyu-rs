@@ -55,6 +55,11 @@ Write code for human readers first. A future engineer should be able to understa
 - Use `async`/`await` (tokio runtime) only where I/O concurrency is needed.
 - Keep async fn bodies focused; extract CPU-bound or complex logic into plain sync functions called from within the async fn.
 
+**Module layout.**
+
+- Modules with submodules use `<module>/mod.rs`, with submodules as siblings (`<module>/<submodule>.rs`). Do not use the `<module>.rs` + sibling-directory form. Both are valid Rust; this codebase picks `mod.rs` for consistency with `domain/`, `persistence/`, etc.
+- Single-file modules without submodules stay as `<crate>/src/<module>.rs`.
+
 ## Comments
 
 Write comments only when the *why* is not obvious from the code itself. Do not restate what the code does. Do not write module-level or function-level doc comments unless the item is part of a public API intended for external consumers.
