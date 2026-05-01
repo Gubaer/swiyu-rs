@@ -2,6 +2,7 @@ use std::env;
 use std::net::SocketAddr;
 
 use swiyu_issuer::api_management::{AppState, Config, router};
+use swiyu_issuer::domain::TenantId;
 use swiyu_issuer::persistence;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -19,8 +20,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
     let issuer_base_url =
         env::var("ISSUER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
-    let default_tenant_id =
+    let default_tenant_id_str =
         env::var("DEFAULT_TENANT_ID").unwrap_or_else(|_| "4Mk7yK5pQR7sN3".to_string());
+    let default_tenant_id = TenantId::from_bare(default_tenant_id_str)
+        .map_err(|err| format!("DEFAULT_TENANT_ID is not a valid bare tenant id: {err}"))?;
 
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;

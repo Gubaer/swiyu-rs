@@ -4,10 +4,12 @@ use std::sync::Arc;
 use jsonschema::Validator;
 use sqlx::PgPool;
 
+use crate::domain::TenantId;
+
 use super::schemas::{self, SchemaLoadError};
 
 pub struct Config {
-    pub default_tenant_id: String,
+    pub default_tenant_id: TenantId,
     pub issuer_base_url: String,
 }
 
