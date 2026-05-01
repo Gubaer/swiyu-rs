@@ -19,7 +19,7 @@ pub fn router(state: AppState) -> Router {
         .route("/readyz", get(readyz))
         .route(
             "/api/v1/issuers/{issuer_id}/credential-offers",
-            post(credential_offers::create),
+            post(credential_offers::create).get(credential_offers::list),
         )
         .route(
             "/api/v1/issuers/{issuer_id}/credential-offers/{offer_id}",

@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Duration, Utc};
 
@@ -7,17 +7,46 @@ use crate::domain::{
     CredentialOffer, CredentialOfferId, CredentialOfferState, IssuerId, PreAuthCode,
 };
 use crate::persistence;
+use crate::persistence::credential_offers::ListPageQuery;
 
 use super::AppState;
 use super::auth::{TenantContext, require_issuer_owned_by_tenant};
 use super::dto::{
     CreateCredentialOfferRequest, CreateCredentialOfferResponse, GetCredentialOfferResponse,
+    ListCredentialOffersQuery, ListCredentialOffersResponse,
 };
 use super::error::ApiError;
 
+/// Lifetime applied to a credential offer when the caller omits
+/// `expires_in_seconds` on create. Ten minutes balances "long enough
+/// for the holder to scan the QR and finish wallet onboarding"
+/// against "short enough that an unredeemed offer does not linger".
 const DEFAULT_EXPIRES_IN_SECONDS: u32 = 600;
+
+/// Lower bound on `expires_in_seconds`. Anything shorter than a
+/// minute risks the offer expiring before the holder can complete
+/// the redemption round-trip on a slow connection.
 const MIN_EXPIRES_IN_SECONDS: u32 = 60;
+
+/// Upper bound on `expires_in_seconds`. One hour caps how long a
+/// pre-authorised code can sit redeemable; longer lifetimes are a
+/// product decision rather than a default the API should grant.
 const MAX_EXPIRES_IN_SECONDS: u32 = 3600;
+
+/// Page size applied to `GET .../credential-offers` when the caller
+/// omits `limit`. Sized to fit a typical operator UI page without
+/// forcing a follow-up request for small issuers.
+const DEFAULT_LIST_LIMIT: u32 = 25;
+
+/// Lower bound on `limit`. Zero would return an empty page with a
+/// `next_cursor` that never advances, so the smallest legal page is
+/// one row.
+const MIN_LIST_LIMIT: u32 = 1;
+
+/// Upper bound on `limit`. Caps per-request work against the
+/// database and the JSON response size; clients that need more rows
+/// must paginate.
+const MAX_LIST_LIMIT: u32 = 100;
 
 pub async fn create(
     State(state): State<AppState>,
@@ -217,6 +246,121 @@ pub async fn cancel(
     Ok(Json(offer_to_response(offer, now)))
 }
 
+pub async fn list(
+    State(state): State<AppState>,
+    Path(issuer_id_str): Path<String>,
+    Query(query): Query<ListCredentialOffersQuery>,
+    tenant_context: TenantContext,
+) -> Result<Json<ListCredentialOffersResponse>, ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
+        limit = ?query.limit,
+        cursor_present = query.cursor.is_some(),
+        state = ?query.state,
+        "credential offer list requested",
+    );
+
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let limit = resolve_list_limit(query.limit)?;
+    let state_filter = parse_state_filter(query.state.as_deref())?;
+    let cursor = query.cursor.as_deref().map(decode_cursor).transpose()?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+
+    let now = Utc::now();
+    let page = persistence::credential_offers::list(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+        ListPageQuery {
+            state_filter,
+            cursor: cursor.map(|c| (c.created_at, c.offer_id)),
+            limit,
+            now,
+        },
+    )
+    .await?;
+
+    let next_cursor = if page.has_more {
+        page.items
+            .last()
+            .map(|offer| encode_cursor(offer.created_at, offer.id.bare()))
+    } else {
+        None
+    };
+
+    let items = page
+        .items
+        .into_iter()
+        .map(|offer| offer_to_response(offer, now))
+        .collect();
+
+    Ok(Json(ListCredentialOffersResponse { items, next_cursor }))
+}
+
+fn resolve_list_limit(requested: Option<u32>) -> Result<u32, ApiError> {
+    let limit = requested.unwrap_or(DEFAULT_LIST_LIMIT);
+    if !(MIN_LIST_LIMIT..=MAX_LIST_LIMIT).contains(&limit) {
+        return Err(ApiError::InvalidInput {
+            details: format!(
+                "limit must be between {MIN_LIST_LIMIT} and {MAX_LIST_LIMIT}, got {limit}"
+            ),
+        });
+    }
+    Ok(limit)
+}
+
+fn parse_state_filter(raw: Option<&str>) -> Result<Option<CredentialOfferState>, ApiError> {
+    match raw {
+        None => Ok(None),
+        Some(s) => CredentialOfferState::parse(s)
+            .map(Some)
+            .map_err(|err| ApiError::InvalidInput {
+                details: format!("state query parameter: {err}"),
+            }),
+    }
+}
+
+#[derive(Debug)]
+struct DecodedCursor {
+    created_at: DateTime<Utc>,
+    offer_id: String,
+}
+
+fn encode_cursor(created_at: DateTime<Utc>, offer_id_bare: &str) -> String {
+    let raw = format!("{}|{}", created_at.to_rfc3339(), offer_id_bare);
+    bs58::encode(raw.as_bytes()).into_string()
+}
+
+fn decode_cursor(raw: &str) -> Result<DecodedCursor, ApiError> {
+    let bytes = bs58::decode(raw).into_vec().map_err(|_| invalid_cursor())?;
+    let text = String::from_utf8(bytes).map_err(|_| invalid_cursor())?;
+    let (ts, id) = text.split_once('|').ok_or_else(invalid_cursor)?;
+    let created_at = DateTime::parse_from_rfc3339(ts)
+        .map_err(|_| invalid_cursor())?
+        .with_timezone(&Utc);
+    // Reject anything we did not emit ourselves; the bare id was generated
+    // by the same validator on the way out.
+    CredentialOfferId::from_bare(id).map_err(|_| invalid_cursor())?;
+    Ok(DecodedCursor {
+        created_at,
+        offer_id: id.to_string(),
+    })
+}
+
+fn invalid_cursor() -> ApiError {
+    ApiError::InvalidInput {
+        details: "cursor query parameter: malformed or not issued by this server".to_string(),
+    }
+}
+
 fn parse_issuer_id(raw: &str) -> Result<IssuerId, ApiError> {
     IssuerId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
         details: format!("issuer_id path parameter: {err}"),
@@ -357,5 +501,109 @@ mod tests {
     #[test]
     fn resolve_expires_in_rejects_above_max() {
         assert!(resolve_expires_in(Some(MAX_EXPIRES_IN_SECONDS + 1)).is_err());
+    }
+
+    #[test]
+    fn resolve_list_limit_uses_default_when_unset() {
+        assert_eq!(resolve_list_limit(None).unwrap(), DEFAULT_LIST_LIMIT);
+    }
+
+    #[test]
+    fn resolve_list_limit_accepts_value_in_range() {
+        assert_eq!(resolve_list_limit(Some(50)).unwrap(), 50);
+        assert_eq!(
+            resolve_list_limit(Some(MIN_LIST_LIMIT)).unwrap(),
+            MIN_LIST_LIMIT
+        );
+        assert_eq!(
+            resolve_list_limit(Some(MAX_LIST_LIMIT)).unwrap(),
+            MAX_LIST_LIMIT
+        );
+    }
+
+    #[test]
+    fn resolve_list_limit_rejects_zero() {
+        assert!(resolve_list_limit(Some(0)).is_err());
+    }
+
+    #[test]
+    fn resolve_list_limit_rejects_above_max() {
+        assert!(resolve_list_limit(Some(MAX_LIST_LIMIT + 1)).is_err());
+    }
+
+    #[test]
+    fn parse_state_filter_accepts_known_values() {
+        assert_eq!(parse_state_filter(None).unwrap(), None);
+        assert_eq!(
+            parse_state_filter(Some("pending")).unwrap(),
+            Some(CredentialOfferState::Pending)
+        );
+        assert_eq!(
+            parse_state_filter(Some("issued")).unwrap(),
+            Some(CredentialOfferState::Issued)
+        );
+        assert_eq!(
+            parse_state_filter(Some("cancelled")).unwrap(),
+            Some(CredentialOfferState::Cancelled)
+        );
+        assert_eq!(
+            parse_state_filter(Some("expired")).unwrap(),
+            Some(CredentialOfferState::Expired)
+        );
+    }
+
+    #[test]
+    fn parse_state_filter_rejects_unknown_value() {
+        let err = parse_state_filter(Some("nope")).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn cursor_round_trips() {
+        let created_at = DateTime::parse_from_rfc3339("2026-05-01T12:34:56.789Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let bare_id = "9hXq2vRtL8pK7f";
+        let encoded = encode_cursor(created_at, bare_id);
+        let decoded = decode_cursor(&encoded).unwrap();
+        assert_eq!(decoded.created_at, created_at);
+        assert_eq!(decoded.offer_id, bare_id);
+    }
+
+    #[test]
+    fn decode_cursor_rejects_garbage_base58() {
+        // '0' is outside the bs58 alphabet.
+        let err = decode_cursor("0000").unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn decode_cursor_rejects_non_utf8_payload() {
+        // Valid base58 of bytes that are not valid UTF-8.
+        let encoded = bs58::encode([0xff, 0xfe, 0xfd]).into_string();
+        let err = decode_cursor(&encoded).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn decode_cursor_rejects_missing_separator() {
+        let encoded = bs58::encode(b"no-separator-here").into_string();
+        let err = decode_cursor(&encoded).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn decode_cursor_rejects_bad_timestamp() {
+        let encoded = bs58::encode(b"not-a-timestamp|9hXq2vRtL8pK7f").into_string();
+        let err = decode_cursor(&encoded).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn decode_cursor_rejects_bad_offer_id() {
+        // 'O' is excluded from the base58 alphabet, so the offer id is invalid.
+        let encoded = bs58::encode(b"2026-05-01T12:34:56+00:00|notValOd").into_string();
+        let err = decode_cursor(&encoded).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
     }
 }
