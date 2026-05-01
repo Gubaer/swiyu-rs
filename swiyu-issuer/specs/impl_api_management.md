@@ -1,24 +1,27 @@
-# Implementation: management API (v0.1.0)
+# Implementation: management API (v0.1.1)
 
 This document captures concrete implementation decisions for the
-management API layer (`issuer-mgmt` binary) as of release v0.1.0. For
+management API layer (`issuer-mgmt` binary) as of release v0.1.1. For
 the multi-tenancy concepts the layer enforces see
 [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md). For the
 identifier strategy reflected on the wire see
 [`impl_persistence.md`](impl_persistence.md). For the framework lean
 see [`aspect-technology.md`](aspect-technology.md).
 
-Status: preliminary; living document. Reflects the v0.1.0
-walking-skeleton scope — a single endpoint that creates a credential
-offer.
+Status: preliminary; living document. v0.1.0 shipped the walking
+skeleton — POST and GET on credential offers, plus liveness and
+readiness probes. v0.1.1 extends the surface with cancel, list, and
+status endpoints; everything else from v0.1.0 carries forward
+unchanged.
 
 ## Frame
 
-The first durchstich is "a business application submits a request to
-create a credential offer." The single endpoint that has to work
-end-to-end is `POST .../credential-offers`. Everything else in
-`issuer-mgmt` is the minimum plumbing needed to make that endpoint
-reachable, observable, testable, and tenant-scoped.
+The v0.1.0 durchstich was "a business application submits a request
+to create a credential offer." That endpoint and its GET read-back
+are in place. v0.1.1 closes the gaps a business application hits
+next: cancelling an offer it no longer wants honoured, listing the
+offers it has open, and polling a lightweight status endpoint
+without pulling the full offer body each time.
 
 ## Module layout
 
@@ -30,8 +33,10 @@ reachable, observable, testable, and tenant-scoped.
   conversions for `DomainError` and `PersistenceError`.
 - `auth.rs` — `TenantContext` axum extractor (stub at v0.1.0).
 - `dto.rs` — request and response shapes for the management API.
-- `credential_offers.rs` — POST handler for creating credential
-  offers.
+- `schemas.rs` — startup-time loading of the bundled JSON Schemas
+  keyed by `vct`.
+- `credential_offers.rs` — handlers for the credential-offer
+  endpoints (create, fetch, cancel, list, status).
 
 `swiyu-issuer/src/bin/issuer-mgmt.rs` stays thin: load config →
 connect pool → run migrations → build `Router` → bind and serve with
@@ -44,12 +49,18 @@ graceful shutdown.
 - `api_management::AppState` — handle to pool, clock, and config.
 - Everything else is internal.
 
-## v0.1.0 endpoint
+## Endpoints
 
-`POST /api/v1/issuers/{issuer_id}/credential-offers`
+The management API at v0.1.1 exposes five offer endpoints under
+`/api/v1/issuers/{issuer_id}` plus the two operational probes. Path
+segments use bare base58 ids (per
+[`impl_persistence.md`](impl_persistence.md) URL convention); JSON
+bodies use the prefixed form (`offer_…`, `issuer_…`). Add/strip
+happens inside the `Serialize`/`Deserialize` of `domain::ids`, never
+in handlers.
 
-- Path segment: bare base58 issuer id (per
-  [`impl_persistence.md`](impl_persistence.md) URL convention).
+### POST .../credential-offers — create (v0.1.0)
+
 - Request body:
   ```json
   {
@@ -77,17 +88,106 @@ graceful shutdown.
 - The `pre_auth_code` is returned exactly once at offer creation;
   only its hash is persisted (per
   [`aspect-persistence.md`](aspect-persistence.md)).
-- JSON bodies use the **prefixed** form for ids (`offer_…`,
-  `issuer_…`); URL paths use the bare form. The add/strip happens
-  inside the `Serialize`/`Deserialize` of `domain::ids`, not in
-  handlers.
-- The `vct` field is the SD-JWT VC type identifier (a URI). It
-  replaces the earlier `credential_type` working name. See
+- The `vct` field is the SD-JWT VC type identifier (a URI). See
   [`impl_credential_schema.md`](impl_credential_schema.md) for the
   schema lookup and validation step that runs against this value
   before the offer is persisted.
 
-Operational endpoints:
+### GET .../credential-offers/{offer_id} — fetch (v0.1.0, extended in v0.1.1)
+
+Returns the full offer record. The `state` field reports `expired`
+whenever the stored state is `pending` but `expires_at` has passed;
+stored state is not rewritten on read.
+
+Response (200):
+
+```json
+{
+  "id": "offer_…",
+  "issuer_id": "issuer_…",
+  "vct": "urn:communal:local-residence-id",
+  "claims": { "...": "..." },
+  "state": "pending",
+  "expires_at": "2026-05-01T12:34:56Z",
+  "created_at": "2026-05-01T12:24:56Z",
+  "issued_at": null,
+  "cancelled_at": null
+}
+```
+
+`issued_at` and `cancelled_at` are added in v0.1.1 alongside the
+[schema additions](#schema-additions-for-v011); both are `null`
+until the offer transitions into the corresponding state. The
+hand-written [`openapi.yml`](../openapi.yml) needs a matching
+update when this slice lands.
+
+### POST .../credential-offers/{offer_id}/cancel — cancel (v0.1.1)
+
+Marks an offer `cancelled` and stamps `cancelled_at`. Returns the
+full offer body (same shape as fetch). Idempotent.
+
+- 200 if the offer transitioned to `cancelled`, or was already
+  `cancelled`.
+- 409 if the offer is in a terminal state other than `cancelled`
+  (i.e. `issued`).
+- 404 if the offer is not found or owned by another tenant.
+
+Cancelling a stored-`pending` offer whose `expires_at` has passed
+is allowed and reported back as `cancelled`. The expiry-on-read
+rule governs how `state` is reported in fetch and list responses;
+it does not gate state transitions.
+
+### GET .../credential-offers — list (v0.1.1)
+
+Lists offers belonging to the issuer, newest first. Cursor-paginated.
+
+Query parameters:
+
+- `limit` — page size, 1..=100, default 25.
+- `cursor` — opaque cursor from the previous page; omitted on the
+  first page.
+- `state` — optional filter on the **observed** state, one of
+  `pending` | `issued` | `cancelled` | `expired`.
+
+Response (200):
+
+```json
+{
+  "items": [
+    /* same shape as GET /{offer_id} */
+  ],
+  "next_cursor": "…"
+}
+```
+
+`next_cursor` is `null` when the last page is reached. Pagination
+sorts by `(created_at DESC, id DESC)`; the cursor encodes those two
+values opaquely (clients must not parse it). State filtering applies
+to the observed projection, so a row stored as `pending` past its
+`expires_at` is returned by `state=expired`, not `state=pending`.
+
+### GET .../credential-offers/{offer_id}/status — status (v0.1.1)
+
+Lightweight status check for polling business applications. No
+claims, no PII.
+
+Response (200):
+
+```json
+{
+  "id": "offer_…",
+  "state": "pending",
+  "expires_at": "2026-05-01T12:34:56Z",
+  "issued_at": null,
+  "cancelled_at": null
+}
+```
+
+`state` follows the same observed-state rule as fetch and list.
+`issued_at` and `cancelled_at` are `null` until the offer
+transitions into the corresponding state.
+
+### Operational probes
 
 - `GET /healthz` — always 200; liveness only.
 - `GET /readyz` — 200 if `pool.acquire()` succeeds, 503 otherwise.
@@ -107,6 +207,24 @@ the JSON Schema bundled for the requested `vct`:
   `details`.
 - v0.1.0 ships exactly one schema:
   `urn:communal:local-residence-id`.
+
+## Schema additions for v0.1.1
+
+The cancel and status endpoints surface two new timestamp columns on
+`credential_offers`:
+
+- `cancelled_at TIMESTAMPTZ NULL` — set when the offer transitions
+  to `cancelled`; null otherwise.
+- `issued_at TIMESTAMPTZ NULL` — set when wallet redemption
+  succeeds and state moves to `issued`. The transition itself is
+  driven by the OIDC binary in a later slice; the column ships now
+  so the management API contract is stable.
+
+A new migration adds both columns nullable. They are written by the
+corresponding state-transition functions in
+`persistence::credential_offers` (`cancel`, future `mark_issued`).
+See [`impl_persistence.md`](impl_persistence.md) for the schema
+record.
 
 ## Tenant scoping at the request boundary
 
@@ -178,13 +296,14 @@ chrono = { version = "0.4", features = ["serde"] }
 jsonschema = "0.30"
 ```
 
-`jsonschema` is added by this slice for claims validation; rationale
-in [`impl_credential_schema.md`](impl_credential_schema.md).
+`jsonschema` is used for claims validation; rationale in
+[`impl_credential_schema.md`](impl_credential_schema.md). `axum` is
+the HTTP framework in use across both binaries.
 
-`utoipa` (OpenAPI) deliberately absent. The HTTP-framework decision
-is recommended-but-not-decided in
-[`aspect-technology.md`](aspect-technology.md); OpenAPI generation
-can be retrofitted once axum is formally committed.
+`utoipa` (OpenAPI generation) deliberately absent. The hand-written
+[`swiyu-issuer/openapi.yml`](../openapi.yml) is the contract for now;
+generation can be retrofitted later if drift between the spec and
+the handlers becomes a real problem.
 
 ## Conventions established
 
@@ -208,61 +327,78 @@ can be retrofitted once axum is formally committed.
 
 - Unit tests inside the handler module exercising request/response
   shapes against an in-process router and a real Postgres pool.
-- One integration test under `swiyu-issuer/tests/` driving the happy
-  path end-to-end: create offer → assert row in `credential_offers`
-  → assert response shape and that `pre_auth_code` is returned only
-  in the body, with the row holding only `pre_auth_code_hash`.
-- The integration test seeds a **second** tenant and issuer and
-  asserts that creating an offer under tenant A's issuer while the
-  `TenantContext` resolves to tenant B returns 404. Every
-  multi-tenant test added from now on carries this asymmetry.
+- Integration tests under `swiyu-issuer/tests/` cover each endpoint
+  end-to-end:
+  - Create: offer is persisted, `pre_auth_code` returned only in
+    the body, row holds only `pre_auth_code_hash`.
+  - Fetch: returns the offer; reports `expired` for a stored
+    `pending` row past `expires_at`.
+  - Cancel (v0.1.1): idempotent on already-cancelled, 409 on
+    `issued`, succeeds on a stored-`pending` row past expiry.
+  - List (v0.1.1): paginates across at least two pages,
+    `state=expired` returns rows stored as `pending` past
+    `expires_at`.
+  - Status (v0.1.1): returns the lightweight projection in each
+    of `pending`, `expired`, `cancelled`, and `issued` states.
+- Every test seeds a **second** tenant and issuer and asserts
+  cross-tenant access returns 404. Every multi-tenant test added
+  from now on carries this asymmetry.
 
-## Suggested slice ordering
+## Suggested slice ordering (v0.1.1)
 
-The handler depends on domain and persistence pieces still in
-placeholder form:
+1. Migration adding `cancelled_at` and `issued_at` columns to
+   `credential_offers`.
+2. Domain: a `cancel` transition on `CredentialOffer` plus a
+   state-machine guard rejecting transitions out of `issued`.
+   Optionally a small `OfferStatus` projection type for the
+   status endpoint.
+3. Persistence: `cancel(conn, tenant, issuer, offer_id)`,
+   `list(conn, tenant, issuer, page)`, and `find_status(conn,
+   tenant, issuer, offer_id)`.
+4. DTOs and handlers for the three new endpoints, wired into the
+   single `router(state)`.
+5. Integration tests per the Tests section above.
 
-1. Fill `domain::ids` and `domain::pre_auth_code` (already the
-   next-slice work in [`impl_domain.md`](impl_domain.md)).
-2. Implement `persistence::credential_offers::insert` and
-   `find_by_id`.
-3. Land the scaffolding above with the single POST endpoint wired
-   through.
-4. Smoke test against the seeded tenant and issuer with `curl`.
+Steps 1–3 may land together or in separate commits. Step 4 must
+come last.
 
-Steps 1 and 2 may land together or separately. Step 3 must come last.
+## What is deliberately not in v0.1.1
 
-## What is deliberately not in v0.1.0
-
-- API-token authentication. `TenantContext` is a stub reading from
-  env.
-- OpenAPI generation (`utoipa` or equivalent).
+- API-token authentication. `TenantContext` is still a stub reading
+  from env.
+- OpenAPI generation (`utoipa` or equivalent). The hand-written
+  `swiyu-issuer/openapi.yml` is the contract for now.
 - OIDC-side endpoints (`/.well-known/openid-credential-issuer`,
   token, credential). Those belong to the `issuer-oidc` binary and
   ship in a separate slice.
 - Rate limiting, CORS policy, cross-service request-id propagation.
   Wait until there is a real client.
-- Listing, pagination, cancellation, and status endpoints on
-  credential offers. Only creation in v0.1.0.
+- Filtering offers by `vct`, by date range, or by free-text claim
+  search. Only `state` filtering at v0.1.1.
+- Webhook notifications when an offer transitions state. Polling
+  via the status endpoint is the v0.1.1 contract.
 - Admin web UI of any kind. Decision deferred per
   [`aspect-technology.md`](aspect-technology.md).
 - `application/problem+json` error bodies.
 
 ## Open
 
-- **HTTP framework lock-in.** This spec commits to `axum`;
-  [`aspect-technology.md`](aspect-technology.md) still records the
-  decision as deferred. If the commitment stands, that document
-  needs updating in the same slice. Cost of switching frameworks
-  once one endpoint exists is still small.
-- **Offer deeplink construction.** Exact shape of the
-  `credential_offer_uri` (and how it is embedded in the
-  `openid-credential-offer://` URI) is OID4VCI-driven; pin the
-  format when implementing the handler.
+- **Cursor encoding.** Current lean: an opaque base64 of
+  `created_at|id`, server-validated. Acceptable to clients but a
+  schema change to the cursor format breaks paging in flight; pin
+  the encoding before the management API gains real consumers.
+- **`state=expired` filter semantics.** Filtering by an observed
+  (not stored) state forces the SQL to project `expires_at`
+  against `now()`. Confirm this is the right ergonomic trade-off
+  versus a separate `expired_after` query parameter that lets
+  clients filter on stored state and time directly.
+- **`mark_issued` ownership.** The OIDC binary is the only writer
+  of `issued_at`. Decide whether the function lives in
+  `persistence::credential_offers` (shared with management) or
+  under a separate OIDC-only persistence module to avoid
+  accidental use; record the answer in
+  [`impl_persistence.md`](impl_persistence.md).
 - **Integration-test database.** `testcontainers` (hermetic, slow
-  first run) vs. relying on a local `DATABASE_URL`. Affects CI more
-  than code shape; default to local URL with a documented setup
-  step.
-- **`expires_in_seconds` bounds.** Minimum and maximum bounds and
-  the default when omitted. Lean: default 10 minutes, max 1 hour;
-  finalise with the handler.
+  first run) vs. relying on a local `DATABASE_URL`. Affects CI
+  more than code shape; default to local URL with a documented
+  setup step.
