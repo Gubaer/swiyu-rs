@@ -1,0 +1,52 @@
+# Local PostgreSQL for swiyu-issuer development.
+#
+# Usage (run from this directory, swiyu-issuer/):
+#   docker compose up -d
+#   cargo run --bin issuer-mgmt
+#
+# Or from the workspace root:
+#   docker compose -f swiyu-issuer/docker-compose.yml up -d
+#
+# Compose auto-loads .env from this directory. The defaults below
+# (after the :- in each ${VAR:-default}) match those documented in
+# .env.example, so `docker compose up -d` works without a .env file.
+# A developer's .env overrides them; if you change a credential
+# there you must keep DATABASE_URL in .env consistent with the
+# four POSTGRES_* values, since the binary reads the URL directly.
+#
+# The host port defaults to 5433 (not the default 5432) so a
+# Postgres install already running on the host does not clash with
+# this dev container.
+#
+# Migrations are NOT applied by this compose file. The swiyu-issuer
+# binary runs them at startup via persistence::run_migrations, so
+# the same code path applies in dev and in production.
+#
+# To wipe the database (drops the volume):
+#   docker compose down -v
+
+name: swiyu-issuer
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: swiyu-issuer-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-swiyu_issuer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-swiyu_issuer}
+      POSTGRES_DB: ${POSTGRES_DB:-swiyu_issuer}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-swiyu_issuer} -d ${POSTGRES_DB:-swiyu_issuer}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
