@@ -1,3 +1,8 @@
 /target
 .env
 did.jsonl
+
+# Git worktrees checked out under the repo root. The convention is
+# to add new worktrees under .worktrees/<branch> so the parent repo
+# stays tidy.
+/.worktrees/
