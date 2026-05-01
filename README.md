@@ -1,6 +1,6 @@
 # swiyu-rs
 
-Rust tooling and libraries for [SWIYU](https://www.swiyu.admin.ch/) — the Swiss eID
+Rust tooling and libraries for [SWIYU](https://www.eid.admin.ch/) — the Swiss eID
 infrastructure built on `did:tdw` / `did:webvh` decentralized identifiers.
 
 The workspace contains two crates:
