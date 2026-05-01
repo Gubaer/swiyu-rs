@@ -4,6 +4,7 @@ use sqlx::postgres::{PgConnection, PgRow};
 use crate::domain::{Issuer, IssuerId, TenantId};
 
 use super::PersistenceError;
+use super::helpers::integrity_from;
 
 pub async fn exists_for_tenant(
     conn: &mut PgConnection,
@@ -73,10 +74,4 @@ fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
         logo_uri,
         locale,
     })
-}
-
-fn integrity_from(err: crate::domain::DomainError) -> PersistenceError {
-    PersistenceError::DataIntegrity {
-        details: err.to_string(),
-    }
 }

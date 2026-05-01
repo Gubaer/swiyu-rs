@@ -6,6 +6,7 @@ pub mod ids;
 pub mod issuer;
 pub mod nonce;
 pub mod pre_auth_code;
+pub mod vct;
 
 pub use access_token::{AccessToken, AccessTokenHash, AccessTokenSecret};
 pub use api_token::{ApiToken, ApiTokenHash, ApiTokenSecret};

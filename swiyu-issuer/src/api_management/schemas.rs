@@ -4,10 +4,7 @@ use std::sync::Arc;
 use jsonschema::Validator;
 use thiserror::Error;
 
-const BUNDLED_SCHEMAS: &[(&str, &str)] = &[(
-    "urn:communal:local-residence-id",
-    include_str!("../../schemas/urn_communal_local-residence-id.json"),
-)];
+use crate::domain::vct::CATALOGUE;
 
 #[derive(Debug, Error)]
 pub enum SchemaLoadError {
@@ -22,20 +19,20 @@ pub enum SchemaLoadError {
 }
 
 pub fn load() -> Result<HashMap<String, Arc<Validator>>, SchemaLoadError> {
-    BUNDLED_SCHEMAS
+    CATALOGUE
         .iter()
-        .map(|(vct, json)| {
+        .map(|entry| {
             let document: serde_json::Value =
-                serde_json::from_str(json).map_err(|source| SchemaLoadError::Parse {
-                    vct: (*vct).to_string(),
+                serde_json::from_str(entry.schema).map_err(|source| SchemaLoadError::Parse {
+                    vct: entry.vct.to_string(),
                     source,
                 })?;
             let validator =
                 jsonschema::validator_for(&document).map_err(|err| SchemaLoadError::Compile {
-                    vct: (*vct).to_string(),
+                    vct: entry.vct.to_string(),
                     message: err.to_string(),
                 })?;
-            Ok(((*vct).to_string(), Arc::new(validator)))
+            Ok((entry.vct.to_string(), Arc::new(validator)))
         })
         .collect()
 }

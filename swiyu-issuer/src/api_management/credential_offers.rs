@@ -10,7 +10,7 @@ use crate::persistence;
 use crate::persistence::credential_offers::ListPageQuery;
 
 use super::AppState;
-use super::auth::{TenantContext, require_issuer_owned_by_tenant};
+use super::auth::{TenantContext, acquire_for_issuer};
 use super::dto::{
     CreateCredentialOfferRequest, CreateCredentialOfferResponse, GetCredentialOfferResponse,
     ListCredentialOffersQuery, ListCredentialOffersResponse, OfferStatusResponse,
@@ -62,20 +62,12 @@ pub async fn create(
         "credential offer creation requested",
     );
 
-    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })?;
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
 
     validate_claims(&state, &payload)?;
     let expires_in = resolve_expires_in(payload.expires_in_seconds)?;
 
-    let mut conn = state
-        .pool
-        .acquire()
-        .await
-        .map_err(|err| ApiError::Internal(Box::new(err)))?;
-
-    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let pre_auth_code = PreAuthCode::generate();
     let pre_auth_code_hash = pre_auth_code.hash();
@@ -183,13 +175,7 @@ pub async fn get(
     let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let offer_id = parse_offer_id(&offer_id_str)?;
 
-    let mut conn = state
-        .pool
-        .acquire()
-        .await
-        .map_err(|err| ApiError::Internal(Box::new(err)))?;
-
-    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let offer = persistence::credential_offers::find_by_id(
         &mut conn,
@@ -217,13 +203,7 @@ pub async fn cancel(
     let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let offer_id = parse_offer_id(&offer_id_str)?;
 
-    let mut conn = state
-        .pool
-        .acquire()
-        .await
-        .map_err(|err| ApiError::Internal(Box::new(err)))?;
-
-    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let mut offer = persistence::credential_offers::find_by_id(
         &mut conn,
@@ -284,13 +264,7 @@ pub async fn status(
     let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let offer_id = parse_offer_id(&offer_id_str)?;
 
-    let mut conn = state
-        .pool
-        .acquire()
-        .await
-        .map_err(|err| ApiError::Internal(Box::new(err)))?;
-
-    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let offer = persistence::credential_offers::find_by_id(
         &mut conn,
@@ -323,13 +297,7 @@ pub async fn list(
     let state_filter = parse_state_filter(query.state.as_deref())?;
     let cursor = query.cursor.as_deref().map(decode_cursor).transpose()?;
 
-    let mut conn = state
-        .pool
-        .acquire()
-        .await
-        .map_err(|err| ApiError::Internal(Box::new(err)))?;
-
-    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let now = Utc::now();
     let page = persistence::credential_offers::list(
