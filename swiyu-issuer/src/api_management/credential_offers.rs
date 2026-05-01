@@ -8,7 +8,9 @@ use crate::persistence;
 
 use super::AppState;
 use super::auth::{TenantContext, require_issuer_owned_by_tenant};
-use super::dto::{CreateCredentialOfferRequest, CreateCredentialOfferResponse};
+use super::dto::{
+    CreateCredentialOfferRequest, CreateCredentialOfferResponse, GetCredentialOfferResponse,
+};
 use super::error::ApiError;
 
 const DEFAULT_EXPIRES_IN_SECONDS: u32 = 600;
@@ -114,6 +116,57 @@ fn build_offer_deeplink(issuer_base_url: &str, offer_id: &CredentialOfferId) -> 
     );
     let encoded = urlencoding::encode(&credential_offer_uri);
     format!("openid-credential-offer://?credential_offer_uri={encoded}")
+}
+
+pub async fn get(
+    State(state): State<AppState>,
+    Path((issuer_id_str, offer_id_str)): Path<(String, String)>,
+    tenant_context: TenantContext,
+) -> Result<Json<GetCredentialOfferResponse>, ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
+        offer_id = %offer_id_str,
+        "credential offer fetch requested",
+    );
+
+    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
+        details: format!("issuer_id path parameter: {err}"),
+    })?;
+    let offer_id =
+        CredentialOfferId::from_bare(&offer_id_str).map_err(|err| ApiError::InvalidInput {
+            details: format!("offer_id path parameter: {err}"),
+        })?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    require_issuer_owned_by_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id).await?;
+
+    let offer = persistence::credential_offers::find_by_id(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+        &offer_id,
+    )
+    .await?;
+
+    let observed = offer.observed_state(Utc::now());
+
+    let response = GetCredentialOfferResponse {
+        id: offer.id.to_string(),
+        issuer_id: offer.issuer_id.to_string(),
+        vct: offer.vct,
+        claims: offer.claims,
+        state: observed.as_str().to_string(),
+        expires_at: offer.expires_at,
+        created_at: offer.created_at,
+    };
+
+    Ok(Json(response))
 }
 
 #[cfg(test)]

@@ -122,6 +122,22 @@ impl CredentialOffer {
         now >= self.expires_at
     }
 
+    /// Returns the state as observed at `now`.
+    ///
+    /// Differs from the stored [`CredentialOfferState`] only when
+    /// an offer is still `Pending` past its `expires_at`: storage
+    /// keeps `Pending` (v0.1.0 has no background sweeper that flips
+    /// state on a timer), but a read at or after `expires_at`
+    /// reports `Expired`.
+    pub fn observed_state(&self, now: DateTime<Utc>) -> CredentialOfferState {
+        match self.state {
+            CredentialOfferState::Pending if self.is_expired_at(now) => {
+                CredentialOfferState::Expired
+            }
+            other => other,
+        }
+    }
+
     /// Transitions this offer from `Pending` to `Issued`.
     ///
     /// Records that the wallet has successfully picked the offer up.
@@ -249,5 +265,41 @@ mod tests {
     #[test]
     fn state_parse_rejects_unknown() {
         assert!(CredentialOfferState::parse("unknown").is_err());
+    }
+
+    #[test]
+    fn observed_state_pending_unexpired_stays_pending() {
+        let offer = make_offer(Duration::minutes(10));
+        assert_eq!(
+            offer.observed_state(Utc::now()),
+            CredentialOfferState::Pending
+        );
+    }
+
+    #[test]
+    fn observed_state_pending_expired_reports_expired() {
+        let offer = make_offer(Duration::seconds(-1));
+        assert_eq!(
+            offer.observed_state(Utc::now()),
+            CredentialOfferState::Expired
+        );
+        // Stored state is unchanged; observed_state is read-only.
+        assert_eq!(offer.state, CredentialOfferState::Pending);
+    }
+
+    #[test]
+    fn observed_state_issued_stays_issued_regardless_of_time() {
+        let mut offer = make_offer(Duration::minutes(10));
+        offer.try_issue(Utc::now()).unwrap();
+        let later = Utc::now() + Duration::days(365);
+        assert_eq!(offer.observed_state(later), CredentialOfferState::Issued);
+    }
+
+    #[test]
+    fn observed_state_cancelled_stays_cancelled() {
+        let mut offer = make_offer(Duration::minutes(10));
+        offer.try_cancel().unwrap();
+        let later = Utc::now() + Duration::days(365);
+        assert_eq!(offer.observed_state(later), CredentialOfferState::Cancelled);
     }
 }

@@ -21,6 +21,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/issuers/{issuer_id}/credential-offers",
             post(credential_offers::create),
         )
+        .route(
+            "/api/v1/issuers/{issuer_id}/credential-offers/{offer_id}",
+            get(credential_offers::get),
+        )
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }
