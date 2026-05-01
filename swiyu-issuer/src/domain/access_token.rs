@@ -1,6 +1,9 @@
 use std::fmt;
 
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
+
+use super::ids::{CredentialOfferId, IssuerId, TenantId};
 
 const ACCESS_TOKEN_BYTES: usize = 16;
 
@@ -50,6 +53,23 @@ impl fmt::Debug for AccessTokenSecret {
             .field(&"<redacted>")
             .finish()
     }
+}
+
+/// A persisted access-token row.
+///
+/// Returned by `persistence::oidc::access_tokens::find_valid_by_hash`
+/// after a successful Bearer-header lookup at the credential
+/// endpoint. Carries the offer_id so the handler can fetch the
+/// associated `credential_offers` row, and tenant/issuer for
+/// defense-in-depth scoping on the subsequent state-transition
+/// writes.
+#[derive(Debug, Clone)]
+pub struct AccessToken {
+    pub token_hash: AccessTokenHash,
+    pub tenant_id: TenantId,
+    pub issuer_id: IssuerId,
+    pub offer_id: CredentialOfferId,
+    pub expires_at: DateTime<Utc>,
 }
 
 /// The persistable form of an [`AccessTokenSecret`]: SHA-256 of the

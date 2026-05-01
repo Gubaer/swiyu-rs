@@ -7,7 +7,7 @@ pub mod issuer;
 pub mod nonce;
 pub mod pre_auth_code;
 
-pub use access_token::{AccessTokenHash, AccessTokenSecret};
+pub use access_token::{AccessToken, AccessTokenHash, AccessTokenSecret};
 pub use api_token::{ApiToken, ApiTokenHash, ApiTokenSecret};
 pub use credential_offer::{CredentialOffer, CredentialOfferState};
 pub use errors::DomainError;

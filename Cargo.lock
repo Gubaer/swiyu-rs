@@ -2996,9 +2996,11 @@ name = "swiyu-issuer"
 version = "0.1.1"
 dependencies = [
  "axum",
+ "base64",
  "bs58",
  "chrono",
  "clap",
+ "ed25519-dalek",
  "getrandom 0.4.2",
  "humantime",
  "jsonschema",

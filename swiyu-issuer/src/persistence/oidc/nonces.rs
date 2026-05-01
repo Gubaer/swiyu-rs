@@ -7,6 +7,7 @@
 //! issuance uses several).
 
 use chrono::{DateTime, Utc};
+use sqlx::Row;
 use sqlx::postgres::PgConnection;
 
 use crate::domain::{CredentialOfferId, IssuerId, NonceHash, TenantId};
@@ -38,6 +39,47 @@ pub async fn insert(
     .map_err(map_database_error)?;
 
     Ok(())
+}
+
+/// Atomically deletes the nonce row matching `nonce_hash` and
+/// returns the `offer_id` it was bound to.
+///
+/// Returns `Ok(None)` if no row matches **or** the row had already
+/// expired at `now`. The caller (the credential endpoint) treats
+/// `None` as `invalid_proof` — same generic message regardless of
+/// the underlying reason.
+///
+/// `DELETE … RETURNING` makes the consume atomic so a concurrent
+/// second `/credential` request with the same nonce cannot
+/// double-spend it.
+pub async fn consume_by_hash(
+    conn: &mut PgConnection,
+    nonce_hash: &NonceHash,
+    now: DateTime<Utc>,
+) -> Result<Option<CredentialOfferId>, PersistenceError> {
+    let row = sqlx::query(
+        r#"
+        DELETE FROM oidc_nonces
+        WHERE nonce_hash = $1 AND expires_at > $2
+        RETURNING offer_id
+        "#,
+    )
+    .bind(nonce_hash.as_str())
+    .bind(now)
+    .fetch_optional(conn)
+    .await?;
+
+    match row {
+        None => Ok(None),
+        Some(row) => {
+            let offer_id: String = row.try_get("offer_id")?;
+            Ok(Some(CredentialOfferId::from_bare(offer_id).map_err(
+                |err| PersistenceError::DataIntegrity {
+                    details: err.to_string(),
+                },
+            )?))
+        }
+    }
 }
 
 fn map_database_error(err: sqlx::Error) -> PersistenceError {

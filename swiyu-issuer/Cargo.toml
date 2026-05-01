@@ -7,9 +7,11 @@ license = "MIT"
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
 axum = "0.8"
+base64 = "0.22"
 bs58 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
+ed25519-dalek = "2"
 getrandom = "0.4"
 humantime = "2"
 jsonschema = "0.46"

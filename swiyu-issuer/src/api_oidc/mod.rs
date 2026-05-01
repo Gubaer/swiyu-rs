@@ -1,9 +1,13 @@
+mod credential;
 mod credential_offer;
 mod error;
 mod metadata;
 mod oauth_error;
+mod signer;
 mod state;
 mod token;
+
+pub use signer::Signer;
 
 pub use error::OidcError;
 pub use oauth_error::OAuthError;
@@ -31,6 +35,7 @@ pub fn router(state: AppState) -> Router {
             get(credential_offer::credential_offer),
         )
         .route("/i/{issuer_id}/token", post(token::token))
+        .route("/i/{issuer_id}/credential", post(credential::credential))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }

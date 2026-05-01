@@ -51,6 +51,44 @@ pub async fn find_by_pre_auth_code_hash(
     row.map(|row| row_to_offer(&row)).transpose()
 }
 
+/// Persists a `Pending` → `Issued` transition for the named offer.
+///
+/// Caller is responsible for loading the offer, running the domain
+/// state-machine guard (`CredentialOffer::try_issue`), and
+/// supplying `issued_at`. The SQL `WHERE state = 'pending'` guard
+/// is defence in depth: a concurrent cancel that happens between
+/// the handler's load and write would leave 0 rows updated, which
+/// surfaces as `PersistenceError::NotFound`. Lives in the
+/// `persistence::oidc::credential_offers` namespace so the
+/// management binary cannot accidentally invoke it.
+pub async fn mark_issued(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+    offer_id: &CredentialOfferId,
+    issued_at: DateTime<Utc>,
+) -> Result<(), PersistenceError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE credential_offers
+        SET state = 'issued', issued_at = $4
+        WHERE id = $1 AND tenant_id = $2 AND issuer_id = $3
+              AND state = 'pending'
+        "#,
+    )
+    .bind(offer_id.bare())
+    .bind(tenant_id.bare())
+    .bind(issuer_id.bare())
+    .bind(issued_at)
+    .execute(conn)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(PersistenceError::NotFound);
+    }
+    Ok(())
+}
+
 fn row_to_offer(row: &PgRow) -> Result<CredentialOffer, PersistenceError> {
     let id: String = row.try_get("id")?;
     let tenant_id: String = row.try_get("tenant_id")?;

@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use sqlx::PgPool;
 
+use super::signer::Signer;
+
 pub struct Config {
     /// Public base URL the wallet sees. The metadata document
     /// substitutes this into `credential_issuer`,
@@ -36,13 +38,15 @@ impl Config {
 pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<Config>,
+    pub signer: Arc<Signer>,
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, config: Config) -> Self {
+    pub fn new(pool: PgPool, config: Config, signer: Signer) -> Self {
         Self {
             pool,
             config: Arc::new(config),
+            signer: Arc::new(signer),
         }
     }
 }

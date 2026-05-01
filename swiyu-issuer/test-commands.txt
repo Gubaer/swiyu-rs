@@ -198,6 +198,21 @@ http --form POST :8081/i/9hXq2vRtL8pK7f/token \
   grant_type=client_credentials \
   pre-authorized_code=anything
 
+# Issue the credential. Requires:
+#   <access-token>: from /token's response
+#   <wallet-proof-jwt>: a wallet-signed JWT with header.jwk = wallet
+#                       public key, payload.aud = ISSUER_BASE_URL/i/<issuer-id>,
+#                       payload.iat within +/- 5 minutes, payload.nonce =
+#                       the c_nonce returned by /token.
+# v0.1.x does NOT verify the JWT signature — claims are checked but the
+# signature is ignored. The issued credential is signed with an EPHEMERAL
+# fixture key generated at issuer-oidc startup.
+http POST :8081/i/9hXq2vRtL8pK7f/credential \
+  "Authorization:Bearer <access-token>" \
+  format=vc+sd-jwt \
+  vct=urn:communal:local-residence-id \
+  proof:='{"proof_type": "jwt", "jwt": "<wallet-proof-jwt>"}'
+
 
 # -----------------------------------------------------------------------------
 # Mint a fresh token (CLI; no HTTP)

@@ -2,7 +2,7 @@ use std::env;
 use std::net::SocketAddr;
 
 use chrono::Duration;
-use swiyu_issuer::api_oidc::{AppState, Config, router};
+use swiyu_issuer::api_oidc::{AppState, Config, Signer, router};
 use swiyu_issuer::persistence;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -30,6 +30,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
 
+    // FIXTURE KEY WARNING: every issuer-oidc restart mints a fresh
+    // Ed25519 keypair held in process memory only. Signed credentials
+    // are wire-shape compatible but cryptographically meaningless
+    // across restarts. The follow-up "wire swiyu-didtool keystore"
+    // slice replaces this with the real assertion key from the issuer
+    // row's `signing_key_id` column. Do not promote past alpha
+    // until that lands.
+    tracing::warn!(
+        "issuer-oidc is using an EPHEMERAL FIXTURE signing key. \
+         Signed credentials will not verify across restarts and the \
+         issuer's DID document does not advertise the public key. \
+         Replace before any non-alpha deployment."
+    );
+    let signer = Signer::new_ephemeral_for_dev();
+
     let state = AppState::new(
         pool,
         Config {
@@ -37,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             access_token_ttl,
             c_nonce_ttl,
         },
+        signer,
     );
     let app = router(state);
 

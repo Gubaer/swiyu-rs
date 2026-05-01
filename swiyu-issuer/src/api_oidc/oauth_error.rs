@@ -29,6 +29,21 @@ pub enum OAuthError {
     /// grant. v0.1.x supports nothing else.
     #[error("unsupported grant type: {grant_type}")]
     UnsupportedGrantType { grant_type: String },
+    /// Bearer access token is missing, malformed, expired, or
+    /// already consumed at the credential endpoint.
+    #[error("invalid token: {description}")]
+    InvalidToken { description: String },
+    /// Wallet proof JWT is malformed, has the wrong claims, or its
+    /// `nonce` doesn't match a live `c_nonce` for this offer.
+    #[error("invalid proof: {description}")]
+    InvalidProof { description: String },
+    /// Credential-endpoint request body is wrong in a way that is
+    /// not a format mismatch — e.g. `vct` doesn't match the offer.
+    #[error("invalid credential request: {description}")]
+    InvalidCredentialRequest { description: String },
+    /// `format` is something this binary does not advertise.
+    #[error("unsupported credential format: {format}")]
+    UnsupportedCredentialFormat { format: String },
     /// Catch-all for unexpected server-side failures. Logged with
     /// the underlying error; response body says only "server error".
     #[error("internal error")]
@@ -58,6 +73,26 @@ impl IntoResponse for OAuthError {
                 StatusCode::BAD_REQUEST,
                 "unsupported_grant_type",
                 format!("grant_type {grant_type:?} is not supported"),
+            ),
+            OAuthError::InvalidToken { description } => (
+                StatusCode::UNAUTHORIZED,
+                "invalid_token",
+                description.clone(),
+            ),
+            OAuthError::InvalidProof { description } => (
+                StatusCode::BAD_REQUEST,
+                "invalid_proof",
+                description.clone(),
+            ),
+            OAuthError::InvalidCredentialRequest { description } => (
+                StatusCode::BAD_REQUEST,
+                "invalid_credential_request",
+                description.clone(),
+            ),
+            OAuthError::UnsupportedCredentialFormat { format } => (
+                StatusCode::BAD_REQUEST,
+                "unsupported_credential_format",
+                format!("credential format {format:?} is not supported"),
             ),
             OAuthError::Internal(err) => {
                 tracing::error!(error = %err, "internal server error on OAuth surface");

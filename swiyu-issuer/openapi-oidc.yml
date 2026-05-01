@@ -161,6 +161,77 @@ paths:
               schema:
                 $ref: '#/components/schemas/OAuthErrorBody'
 
+  /i/{issuer_id}/credential:
+    post:
+      summary: Issue a credential for the offer the access token represents
+      description: |
+        Exchanges an access token plus a wallet `proof` for a signed
+        SD-JWT VC. Authentication is by the bearer access token
+        minted at `/token`.
+
+        Wallet flow:
+
+        1. Bearer access token is hashed and looked up. Missing,
+           expired, or already-consumed → `invalid_token`.
+        2. The offer the access token was minted for is loaded; it
+           must still be `pending` and unexpired.
+        3. The request `format` must be `vc+sd-jwt` and `vct` must
+           match the offer.
+        4. The wallet proof JWT is parsed; `aud`/`iat`/`nonce` are
+           validated and the embedded `jwk` is bound into the
+           credential as `cnf`.
+        5. The `c_nonce` is consumed atomically; `mark_issued` and
+           the access-token deletion run in one transaction.
+
+        The signed credential is a degenerate SD-JWT VC at v0.1.x
+        — every claim is in the JWS payload plaintext, no
+        disclosures, just a trailing `~`. Selective disclosure
+        lands in a follow-up slice.
+
+        **NOTE:** v0.1.x signs with an ephemeral fixture key
+        generated at `issuer-oidc` startup. Signed credentials are
+        wire-shape compatible but do not verify across restarts;
+        the issuer's published DID document does not advertise the
+        public key. Real keystore integration is a follow-up slice.
+      operationId: postCredential
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+      security:
+        - WalletAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialRequest'
+      responses:
+        '200':
+          description: Credential issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialResponse'
+        '400':
+          description: |
+            Body is malformed, format/vct mismatch, or the wallet
+            proof failed to parse / didn't bind to a live nonce.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorBody'
+        '401':
+          description: Bearer access token missing, expired, or already consumed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorBody'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorBody'
+
   /i/{issuer_id}/credential-offer/{offer_id}:
     get:
       summary: Fetch the OID4VCI CredentialOffer body
@@ -450,6 +521,49 @@ components:
           description: Lifetime of `c_nonce` in seconds.
           example: 300
 
+    CredentialRequest:
+      type: object
+      required: [format, vct, proof]
+      properties:
+        format:
+          type: string
+          enum: [vc+sd-jwt]
+        vct:
+          type: string
+          description: |
+            SD-JWT VC type identifier; must equal the `vct` recorded
+            on the offer.
+          example: urn:communal:local-residence-id
+        proof:
+          $ref: '#/components/schemas/WalletProof'
+
+    WalletProof:
+      type: object
+      required: [proof_type, jwt]
+      properties:
+        proof_type:
+          type: string
+          enum: [jwt]
+        jwt:
+          type: string
+          description: |
+            Wallet-signed JWT. Header carries the wallet's public
+            key as a `jwk`; payload carries `aud` (the issuer URL),
+            `iat`, and a `nonce` previously minted at `/token`.
+            The signature is currently parsed but not verified at
+            v0.1.x; verification is a follow-up slice.
+
+    CredentialResponse:
+      type: object
+      required: [credential]
+      properties:
+        credential:
+          type: string
+          description: |
+            Signed SD-JWT VC: `<header>.<payload>.<signature>~`.
+            v0.1.x emits a degenerate SD-JWT — every claim is in the
+            JWS payload plaintext with no disclosures.
+
     OAuthErrorBody:
       type: object
       required: [error, error_description]
@@ -463,7 +577,20 @@ components:
             - invalid_grant
             - invalid_request
             - unsupported_grant_type
+            - invalid_token
+            - invalid_proof
+            - invalid_credential_request
+            - unsupported_credential_format
             - server_error
         error_description:
           type: string
           description: Human-readable explanation.
+
+  securitySchemes:
+    WalletAccessToken:
+      type: http
+      scheme: bearer
+      description: |
+        OAuth bearer access token minted at `/token`. Used only by
+        the credential endpoint; the wallet path does not use it
+        for metadata or offer-uri requests.
