@@ -1,0 +1,256 @@
+openapi: 3.1.0
+
+info:
+  title: swiyu-issuer Management API
+  version: 0.1.1
+  description: |
+    Management API consumed by a tenant's business application to create
+    and inspect credential offers. Offers are later picked up by a
+    wallet over OID4VCI; the wallet-facing endpoints live in a separate
+    binary and are not described here.
+
+    Authentication is a stub at v0.1.0: every request resolves to a
+    seeded tenant id from `DEFAULT_TENANT_ID`. Real API-token auth
+    lands in a later slice without changing endpoint shapes.
+
+    See `specs/impl_api_management.md` for design rationale.
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development (docker compose up + cargo run)
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Always returns 200. No database check; for orchestrator liveness only.
+      operationId: healthz
+      responses:
+        '200':
+          description: Service is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: Returns 200 if a database connection can be acquired.
+      operationId: readyz
+      responses:
+        '200':
+          description: Service is ready to accept requests.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+        '503':
+          description: Database is not reachable.
+
+  /api/v1/issuers/{issuer_id}/credential-offers:
+    post:
+      summary: Create a credential offer
+      description: |
+        Creates a credential offer for the named issuer. The response carries
+        the bare pre-authorised code exactly once; only its hash is persisted.
+      operationId: createCredentialOffer
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCredentialOfferRequest'
+      responses:
+        '201':
+          description: Offer created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCredentialOfferResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/issuers/{issuer_id}/credential-offers/{offer_id}:
+    get:
+      summary: Fetch a credential offer
+      description: |
+        Returns the current state of the named offer. The `state` field is
+        the *observed* state: an offer still stored as `pending` past its
+        `expires_at` is reported as `expired`.
+      operationId: getCredentialOffer
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+        - $ref: '#/components/parameters/OfferId'
+      responses:
+        '200':
+          description: Offer found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetCredentialOfferResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    IssuerId:
+      name: issuer_id
+      in: path
+      required: true
+      description: Bare base58 issuer identifier (no `issuer_` prefix).
+      schema:
+        type: string
+        pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'
+        example: 9hXq2vRtL8pK7f
+
+    OfferId:
+      name: offer_id
+      in: path
+      required: true
+      description: Bare base58 credential offer identifier (no `offer_` prefix).
+      schema:
+        type: string
+        pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'
+        example: 9hXq2vRtL8pK7f
+
+  responses:
+    BadRequest:
+      description: |
+        Invalid input. Possible `error` codes: `invalid_input`,
+        `unknown_vct`, `claims_validation_failed`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+    NotFound:
+      description: |
+        Resource not found, or not owned by the authenticated tenant.
+        Wrong-tenant returns the same status as no-such-resource so an
+        attacker cannot probe for existence outside their tenant.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+    Conflict:
+      description: State transition not allowed, or a unique constraint was violated.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+  schemas:
+    CreateCredentialOfferRequest:
+      type: object
+      required: [vct, claims]
+      properties:
+        vct:
+          type: string
+          description: |
+            SD-JWT VC type identifier (URI). Determines which JSON
+            Schema validates `claims`. Unknown values return 400.
+          example: urn:communal:local-residence-id
+        claims:
+          type: object
+          description: |
+            Credential claims as a JSON object. Validated against the
+            schema bundled for `vct` before the offer is persisted.
+          additionalProperties: true
+        expires_in_seconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          default: 600
+          description: Lifetime of the offer in seconds. Default 10 minutes.
+
+    CreateCredentialOfferResponse:
+      type: object
+      required: [id, pre_auth_code, offer_deeplink, expires_at]
+      properties:
+        id:
+          type: string
+          description: Prefixed credential offer identifier.
+          example: offer_9hXq2vRtL8pK7f
+        pre_auth_code:
+          type: string
+          description: |
+            Bare OID4VCI pre-authorised code. Returned exactly once at
+            creation; only its hash is persisted. Use it in the wallet's
+            redemption flow.
+        offer_deeplink:
+          type: string
+          format: uri
+          description: |
+            `openid-credential-offer://` URI suitable for rendering as a
+            QR code or handing to the holder's wallet.
+          example: openid-credential-offer://?credential_offer_uri=https%3A%2F%2Fissuer.example.com%2Fo%2F9hXq2vRtL8pK7f
+        expires_at:
+          type: string
+          format: date-time
+
+    GetCredentialOfferResponse:
+      type: object
+      required: [id, issuer_id, vct, claims, state, expires_at, created_at]
+      properties:
+        id:
+          type: string
+          example: offer_9hXq2vRtL8pK7f
+        issuer_id:
+          type: string
+          example: issuer_9hXq2vRtL8pK7f
+        vct:
+          type: string
+          example: urn:communal:local-residence-id
+        claims:
+          type: object
+          additionalProperties: true
+        state:
+          type: string
+          enum: [pending, issued, cancelled, expired]
+          description: |
+            Observed state. May report `expired` even when the database
+            row is still `pending` (v0.1.0 evaluates expiry on read).
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    ErrorBody:
+      type: object
+      required: [error, details]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable error code.
+          enum:
+            - not_found
+            - unauthorised
+            - forbidden
+            - unknown_vct
+            - claims_validation_failed
+            - invalid_input
+            - conflict
+            - not_implemented
+            - internal_error
+        details:
+          type: string
+          description: |
+            Human-readable explanation. For `claims_validation_failed`
+            this contains a `; `-joined list of JSON-Schema validator
+            messages.
