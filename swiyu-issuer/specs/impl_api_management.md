@@ -220,11 +220,11 @@ The cancel and status endpoints surface two new timestamp columns on
   driven by the OIDC binary in a later slice; the column ships now
   so the management API contract is stable.
 
-A new migration adds both columns nullable. They are written by the
-corresponding state-transition functions in
-`persistence::credential_offers` (`cancel`, future `mark_issued`).
-See [`impl_persistence.md`](impl_persistence.md) for the schema
-record.
+A new migration adds both columns nullable. `cancel` lives in
+`persistence::credential_offers` (this slice). `mark_issued` lives in
+the separate `persistence::oidc::credential_offers` namespace
+introduced by [`impl_api_oidc.md`](impl_api_oidc.md), so the
+management binary cannot accidentally invoke it.
 
 ## Tenant scoping at the request boundary
 
@@ -396,12 +396,6 @@ come last.
   against `now()`. Confirm this is the right ergonomic trade-off
   versus a separate `expired_after` query parameter that lets
   clients filter on stored state and time directly.
-- **`mark_issued` ownership.** The OIDC binary is the only writer
-  of `issued_at`. Decide whether the function lives in
-  `persistence::credential_offers` (shared with management) or
-  under a separate OIDC-only persistence module to avoid
-  accidental use; record the answer in
-  [`impl_persistence.md`](impl_persistence.md).
 - **Integration-test database.** `testcontainers` (hermetic, slow
   first run) vs. relying on a local `DATABASE_URL`. Affects CI
   more than code shape; default to local URL with a documented

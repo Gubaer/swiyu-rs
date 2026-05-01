@@ -368,6 +368,49 @@ Environment variables consumed by `issuer-oidc`:
 
 No config file at v0.1.3.
 
+## Deployment topology
+
+`issuer-mgmt` and `issuer-oidc` are separate binaries, but they
+must be reachable to external clients at the same external base
+URL — `ISSUER_BASE_URL`. The management binary publishes deeplinks
+that resolve into the OIDC binary's `/i/{issuer_id}/credential-
+offer/{offer_id}` path; if the two binaries answered on different
+hosts the wallet would chase a URL that does not exist on the
+issuer it was directed to.
+
+A reverse proxy in front of both binaries is the canonical layout:
+
+```
+                    ┌────────────────────────────┐
+client / wallet ──▶ │  reverse proxy (nginx,    │
+                    │  Caddy, k8s ingress, …)   │
+                    └────────────────────────────┘
+                          │           │
+                          │           │
+   /api/v1/…              │           │   /i/…
+   /healthz              ▼           ▼   /.well-known/…
+              ┌────────────┐   ┌────────────┐
+              │ issuer-mgmt│   │ issuer-oidc│
+              └────────────┘   └────────────┘
+```
+
+Routing rules:
+
+- `/api/v1/…` and `/healthz`, `/readyz` → `issuer-mgmt`.
+- `/i/…` and `/.well-known/…` → `issuer-oidc`.
+- Both binaries set `ISSUER_BASE_URL` to the **external** base
+  URL (the proxy's host), not their own listen address. The
+  deeplink the management binary emits and the issuer metadata
+  the OIDC binary advertises must agree on this value.
+
+Single-host development is fine without a proxy: run the two
+binaries on different ports and point business-app smoke tests
+at each port directly. Wallet flows still need a reachable URL
+that resolves both path prefixes, so a local proxy (or
+`ISSUER_BASE_URL` pointing at the OIDC binary alone, with
+`/api/v1/…` traffic going elsewhere) is needed for end-to-end
+wallet testing.
+
 ## Error mapping
 
 `OidcError` implements `IntoResponse` and maps onto the OAuth /
