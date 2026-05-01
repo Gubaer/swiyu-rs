@@ -128,10 +128,13 @@ and optionally the schema reference per W3C semantics.
 
 ## Open
 
-- Whether `CredentialSchema` is stored inline as `JSONB` on the
+- ~~Whether `CredentialSchema` is stored inline as `JSONB` on the
   `CredentialType` row, or referenced by URL only (with a cached
-  copy for stability and offline validation). Defer until schema
-  usage becomes concrete.
+  copy for stability and offline validation).~~ Resolved in
+  [`impl_credential_schema.md`](impl_credential_schema.md): a
+  separate `credential_schemas` table that *is* the cache, with
+  `source_url` recording the canonical fetch origin. v0.1.0 ships
+  one bundled schema instead of the table.
 - When (if ever) to re-introduce `CredentialConfiguration` as a
   separate entity. Trigger: the same type exposed by the same
   issuer in two different formats, or other 1:n divergence between

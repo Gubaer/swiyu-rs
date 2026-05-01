@@ -86,8 +86,10 @@ enforcement anyway.
 
 - `tenants(id text primary key)`.
 - `issuers(id text primary key, tenant_id text not null references tenants(id))`.
-- `credential_offers(id, tenant_id, issuer_id, credential_type,
+- `credential_offers(id, tenant_id, issuer_id, vct,
   claims jsonb, state, pre_auth_code_hash, expires_at, created_at)`.
+  The `vct` column holds the SD-JWT VC type identifier; see
+  [`impl_credential_schema.md`](impl_credential_schema.md).
 - Index on `credential_offers(tenant_id, issuer_id)`.
 - Seeded one tenant (`4Mk7yK5pQR7sN3`) and one issuer
   (`9hXq2vRtL8pK7f`) with hand-picked fixed IDs for predictable
