@@ -68,6 +68,93 @@ pub async fn find_by_id(
     }
 }
 
+/// One page of credential offers plus a flag indicating whether more
+/// rows remain past the current page.
+///
+/// The flag is computed by fetching `limit + 1` rows internally and
+/// dropping the surplus before returning. Callers do not need to add
+/// the `+ 1` themselves.
+#[derive(Debug)]
+pub struct ListPage {
+    pub items: Vec<CredentialOffer>,
+    pub has_more: bool,
+}
+
+/// Inputs to a paginated list query against `credential_offers`.
+///
+/// `cursor` carries the `(created_at, id)` of the last item of the
+/// previous page; `None` requests the first page. `state_filter` is
+/// the *observed* state — `expired` matches stored-`pending` rows
+/// past their `expires_at`, and `pending` matches stored-`pending`
+/// rows still within their `expires_at`. `now` is the reference time
+/// used for the expiry projection; pass the same instant the handler
+/// uses to render the response so the SQL filter and the observed
+/// state in each row agree.
+#[derive(Debug)]
+pub struct ListPageQuery {
+    pub state_filter: Option<CredentialOfferState>,
+    pub cursor: Option<(DateTime<Utc>, String)>,
+    pub limit: u32,
+    pub now: DateTime<Utc>,
+}
+
+pub async fn list(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+    query: ListPageQuery,
+) -> Result<ListPage, PersistenceError> {
+    let (cursor_created_at, cursor_offer_id) = match query.cursor {
+        Some((ts, id)) => (Some(ts), Some(id)),
+        None => (None, None),
+    };
+    let state_filter_str: Option<&'static str> = query.state_filter.map(|s| s.as_str());
+    let limit_plus_one = i64::from(query.limit) + 1;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT id, tenant_id, issuer_id, vct, claims, state,
+               pre_auth_code_hash, expires_at, created_at,
+               issued_at, cancelled_at
+        FROM credential_offers
+        WHERE tenant_id = $1
+          AND issuer_id = $2
+          AND ($3::TIMESTAMPTZ IS NULL OR (created_at, id) < ($3, $4))
+          AND (
+                $5::TEXT IS NULL
+                OR ($5 = 'pending'   AND state = 'pending' AND expires_at >  $6)
+                OR ($5 = 'expired'   AND state = 'pending' AND expires_at <= $6)
+                OR ($5 = 'issued'    AND state = 'issued')
+                OR ($5 = 'cancelled' AND state = 'cancelled')
+              )
+        ORDER BY created_at DESC, id DESC
+        LIMIT $7
+        "#,
+    )
+    .bind(tenant_id.bare())
+    .bind(issuer_id.bare())
+    .bind(cursor_created_at)
+    .bind(cursor_offer_id.as_deref())
+    .bind(state_filter_str)
+    .bind(query.now)
+    .bind(limit_plus_one)
+    .fetch_all(conn)
+    .await?;
+
+    let mut offers: Vec<CredentialOffer> =
+        rows.iter().map(row_to_offer).collect::<Result<_, _>>()?;
+
+    let has_more = offers.len() as i64 > i64::from(query.limit);
+    if has_more {
+        offers.pop();
+    }
+
+    Ok(ListPage {
+        items: offers,
+        has_more,
+    })
+}
+
 /// Persists a `Pending` → `Cancelled` transition for the named offer.
 ///
 /// Caller is responsible for loading the offer, running domain-level

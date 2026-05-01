@@ -72,3 +72,23 @@ pub struct OfferStatusResponse {
     pub issued_at: Option<DateTime<Utc>>,
     pub cancelled_at: Option<DateTime<Utc>>,
 }
+
+/// Query parameters for `GET .../credential-offers`.
+///
+/// All fields are optional. `limit` is bounded at the handler; out-of-range
+/// values yield `invalid_input`. `cursor` is opaque to clients — the handler
+/// rejects anything it did not itself emit. `state` filters on the
+/// *observed* projection: `expired` matches stored-`pending` rows past their
+/// `expires_at`, and `pending` matches stored-`pending` rows still within it.
+#[derive(Debug, Deserialize)]
+pub struct ListCredentialOffersQuery {
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListCredentialOffersResponse {
+    pub items: Vec<GetCredentialOfferResponse>,
+    pub next_cursor: Option<String>,
+}
