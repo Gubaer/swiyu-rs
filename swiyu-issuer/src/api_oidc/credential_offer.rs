@@ -18,8 +18,10 @@ const PRE_AUTHORIZED_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-au
 /// `grants` is a JSON object whose keys are grant-type URIs; we
 /// emit a single entry for the pre-authorised-code grant. The body
 /// carries the bare pre-auth code (single-use bearer secret) — see
-/// `specs/impl_api_oidc.md` for the exposure window and the bridge
-/// table that holds the secret server-side until first delivery.
+/// `specs/impl_api_oidc.md` for the exposure window. Server-side
+/// the bare code lives in `credential_offers.pre_auth_code` until
+/// the offer's first terminal-state transition (`cancel` or
+/// `mark_issued`) NULLs it.
 #[derive(Debug, Serialize)]
 pub struct CredentialOfferBody {
     pub credential_issuer: String,

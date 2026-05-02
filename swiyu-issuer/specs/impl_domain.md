@@ -70,10 +70,12 @@ The next slice fills in:
   `CredentialOfferState` enum, `CredentialTypeName` newtype, and
   state-transition methods (`new`, `try_issue`, `cancel`,
   `is_expired`).
-- `pre_auth_code.rs` — `PreAuthCode` and `PreAuthCodeHash` value
-  objects with `generate()`, `hash()`, and `matches()` operations.
-  Persistence functions accept only `PreAuthCodeHash`, never the
-  bare secret.
+- `pre_auth_code.rs` — `PreAuthCode` value object with
+  `generate()`, `from_stored()`, and `as_str()` operations. The
+  bare value is persisted on `credential_offers.pre_auth_code`
+  during the pending window and NULLed at the first terminal-state
+  transition; see [`aspect-persistence.md`](aspect-persistence.md)
+  for the by-reference offer-fetch exception that requires this.
 
 ## Cargo dependencies (current)
 
@@ -91,10 +93,14 @@ No new dependencies at the scaffolding step. The next slice pulls in:
 - **State transitions as methods on the aggregate.** The only way
   to change state is through `try_*` methods that enforce
   preconditions and return `DomainError` when invalid.
-- **Type-level discipline for secrets.** Distinct types for
-  `PreAuthCode` (secret, never persisted) and `PreAuthCodeHash`
-  (persisted form). Persistence-layer signatures take the hash type
-  exclusively.
+- **Type-level discipline for secrets.** Bare-secret types are
+  distinct from their hashed/stored forms (e.g. `ApiTokenSecret` /
+  `ApiTokenHash`, `AccessTokenSecret` / `AccessTokenHash`), and
+  persistence-layer signatures take the hash form. The OID4VCI
+  pre-auth code is the documented exception: by-reference offer
+  fetch requires the bare value to be persisted on
+  `credential_offers.pre_auth_code` during the pending window
+  (see [`aspect-persistence.md`](aspect-persistence.md)).
 - **Pragmatic serde / sqlx coupling.** Domain types may carry
   `Serialize`, `Deserialize`, and `sqlx::FromRow` derives directly.
   Splitting wire / DB / domain shapes is deferred until they

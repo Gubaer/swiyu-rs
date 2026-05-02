@@ -73,8 +73,7 @@ pub struct AccessToken {
 }
 
 /// The persistable form of an [`AccessTokenSecret`]: SHA-256 of the
-/// bare value, base58-encoded. Same scheme as
-/// [`crate::domain::PreAuthCodeHash`].
+/// bare value, base58-encoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessTokenHash(String);
 

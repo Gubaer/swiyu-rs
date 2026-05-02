@@ -333,8 +333,9 @@ the handlers becomes a real problem.
   shapes against an in-process router and a real Postgres pool.
 - Integration tests under `swiyu-issuer/tests/` cover each endpoint
   end-to-end:
-  - Create: offer is persisted, `pre_auth_code` returned only in
-    the body, row holds only `pre_auth_code_hash`.
+  - Create: offer is persisted, the bare `pre_auth_code` is
+    returned in the body and stored on the row until the first
+    terminal-state transition.
   - Fetch: returns the offer; reports `expired` for a stored
     `pending` row past `expires_at`.
   - Cancel (v0.1.1): idempotent on already-cancelled, 409 on

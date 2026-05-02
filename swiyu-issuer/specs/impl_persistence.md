@@ -90,6 +90,9 @@ enforcement anyway.
   claims jsonb, state, pre_auth_code_hash, expires_at, created_at)`.
   The `vct` column holds the SD-JWT VC type identifier; see
   [`impl_credential_schema.md`](impl_credential_schema.md).
+  Note: migration 7 (v0.1.2) replaced `pre_auth_code_hash` with a
+  nullable bare `pre_auth_code` column; see
+  [`impl_api_oidc.md`](impl_api_oidc.md) for the rationale.
 - Index on `credential_offers(tenant_id, issuer_id)`.
 - Seeded one tenant (`4Mk7yK5pQR7sN3`) and one issuer
   (`9hXq2vRtL8pK7f`) with hand-picked fixed IDs for predictable

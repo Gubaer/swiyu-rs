@@ -119,7 +119,7 @@ Choices worth flagging:
   database.
 - `ApiTokenHash` — the stored-side newtype wrapping the SHA-256
   hex digest, with `from_secret(...)` and `from_stored(...)`
-  constructors mirroring `PreAuthCodeHash`.
+  constructors.
 
 `swiyu-issuer/src/api_management/auth.rs`:
 

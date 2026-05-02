@@ -77,7 +77,7 @@ writer of the `issued` state on `credential_offers`.
 `swiyu-issuer/src/persistence/oidc/` (new namespace):
 
 - `mod.rs` — module declarations and re-exports.
-- `credential_offers.rs` — `find_by_pre_auth_code_hash` and
+- `credential_offers.rs` — `find_by_pre_auth_code` and
   `mark_issued`. Kept separate from
   `persistence::credential_offers` so the management binary
   cannot accidentally call `mark_issued` (resolves the open
@@ -225,21 +225,20 @@ and `pre-authorized_code=…`.
 
 Behaviour:
 
-1. Hash the presented `pre-authorized_code` (SHA-256, base58) via
-   `domain::pre_auth_code::PreAuthCode::hash`.
-2. `persistence::oidc::credential_offers::find_by_pre_auth_code_hash`
+1. Look up the presented `pre-authorized_code` via
+   `persistence::oidc::credential_offers::find_by_pre_auth_code`
    under the path's `issuer_id`. 404-equivalent maps to OAuth
    `invalid_grant`.
-3. Reject if the offer is not `pending` or its `expires_at` has
+2. Reject if the offer is not `pending` or its `expires_at` has
    passed (`invalid_grant`).
-4. Mint an access token (opaque, 16 random bytes, base58) bound
+3. Mint an access token (opaque, 16 random bytes, base58) bound
    to the `offer_id` and an expiry of `now + access_token_ttl`
    (default 5 min). Persist its **hash** in `oidc_access_tokens`,
    never the bare value.
-5. Mint a `c_nonce` (opaque, 16 random bytes, base58) with the
+4. Mint a `c_nonce` (opaque, 16 random bytes, base58) with the
    same TTL. Persist its **hash** in `oidc_nonces`, scoped to the
    `offer_id`.
-6. Return:
+5. Return:
    ```json
    {
      "access_token": "...",

@@ -81,9 +81,8 @@ impl fmt::Debug for ApiTokenSecret {
 
 /// The persistable form of an [`ApiTokenSecret`].
 ///
-/// Base58-encoded SHA-256 of the bare body. The same scheme as
-/// [`crate::domain::PreAuthCodeHash`]: SHA-256 is appropriate for
-/// high-entropy 256-bit secrets, and a slow password hash would
+/// Base58-encoded SHA-256 of the bare body. SHA-256 is appropriate
+/// for high-entropy 256-bit secrets, and a slow password hash would
 /// only add latency to the per-request auth path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiTokenHash(String);
