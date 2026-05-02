@@ -1,6 +1,6 @@
 didtool must be able to create, read, and write the following key pairs
 1. key pairs for ECDSA
-2. key pairs for EdDSA 
+2. key pairs for EdDSA
 
 # Requirements
 
@@ -13,8 +13,7 @@ Keys are stored on disk in PEM format:
 * private keys in PKCS#8 PEM format
 * public keys in SubjectPublicKeyInfo (SPKI) PEM format
 
-Private and public keys are stored in separate files, because they serve
-different purposes and have different sensitivity.
+Private and public keys are stored in separate files, because they serve different purposes and have different sensitivity.
 
 ## API
 
@@ -42,5 +41,4 @@ pub fn write_public_key_eddsa(key: &Ed25519VerifyingKey, path: &Path) -> CryptoR
 pub fn read_public_key_eddsa(path: &Path) -> CryptoResult<Ed25519VerifyingKey>
 ```
 
-The algorithm appears in the function name because the return types differ —
-there is no single key type that covers both ECDSA and EdDSA.
+The algorithm appears in the function name because the return types differ — there is no single key type that covers both ECDSA and EdDSA.
