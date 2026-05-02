@@ -84,7 +84,8 @@ No new dependencies at the scaffolding step. The next slice pulls in:
 - `bs58` for base58 encoding/decoding of identifiers.
 - A CSPRNG source (likely `rand`; already a transitive dep, otherwise
   added explicitly).
-- A hash crate (likely `sha2`) for the pre-auth code hash.
+- A hash crate (likely `sha2`) for hashing one-shot bearer
+  secrets (`ApiTokenHash`, `AccessTokenHash`).
 
 ## Conventions established
 
