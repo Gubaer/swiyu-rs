@@ -159,11 +159,11 @@ HSM keys are typically non-exportable by policy. The transition is
 therefore not a migration of keys *into* the HSM; it is a **key
 rotation**:
 
-1. Generate a new key pair in the HSM for each active issuer DID.
-2. Add the new public key to the DID document via a `did:tdw` log
-   entry (or equivalent for `did:webvh`).
-3. Retire the old on-disk key in the same or the following log entry.
-4. From this point on the issuer signs only with the HSM-backed key.
+1. For each active issuer, generate a new key triple in the HSM.
+2. Append a new generation to the issuer's DID log (a `did:tdw` log
+   entry or equivalent for `did:webvh`) that publishes the new public
+   keys and retires the old ones.
+3. From this point on the issuer signs only with the HSM-backed keys.
 
 A fresh issuer that never had a pre-production presence skips the
 rotation entirely and starts on HSM-generated keys.
@@ -216,9 +216,9 @@ operation:
   equivalent abstraction) with two implementations: filesystem and
   HSM. Selection is per deployment configuration, possibly per issuer
   during the on-disk → HSM transition window.
-- **Key references** stored in issuer / DID records are abstract
-  enough to refer to either an on-disk key file or an HSM key handle;
-  the signer interprets the reference.
+- **Key references** stored on issuer records are abstract enough to
+  refer to either an on-disk key file or an HSM key handle; the signer
+  interprets the reference.
 
 ## Open questions
 
@@ -229,8 +229,8 @@ operation:
 - **Hot/ephemeral schema.** One table with a kind discriminator vs.
   several focused tables.
 - **HSM provider on the canton side.** Affects how key references are
-  encoded in issuer / DID records and which signing protocol the
-  signer abstraction speaks (PKCS#11, KMIP, vendor SDK, …).
+  encoded on issuer records and which signing protocol the signer
+  abstraction speaks (PKCS#11, KMIP, vendor SDK, …).
 - **Audit log retention.** Exact retention period(s), driven by legal
   requirements rather than engineering.
 - **Down-migration support.** Default position is forward-only;

@@ -17,18 +17,21 @@ sector entity. "Tenant" is purely an internal concept of `swiyu-issuer`;
 wallets and SWIYU infrastructure never see it.
 
 **Issuer** — a SWIYU protocol concept. An issuer is always a SWIYU
-Business Partner with an entry in the SWIYU Base Registry, and has at
-least one DID linked to that Business Partner record by a SWIYU Trust
-Statement. The issuer is what the wallet sees as the credential's
-authority.
+Business Partner with an entry in the SWIYU Base Registry, and is
+identified by exactly one DID linked to that Business Partner record
+by a SWIYU Trust Statement. The issuer is what the wallet sees as the
+credential's authority.
 
-**Relationship** — `tenant 1:{0..n} issuer 1:{1..n} did`.
+**Relationship** — `tenant 1:{0..n} issuer 1:1 did`.
 
 - A tenant has zero or more issuers. The zero case is real and supported
   (see Lifecycle).
 - An issuer belongs to exactly one tenant.
-- An issuer has at least one DID, and may hold several over time
-  (additional DID methods, key rotation).
+- An issuer has exactly one DID for its entire lifetime. The DID is set
+  at issuer creation and never changes. Key rotation happens *inside*
+  the DID log (a new generation of the key triple), not by minting a
+  new DID. A tenant that needs both a `did:tdw` and a `did:webvh`
+  presence creates two issuers.
 
 ## Target scenario
 
@@ -106,11 +109,13 @@ scale below a few thousand high-volume issuers.
 ### Issuer-level (SWIYU protocol)
 
 - The SWIYU Business Partner record this issuer corresponds to.
-- One or more DIDs, each with its associated Trust Statement.
-- Signing keys for those DIDs. Stored on the local filesystem in
-  pre-production maturity, in an HSM (or HSM-backed KMS) operated by
-  the canton from production maturity onwards. See
-  [`aspect-persistence.md`](aspect-persistence.md) for details.
+- The issuer's DID and its associated Trust Statement.
+- Signing keys for that DID. The DID has one or more generations of
+  the key triple recorded in its DID log; key rotation happens inside
+  the log. Stored on the local filesystem in pre-production maturity,
+  in an HSM (or HSM-backed KMS) operated by the canton from production
+  maturity onwards. See [`aspect-persistence.md`](aspect-persistence.md)
+  for details.
 - The set of credential types this issuer is configured to issue, with
   their schemas and per-type configuration.
 - Status lists for credentials issued by this issuer.
@@ -152,8 +157,8 @@ Partner registration and Trust Statement are in place. Issuance is
 gated until at least one issuer is registered for the tenant.
 
 Registering a new issuer for a tenant requires evidence of the SWIYU
-Business Partner record and at least one DID covered by a Trust
-Statement. The exact registration flow is an open question.
+Business Partner record and the DID covered by a Trust Statement.
+The exact registration flow is an open question.
 
 ## Risks and mitigations
 
