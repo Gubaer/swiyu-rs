@@ -28,9 +28,9 @@ Backend selection is made at startup based on configuration.
 /// The role a key pair plays for an issuer.
 /// See `aspect-key-management.md` for the meaning of each role.
 pub enum KeyRole {
-    Assert,
     Authorized,
     Authentication,
+    Assertion,
 }
 
 /// Algorithm a key pair uses. Determined by the role at generation time:
@@ -46,9 +46,11 @@ pub enum KeyAlgorithm {
 /// `CKA_ID`, Vault key name) — no per-backend translation needed.
 pub struct KeyPairId(uuid::Uuid);
 
-/// Public key in a backend-neutral form.
-/// Concrete representation TBD — see open question below.
-pub struct PublicKey {
+/// Raw public-key material returned by a `SigningEngine`. Distinct from
+/// `swiyu_core::diddoc::public_keys::PublicKey`, which is the JWK-/multibase-
+/// encoded form embedded in DID documents. Conversion between the two happens
+/// at the DIDLog construction layer, not inside the engine.
+pub struct RawPublicKey {
     pub algorithm: KeyAlgorithm,
     pub bytes: Vec<u8>,
 }
@@ -56,7 +58,7 @@ pub struct PublicKey {
 /// Result of `generate_keypair`.
 pub struct GeneratedKeyPair {
     pub id: KeyPairId,
-    pub public_key: PublicKey,
+    pub public_key: RawPublicKey,
 }
 
 /// Signature returned by `sign`. Encoding matches the algorithm:
@@ -183,7 +185,7 @@ The migration file follows the existing `YYYYMMDD_NNNNNN_<name>.sql` pattern (ne
 
 **Required mechanisms.** The HSM **must** support both:
 - `CKM_EDDSA` (plain mode, `phFlag=false`, no context) — for the `Authorized` role.
-- `CKM_ECDSA` with curve `secp256r1` (P-256) — for the `Assert` and `Authentication` roles.
+- `CKM_ECDSA` with curve `secp256r1` (P-256) — for the `Assertion` and `Authentication` roles.
 
 These are non-negotiable; they are dictated by SWIYU.
 
@@ -223,5 +225,5 @@ For `sign` and `delete_keypair`, the engine looks up the current session handle 
 1. **Dyn dispatch vs. enum dispatch.**
    swiyu-issuer chooses a backend at startup based on configuration. To hold the engine behind `Box<dyn SigningEngine>` we cannot rely on native Rust 2024 `async fn` in trait alone — we would need either the `async-trait` macro or `trait_variant::make`, each adding a small dependency. The alternative is an `enum AnySigningEngine` that wraps each backend variant and dispatches with a `match`. The enum-dispatch approach avoids a macro dependency and tends to read more directly, at the cost of a few lines of boilerplate per method. Decision pending.
 
-2. **`PublicKey` representation.**
+2. **`RawPublicKey` representation.**
    The current sketch (`KeyAlgorithm` + `Vec<u8>`) is the simplest. The DIDLog code may want a typed enum (`Ed25519PublicKey` / `EcdsaP256PublicKey`) or a JWK-/multibase-friendly form. To be decided when we wire DIDLog construction to this trait.

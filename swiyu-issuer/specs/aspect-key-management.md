@@ -4,7 +4,7 @@
 
 For every issuer `I`, swiyu-issuer manages three private keys, one per role:
 
-- **`assert`** — used to sign Verifiable Credentials issued by `I`. ECDSA over P-256 key pair.
+- **`assertion`** — used to sign Verifiable Credentials issued by `I`. ECDSA over P-256 key pair.
 - **`authorized`** — used to sign the `DataIntegrityStatement` in entries of `I`'s DIDLog. EdDSA (Ed25519) key pair.
 - **`authentication`** — not used by swiyu-issuer for any signing operation. We still have to generate the key pair so its public key can be embedded in `I`'s DIDLog entries. ECDSA over P-256 key pair.
 
@@ -28,7 +28,7 @@ The SigningEngine exposes three operations:
 - `generate_keypair(role) -> (id, public_key)`
   - Generates a key pair appropriate to the role:
     - `authorized` → EdDSA (Ed25519)
-    - `assert`, `authentication` → ECDSA
+    - `assertion`, `authentication` → ECDSA
   - Persists the private key inside the engine.
   - Returns the public key and an opaque key pair identifier.
 
