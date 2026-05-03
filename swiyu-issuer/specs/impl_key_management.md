@@ -8,32 +8,40 @@ Status: preliminary. The trait shape and DB-backed schema are stable enough to s
 
 Covers:
 
-- The `Signer` and `KeyManager` traits and their supporting types.
-- The `swiyu_issuer_keystore` schema tables.
-- How each backend (DB-backed, PKCS#11, cloud KMS) maps the trait operations onto its native vocabulary.
-- Implementation wrinkles that don't surface in the trait but matter for correctness.
+- The `Signer` and `KeyManager` traits, their supporting types, and the single DB-backed implementation.
+- The `swiyu_issuer_keystore` schema.
+- The `KekProvider` and `KEKManager` traits, their supporting types, and an overview of each backend (filesystem dev, Vault Transit, PKCS#11) — enough to name the contract; full per-backend wire details belong in a separate orchestrator-specific spec.
+- The re-encryption sweep, which lives above both trait pairs.
+- Implementation wrinkles that don't surface in the traits but matter for correctness.
 
 Does *not* cover:
 
-- The `KekProvider` trait that the DB-backed impl depends on (separate concern).
+- Detailed per-backend wire specs (Vault Transit policy and auth, PKCS#11 vendor quirks).
 - DID log entry construction (lives in the management API layer).
+- Rotation orchestration (the call-graph that ties `stage_rotation`, registry submission, and `commit_rotation` together — lives in the management API layer).
 - Status-list signing (separate slice).
 
 ## Module layout
 
 `swiyu-issuer/src/signer/`:
 
-- `mod.rs` — trait definitions and re-exports.
-- `types.rs` — `KeyRole`, `Generation`, `Algorithm`, `PublicKey`, `Signature`, `KeyTriplePublic`.
+- `mod.rs` — `Signer` and `KeyManager` (concrete structs, no trait polymorphism since the keystore is DB-only).
+- `types.rs` — `KeyRole`, `Algorithm`, `PublicKey`, `Signature`, `KeyTriplePublic`.
 - `error.rs` — `SignerError` enum.
-- `db.rs` — DB-backed `Signer` + `KeyManager` impl.
-- `hsm.rs` — PKCS#11-backed `Signer` + `KeyManager` impl. Stub at v0.1.x; lit up for production.
-- `kms.rs` — cloud-KMS-backed impl. Stub; lit up if cloud is selected.
+
+`swiyu-issuer/src/kek/`:
+
+- `mod.rs` — `KekProvider` and `KEKManager` trait definitions and re-exports.
+- `types.rs` — `KekVersion`, `Ciphertext`.
+- `error.rs` — `KekError` enum.
+- `fs.rs` — dev-only filesystem impl, behind cargo feature `dev-kek-fs`.
+- `vault_transit.rs` — Hashicorp Vault Transit impl.
+- `pkcs11.rs` — PKCS#11 / HSM impl.
 
 `swiyu-issuer/src/persistence/keystore/`:
 
 - `mod.rs` — module declarations and re-exports.
-- `signing_key_generations.rs` — read/write functions for the keystore table. Free functions, taking `&mut PgConnection`, scoped by `(tenant, issuer)` in every signature.
+- `signing_keys.rs` — read/write functions for the keystore table. Free functions, taking `&mut PgConnection`, scoped by `(tenant, issuer)` in every signature.
 
 ## Public surface
 
@@ -45,9 +53,6 @@ pub enum KeyRole {
     Authentication,
     Assertion,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Generation(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Algorithm {
@@ -77,17 +82,14 @@ pub struct KeyTriplePublic {
 // error.rs
 #[derive(Debug, thiserror::Error)]
 pub enum SignerError {
-    #[error("no key for issuer {issuer:?} role {role:?} generation {generation:?}")]
-    KeyNotFound {
-        issuer: IssuerId,
-        role: KeyRole,
-        generation: Generation,
-    },
-    #[error("generation {generation:?} for issuer {issuer:?} already exists")]
-    GenerationAlreadyExists {
-        issuer: IssuerId,
-        generation: Generation,
-    },
+    #[error("no active key for issuer {issuer:?} role {role:?}")]
+    KeyNotFound { issuer: IssuerId, role: KeyRole },
+    #[error("active key triple already exists for issuer {0:?}")]
+    AlreadyInitialised(IssuerId),
+    #[error("a pending rotation already exists for issuer {0:?}")]
+    PendingRotationExists(IssuerId),
+    #[error("no pending rotation to commit for issuer {0:?}")]
+    NoPendingRotation(IssuerId),
     #[error("key encryption key for tenant {0:?} unavailable")]
     KekUnavailable(TenantId),
     #[error("backend not healthy")]
@@ -99,156 +101,362 @@ pub enum SignerError {
 // mod.rs
 #[async_trait::async_trait]
 pub trait Signer: Send + Sync {
+    /// Sign with the *active* triple's key for the given role.
     async fn sign(
         &self,
         tenant: &TenantId,
         issuer: &IssuerId,
         role: KeyRole,
-        generation: Generation,
         payload: &[u8],
     ) -> Result<Signature, SignerError>;
-
-    async fn public_key(
-        &self,
-        tenant: &TenantId,
-        issuer: &IssuerId,
-        role: KeyRole,
-        generation: Generation,
-    ) -> Result<PublicKey, SignerError>;
-
-    fn non_exportable_keys(&self) -> bool;
 
     async fn health_check(&self) -> Result<(), SignerError>;
 }
 
 #[async_trait::async_trait]
 pub trait KeyManager: Signer {
-    async fn generate_key_triple(
+    /// Bootstrap: generate the issuer's first triple and store it as active.
+    /// Fails with `AlreadyInitialised` if a triple already exists.
+    async fn create_initial_triple(
         &self,
         tenant: &TenantId,
         issuer: &IssuerId,
-        generation: Generation,
     ) -> Result<KeyTriplePublic, SignerError>;
+
+    /// Generate a new triple and store it as `pending_next`.
+    /// Fails with `PendingRotationExists` if one is already pending.
+    async fn stage_rotation(
+        &self,
+        tenant: &TenantId,
+        issuer: &IssuerId,
+    ) -> Result<KeyTriplePublic, SignerError>;
+
+    /// Promote `pending_next` to `active`, destroying the previous active
+    /// triple's material. Idempotent: a second call after success is a no-op.
+    /// Fails with `NoPendingRotation` only if called with no pending row
+    /// *and* no expectation that one was committed previously — see
+    /// reconciliation note below.
+    async fn commit_rotation(
+        &self,
+        tenant: &TenantId,
+        issuer: &IssuerId,
+    ) -> Result<(), SignerError>;
+
+    /// Discard a staged `pending_next` without committing.
+    /// Idempotent: a no-op if no pending rotation exists.
+    async fn discard_pending(
+        &self,
+        tenant: &TenantId,
+        issuer: &IssuerId,
+    ) -> Result<(), SignerError>;
+
+    /// Destroy all key material for the issuer (deactivation).
+    /// Idempotent.
+    async fn delete_keys(
+        &self,
+        tenant: &TenantId,
+        issuer: &IssuerId,
+    ) -> Result<(), SignerError>;
 }
 ```
 
+`Signer::sign` always targets the `active` row. During a rotation the management layer signs the new log entry by calling `sign(.., role: Authorized, ..)` *before* `commit_rotation` is invoked — so the signature is produced by the outgoing key, which is still the active one at that moment. Once `commit_rotation` succeeds, the new triple is active and subsequent signs use it.
+
+There is no `public_key` method on the trait. The application has no operational reason to query the keystore for a public key; see [`aspect-key-management.md`](aspect-key-management.md). The `KeyTriplePublic` returned from `create_initial_triple` and `stage_rotation` is consumed once — by the management layer composing the next DID log entry — and then dropped.
+
+### KEK traits
+
+```rust
+// kek/types.rs
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct KekVersion(pub String);
+
+/// Opaque wrapped-plaintext blob. Owns whatever the impl needs to unwrap —
+/// AES-GCM nonce + ciphertext for the file impl, the bytes Vault Transit
+/// returned, the bytes the HSM returned, etc. Treated as an opaque BYTEA in
+/// the keystore.
+#[derive(Debug, Clone)]
+pub struct Ciphertext(pub Vec<u8>);
+
+// kek/error.rs
+#[derive(Debug, thiserror::Error)]
+pub enum KekError {
+    #[error("tenant {0:?} not registered with the KEK provider")]
+    UnknownTenant(TenantId),
+    #[error("version {version:?} not found for tenant {tenant:?}")]
+    UnknownVersion { tenant: TenantId, version: KekVersion },
+    #[error("tenant {0:?} already has a KEK; create_initial_kek refused")]
+    AlreadyInitialised(TenantId),
+    #[error("AAD mismatch on unwrap (tenant {tenant:?}, version {version:?})")]
+    AadMismatch { tenant: TenantId, version: KekVersion },
+    #[error("KEK provider not healthy")]
+    Unhealthy,
+    #[error("backend error: {0}")]
+    Backend(Box<dyn std::error::Error + Send + Sync>),
+}
+
+// kek/mod.rs
+#[async_trait::async_trait]
+pub trait KekProvider: Send + Sync {
+    /// Wrap `plaintext` under the tenant's *current* KEK, binding `aad` to
+    /// the resulting ciphertext (via AES-GCM AAD, Vault Transit `context`,
+    /// PKCS#11 GCM AAD, etc.). Returns the ciphertext and the version label
+    /// that was used — the caller stores both alongside the wrapped data.
+    async fn wrap(
+        &self,
+        tenant: &TenantId,
+        plaintext: &[u8],
+        aad: &[u8],
+    ) -> Result<(Ciphertext, KekVersion), KekError>;
+
+    /// Unwrap `ciphertext` under the tenant's KEK at `version`, verifying
+    /// the AAD binding. Fails with `AadMismatch` if the binding is wrong,
+    /// `UnknownVersion` if the version has been retired or never existed.
+    async fn unwrap(
+        &self,
+        tenant: &TenantId,
+        version: &KekVersion,
+        ciphertext: &Ciphertext,
+        aad: &[u8],
+    ) -> Result<Vec<u8>, KekError>;
+
+    /// True when the impl guarantees that the KEK material never leaves the
+    /// trust boundary — HSM hardware, Vault Transit with `exportable=false`.
+    /// The dev filesystem impl returns false. The production binary refuses
+    /// to start unless this returns true.
+    fn non_exportable_kek(&self) -> bool;
+
+    async fn health_check(&self) -> Result<(), KekError>;
+}
+
+#[async_trait::async_trait]
+pub trait KEKManager: KekProvider {
+    /// Tenant provisioning: create the tenant's first KEK as version 1
+    /// (or whatever the impl chooses as a starting label).
+    /// Fails with `AlreadyInitialised` if the tenant is already registered.
+    async fn create_initial_kek(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<KekVersion, KekError>;
+
+    /// Add a new KEK version that becomes the new "current". Existing
+    /// versions remain usable for `unwrap`. Returns the new version label.
+    async fn introduce_version(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<KekVersion, KekError>;
+
+    /// Permanently remove an old version. The caller must verify, via the
+    /// keystore, that no row still references the version before calling
+    /// this — keeping `KEKManager` decoupled from keystore wire format.
+    async fn retire_version(
+        &self,
+        tenant: &TenantId,
+        version: &KekVersion,
+    ) -> Result<(), KekError>;
+
+    /// List every version currently held for the tenant. Used by the
+    /// re-encryption sweep to find rows still on a retired-but-not-yet-
+    /// removed version.
+    async fn list_versions(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<Vec<KekVersion>, KekError>;
+
+    /// The version that the next `wrap` call will use. Used by the sweep to
+    /// decide which rows are stale.
+    async fn current_version(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<KekVersion, KekError>;
+
+    /// Tenant deprovisioning: remove every KEK version for the tenant.
+    /// The caller must ensure no keystore rows remain.
+    async fn delete_tenant(&self, tenant: &TenantId) -> Result<(), KekError>;
+}
+```
+
+The OIDC binary's wiring takes `Arc<dyn KekProvider>`; the management binary takes `Arc<dyn KEKManager>`. A given concrete impl (e.g., `VaultTransitKekManager`) implements both traits and can be handed to either binary at the privilege level it needs.
+
 ## Schema
 
-`swiyu_issuer_keystore.signing_key_generations`:
+`swiyu_issuer_keystore.signing_keys`:
 
 | Column | Type | Notes |
 |--------|------|-------|
 | `tenant_id` | TEXT NOT NULL | Reference into `swiyu_issuer_mgmt.tenants`; logical-only when keystore is on a separate database. |
 | `issuer_id` | TEXT NOT NULL | Reference into `swiyu_issuer_mgmt.issuers`; same caveat. |
-| `generation` | INTEGER NOT NULL | 1-based. |
+| `status` | TEXT NOT NULL | `'active'` \| `'pending_next'`. CHECK constraint. |
 | `created_at` | TIMESTAMPTZ NOT NULL DEFAULT NOW() | |
-| `retired_at` | TIMESTAMPTZ NULL | NULL while active. |
-| `backend_kind` | TEXT NOT NULL | `'db'` \| `'pkcs11'` \| `'kms'`. |
-| `authorized_public_pem` | TEXT NOT NULL | |
-| `authentication_public_pem` | TEXT NOT NULL | |
-| `assertion_public_pem` | TEXT NOT NULL | |
-| `authorized_private_ciphertext` | BYTEA NULL | DB-backed only. |
-| `authentication_private_ciphertext` | BYTEA NULL | DB-backed only. |
-| `assertion_private_ciphertext` | BYTEA NULL | DB-backed only. |
-| `aead_nonce` | BYTEA NULL | DB-backed only. 12-byte AES-GCM nonce, fresh per row. |
-| `authorized_handle` | TEXT NULL | HSM/KMS only. PKCS#11 `CKA_ID` (hex), KMS key ID, etc. |
-| `authentication_handle` | TEXT NULL | HSM/KMS only. |
-| `assertion_handle` | TEXT NULL | HSM/KMS only. |
+| `authorized_ciphertext` | BYTEA NOT NULL | Output of `KekProvider::wrap` for the `Authorized` private key. Opaque to the keystore — the impl knows how to unwrap. |
+| `authentication_ciphertext` | BYTEA NOT NULL | Same, for `Authentication`. |
+| `assertion_ciphertext` | BYTEA NOT NULL | Same, for `Assertion`. |
+| `kek_version` | TEXT NOT NULL | The `KekVersion` returned by `wrap` when these three ciphertexts were produced. The `unwrap` path passes it back. The re-encryption sweep uses it to find rows still wrapped under retired versions. Not part of AAD. |
 
-Primary key: `(tenant_id, issuer_id, generation)`.
+Primary key: `(tenant_id, issuer_id, status)`. Per `(tenant_id, issuer_id)` the table holds at most one `active` row and at most one `pending_next` row — zero, one, or two rows total.
 
-CHECK constraint: ciphertext-and-handle exclusivity per row. `backend_kind = 'db'` requires the three `*_ciphertext` columns and `aead_nonce` to be non-NULL and the three `*_handle` columns to be NULL; `backend_kind IN ('pkcs11', 'kms')` reverses this.
+No `backend_kind` column — there is only one signing-side backend (DB) and the per-row variation lives entirely inside the `Ciphertext` blob's interpretation by the held `KekProvider`. No `*_handle` columns. No separate `aead_nonce` column (the nonce, if any, is part of the wrapped blob).
 
-Three roles per row keeps generation atomicity natural — a key triple's three public PEMs land in a single INSERT.
+Three roles per row keeps triple atomicity natural — a key triple's three pieces of material land in a single INSERT.
 
-`retired_at` lets historical generations stay queryable for verifying past signatures; "active generation for this issuer" filters by `retired_at IS NULL`.
+No public-key columns. Public keys are returned in-memory from the trait calls that produce them and are not persisted. The DID log in the registry is the canonical source.
 
-The PEM columns are populated in every backend (DB cache for HSM/KMS impls, primary store for the DB-backed impl). This avoids HSM round-trips for `public_key` calls at request time.
+No `retired_at`, no historical-generation rows. A retired triple is destroyed.
 
-## Backend implementations
+## Signer / KeyManager implementation
 
-### DB-backed (`signer/db.rs`)
-
-Implements `Signer` + `KeyManager` directly against `swiyu_issuer_keystore.signing_key_generations`.
+The keystore is DB-only; there is no per-backend polymorphism on the signing side. The struct holds a `PgPool` and an `Arc<dyn KekProvider>`. Tenant-lifecycle KEK calls (`create_initial_kek`, `delete_tenant`) are *not* this struct's job — the management binary calls them on a separate `Arc<dyn KEKManager>` at tenant provisioning time, before any issuer is created.
 
 `sign`:
 
-1. `SELECT {role}_private_ciphertext, aead_nonce FROM signing_key_generations WHERE tenant_id=$1 AND issuer_id=$2 AND generation=$3`.
-2. Fetch tenant KEK via `kek_provider.fetch(tenant_id)`.
-3. AES-256-GCM decrypt the ciphertext with AAD `(tenant_id, issuer_id, key_role, generation)`.
-4. Sign via `swiyu-didtool::crypto::{sign_eddsa, sign_es256}` depending on role.
-5. Wrap in `Signature { algorithm, raw }`.
+1. `SELECT {role}_ciphertext, kek_version FROM signing_keys WHERE tenant_id=$1 AND issuer_id=$2 AND status='active'`.
+2. `plaintext = kek_provider.unwrap(tenant, &row.kek_version, &row.ciphertext, aad((tenant, issuer, role, "active"))).await`.
+3. Sign via `swiyu-didtool::crypto::{sign_eddsa, sign_es256}` depending on role.
+4. Wrap in `Signature { algorithm, raw }`.
 
-`public_key`:
+The OIDC binary's `sign` path is read-only on the keystore — it does not migrate stale `kek_version` rows. Re-encryption is the management binary's job (see [Re-encryption sweep](#re-encryption-sweep)).
 
-1. `SELECT {role}_public_pem FROM signing_key_generations WHERE …`.
-2. Parse PEM into algorithm-tagged `PublicKey`.
-
-`generate_key_triple`:
+`create_initial_triple`:
 
 1. `swiyu-didtool::crypto::generate_*` for each of the three roles.
-2. AES-256-GCM encrypt each private key with the tenant KEK and the AAD tuple.
-3. INSERT one row with the three ciphertexts, the fresh nonce, the three public PEMs, and `backend_kind = 'db'`.
-4. Return `KeyTriplePublic` from the in-memory publics; the privates are dropped after encryption.
+2. For each role: `(ciphertext, version) = kek_provider.wrap(tenant, &private_bytes, aad((tenant, issuer, role, "active"))).await`. All three calls return the same `version` (the current KEK).
+3. INSERT one row with status `'active'`, the three ciphertexts, and `kek_version = version`. Fails with `AlreadyInitialised` if the row already exists.
+4. Return `KeyTriplePublic` from the in-memory publics; the private bytes are dropped after `wrap`.
 
-`non_exportable_keys()`: `false`.
+`stage_rotation`:
 
-`health_check()`: `SELECT 1` against the pool, plus a no-op KEK fetch for a sentinel tenant.
+1. Generate the three private keys.
+2. For each role: `(ciphertext, version) = kek_provider.wrap(tenant, &private_bytes, aad((tenant, issuer, role, "pending_next"))).await`.
+3. INSERT row with status `'pending_next'`, the three ciphertexts, `kek_version = version`. Fails with `PendingRotationExists` if one already exists.
+4. Return `KeyTriplePublic`.
 
-### PKCS#11 (`signer/hsm.rs`)
+`commit_rotation`:
 
-Implements the same traits against an HSM via PKCS#11. Construction takes the path to the vendor's `.so`, the slot ID, and a credential source for the user PIN (the orchestrator secret store). The impl maintains a pool of pre-authenticated sessions; each operation acquires one, runs its calls inside `tokio::task::spawn_blocking`, and returns it to the pool.
+1. Open a transaction.
+2. `DELETE FROM signing_keys WHERE tenant_id=$1 AND issuer_id=$2 AND status='active'`.
+3. For each role on the `pending_next` row: `unwrap` with the row's own `kek_version` and AAD `(…, "pending_next")`, then `wrap` (no version argument — uses the current) with AAD `(…, "active")`. The `wrap` call returns `(new_ciphertext, new_version)`.
+4. `UPDATE` the row to status `'active'` with the three new ciphertexts and `kek_version = new_version`.
+5. Commit.
 
-`sign`:
+The AAD rebind in step 3 is unavoidable — the AAD includes the row's status, so changing the status requires re-wrapping. Using the current KEK at the same time means a rotation also opportunistically migrates the row to the freshest KEK version. The work happens once per rotation and only on the management binary's host, not in the OIDC binary's hot path.
 
-1. Read `{role}_handle` from the keystore row. The handle is the `CKA_ID` value, hex-encoded.
-2. Acquire a session from the pool.
-3. `C_FindObjectsInit(session, [{CKA_ID, decoded_id}, {CKA_CLASS, CKO_PRIVATE_KEY}])` → `C_FindObjects` → `C_FindObjectsFinal`.
-4. `C_SignInit(session, mechanism, handle)` where `mechanism = CKM_EDDSA` (Authorized) or `CKM_ECDSA` (Authentication, Assertion). For ECDSA the impl hashes with SHA-256 first and feeds the digest.
-5. `C_Sign(session, payload_or_digest, …)`.
-6. Canonicalise the signature (raw `r || s` for ECDSA, raw 64 bytes for Ed25519) and wrap in `Signature`.
+If the `pending_next` row doesn't exist when `commit_rotation` is called, the function logs and returns `Ok(())` (idempotent re-call after success). The `NoPendingRotation` error is reserved for callers that want to assert a pending row should exist; the management layer's reconciliation logic uses it.
 
-`public_key`: cached PEM in the keystore row, no HSM round-trip.
+`discard_pending`:
 
-`generate_key_triple`:
+`DELETE FROM signing_keys WHERE tenant_id=$1 AND issuer_id=$2 AND status='pending_next'`. No-op if absent.
 
-1. Compute the deterministic `CKA_ID` for each role: `BLAKE3(tenant_id || issuer_id || role || generation)[..16]`.
-2. For each role, `C_GenerateKeyPair` with the appropriate mechanism, public template (`CKA_EC_PARAMS` set to the curve OID, `CKA_VERIFY=true`, `CKA_TOKEN=true`, `CKA_LABEL`, `CKA_ID`), and private template (`CKA_PRIVATE=true`, `CKA_SENSITIVE=true`, `CKA_EXTRACTABLE=false`, `CKA_TOKEN=true`, `CKA_LABEL`, `CKA_ID`, `CKA_SIGN=true`).
-3. `C_GetAttributeValue(public_handle, [CKA_EC_POINT])` to read the public-key bytes.
-4. INSERT the keystore row with the three handles (hex-encoded `CKA_ID`s), the three cached PEMs, and `backend_kind = 'pkcs11'`.
+`delete_keys`:
 
-The deterministic `CKA_ID` makes the generate-then-DB-insert pair idempotent under retry. If the DB write fails after HSM-side generation succeeded, retrying the operation finds the prior HSM object via `C_FindObjects([CKA_ID=…])` and reuses it instead of double-creating. Plays directly with the cross-database-portable rotation discipline.
+`DELETE FROM signing_keys WHERE tenant_id=$1 AND issuer_id=$2`. No-op if absent.
 
-`non_exportable_keys()`: `true`, asserted at construction time by checking that `CKA_EXTRACTABLE=false` is enforceable on the configured slot.
+`health_check()`: `SELECT 1` against the pool. The KEK provider's health is checked separately at boot.
 
-`health_check()`: open a session, log in, run a no-op `C_FindObjectsInit`/`C_FindObjectsFinal` for a sentinel tag.
+### Re-encryption sweep
 
-### Cloud KMS (`signer/kms.rs`, sketch)
+A management-binary-only background job that walks rows wrapped under retired KEK versions and re-`wrap`s them under the current version. Runs per tenant; can be invoked on demand (right after `KEKManager::introduce_version` returns, to drain rapidly) or on a schedule.
 
-Same traits against AWS KMS, Azure Managed HSM, or GCP Cloud KMS. The keystore row's `*_handle` columns store the cloud key identifier (e.g., AWS KMS Key ID, GCP `CryptoKeyVersion` resource name, Azure key name).
+Lives outside both traits as a free function in the management layer. Takes:
 
-| Trait method | AWS KMS | GCP KMS | Azure Managed HSM |
-|--------------|---------|---------|-------------------|
-| `sign` | `Sign { KeyId, Message, MessageType: DIGEST, SigningAlgorithm: ECDSA_SHA_256 \| ED25519 }` | `AsymmetricSign` | `Sign` |
-| `public_key` | Cached PEM (preferred), or `GetPublicKey { KeyId }` | `GetPublicKey` | `GetKey` |
-| `generate_key_triple` | `CreateKey { KeyUsage: SIGN_VERIFY, KeySpec: ECC_NIST_P256 \| ECC_ED25519 } × 3` | `CreateCryptoKey × 3` | `CreateKey × 3` |
+- `&KeyManager` — for the per-row read/UPDATE inside short transactions.
+- `&dyn KEKManager` — for `current_version`, `list_versions`, `unwrap`/`wrap` (inherited from `KekProvider`), and ultimately `retire_version`.
 
-`non_exportable_keys()`: `true` for all three providers' asymmetric keys (non-extractable by service contract).
+Per-tenant flow:
+
+1. Call `kek_manager.current_version(tenant)` and `kek_manager.list_versions(tenant)` to determine the set of retired-but-still-needed versions.
+2. For each retired version `v`, walk rows where `kek_version = v` (paged query against the keystore). For each row, in its own short transaction:
+   a. `SELECT … FOR UPDATE` ciphertexts, `kek_version`, `status`. Row lock prevents a concurrent `commit_rotation` from racing.
+   b. If `kek_version` is already current (re-check inside the transaction), skip.
+   c. For each role: `unwrap` with `(tenant, &row.kek_version, &row.ciphertext, aad((tenant, issuer, role, status)))`, then `wrap` with `(tenant, &plaintext, aad((tenant, issuer, role, status)))`. The `wrap` calls return the current version label.
+   d. `UPDATE` the row's three ciphertexts and `kek_version`.
+   e. Commit.
+3. After the sweep walks the retired version to exhaustion, verify the gate by counting rows still on `v` (within a single read-only transaction). If zero, call `kek_manager.retire_version(tenant, &v)`.
+
+Properties:
+
+- **Idempotent and restartable.** A crash between transactions leaves the partial-progress visible (`kek_version` reflects whichever rows have been migrated); the sweep can resume from the same point and only the still-stale rows are re-touched.
+- **No global lock.** Each row is its own transaction.
+- **No correctness coupling to the OIDC binary.** A signing call concurrent with a sweep on the same row either takes the row's lock first (sweep waits one short transaction) or sees the row in its old or new state, but never an inconsistent in-between.
+- **Retirement gate is enforced by the sweep, not by `KEKManager`.** `KEKManager::retire_version` does not query the DB itself — it just removes the version from the secret store. The sweep's keystore count is the precondition; this keeps `KEKManager` impls decoupled from the keystore's wire format.
+
+The OIDC binary does not run the sweep and does not need write privileges on the keystore for this purpose.
+
+## KEK backend impls (per-backend overview)
+
+Concrete `KekProvider` / `KEKManager` impls live in `swiyu-issuer/src/kek/<backend>.rs`. Detailed mappings (request/response shapes, auth, retry/backoff) are deferred to a separate spec; this section names the three backends in scope and the contract each one satisfies.
+
+### `FilesystemKekManager` (`kek/fs.rs`, dev-only)
+
+Behind cargo feature `dev-kek-fs`. Construction takes a `&Path` to a TOML file:
+
+```toml
+[tenant.swiss-canton-zh]
+v1 = "<32 hex bytes>"
+v2 = "<32 hex bytes>"
+current = "v2"
+```
+
+Refuses to construct unless `MaturityTier == Alpha`. Refuses to load if the file is group- or world-readable. Emits a `WARN` log line on construction naming the path and tier.
+
+`wrap` / `unwrap` perform AES-256-GCM in process, with a fresh 12-byte nonce per `wrap` (the nonce is prepended to the ciphertext bytes inside `Ciphertext`). AAD passes through to the AES-GCM AAD parameter unchanged.
+
+`introduce_version` writes a new `vN+1` entry into the TOML file and updates `current`. `retire_version` deletes the entry. `delete_tenant` removes the `[tenant.<id>]` block. The file is rewritten atomically (temp file + rename).
+
+`non_exportable_kek()` returns `false`.
+
+### `VaultTransitKekManager` (`kek/vault_transit.rs`)
+
+Talks to Vault's Transit secrets engine. Each tenant maps to a Transit key (`transit/keys/<tenant_id>`), with versions managed by Transit itself (`min_decryption_version`, `latest_version`).
+
+| Trait method | Vault Transit call |
+|---|---|
+| `wrap` | `POST /v1/transit/encrypt/<tenant>` with `plaintext` (base64) and `context` (base64 of AAD). Returns `ciphertext` like `vault:v3:…`; the `:vN:` segment is the version label. |
+| `unwrap` | `POST /v1/transit/decrypt/<tenant>` with `ciphertext` and `context`. Vault picks the version from the ciphertext prefix; the `version` argument from the trait must match it (we verify after parse). |
+| `create_initial_kek` | `POST /v1/transit/keys/<tenant>` with `type=aes256-gcm96`, `exportable=false`, `allow_plaintext_backup=false`. |
+| `introduce_version` | `POST /v1/transit/keys/<tenant>/rotate`. |
+| `retire_version` | `POST /v1/transit/keys/<tenant>/config` with raised `min_decryption_version`. (Vault doesn't physically delete the version; raising the floor makes it unreachable, which is the equivalent.) |
+| `list_versions` | `GET /v1/transit/keys/<tenant>` reads the keys list and returns the version range that's still decryptable (`min_decryption_version` upward). |
+| `current_version` | Same call; returns `latest_version`. |
+| `delete_tenant` | `DELETE /v1/transit/keys/<tenant>` (requires `deletion_allowed=true`, set at create time only when policy permits). |
+
+`non_exportable_kek()` returns `true` if `exportable=false` is reflected on the key (verified at `health_check` time and cached).
+
+`health_check` reads the key's metadata and verifies it exists, is `aes256-gcm96`, and is non-exportable.
+
+### `Pkcs11KekManager` (`kek/pkcs11.rs`)
+
+Talks to an HSM via PKCS#11. Each tenant's KEK is one or more `CKO_SECRET_KEY` objects on the slot, attribute `CKA_LABEL = tenant_id`, `CKA_ID` encoding the version (e.g., `tenant_id || ":v" || N`). All KEK objects have `CKA_EXTRACTABLE = false`, `CKA_SENSITIVE = true`, `CKA_TOKEN = true`.
+
+| Trait method | PKCS#11 mechanism |
+|---|---|
+| `wrap` | `C_EncryptInit` + `C_Encrypt` with `CKM_AES_GCM`, AAD parameter set to the trait's `aad`, fresh 12-byte IV. The `Ciphertext` blob carries IV \|\| ciphertext \|\| tag. |
+| `unwrap` | `C_DecryptInit` + `C_Decrypt` with `CKM_AES_GCM`, same AAD. |
+| `create_initial_kek` | `C_GenerateKey` with `CKM_AES_KEY_GEN`, `CKA_VALUE_LEN = 32`, the `CKA_LABEL`/`CKA_ID` for `(tenant, "v1")`, attributes above. |
+| `introduce_version` | `C_GenerateKey` with `(tenant, "vN+1")` derived from the current max version on the slot. |
+| `retire_version` | `C_DestroyObject` for the matching `CKA_ID`. |
+| `list_versions` | `C_FindObjects` with `CKA_LABEL = tenant_id`, parse versions out of the `CKA_ID`s. |
+| `current_version` | Highest `vN` from `list_versions`. |
+| `delete_tenant` | `C_DestroyObject` for every key with `CKA_LABEL = tenant_id`. |
+
+The impl maintains a pool of pre-authenticated sessions (4–16, configurable), runs each call inside `tokio::task::spawn_blocking`. PIN/password is sourced from the deployment's secret-injection mechanism (e.g., a Kubernetes projected file), fetched once at construction, never logged.
+
+`non_exportable_kek()` returns `true`, asserted at construction time by sampling a key's `CKA_EXTRACTABLE` attribute.
+
+`health_check` opens a session, logs in, lists objects with `CKA_LABEL = "<sentinel-tenant>"`, and returns success only on a clean round-trip.
 
 ## Implementation wrinkles
 
-- **PKCS#11 session pooling.** Sessions are stateful and login is per-session. The HSM impl maintains a pool of N pre-authenticated sessions (typically 4–16, configurable). Acquire-borrow-return on each operation.
-- **Hash-then-sign vs sign-with-digest.** PKCS#11 has both `CKM_ECDSA` (caller hashes) and `CKM_ECDSA_SHA256` (HSM hashes); cloud KMS has the equivalent `RAW` vs `DIGEST` split. Older HSM firmware sometimes only supports one. The impl picks one at construction time based on slot capabilities, defaulting to caller-side hashing via `swiyu-didtool::crypto::sha256`.
-- **ECDSA signature canonicalisation.** PKCS#11 returns ECDSA signatures as fixed-length raw `r || s`; AWS KMS returns DER `SEQUENCE { r INTEGER, s INTEGER }`. The trait's `Signature.raw` carries the **fixed-length raw** form. Each impl normalises to it.
-- **Ed25519 algorithm support drift.** Some older HSM firmware does not implement `CKM_EDDSA`. If procurement lands on such a vendor, the `Authorized` role can't be HSM-backed without a rotation to a different DID method. This is an HSM-selection criterion to surface during procurement; the trait doesn't help.
-- **Multi-slot deployments.** If tenants are partitioned across slots, the impl resolves the slot via a `slot_label` column on the keystore row (or a per-tenant config map). Doesn't surface in the trait.
-- **PIN/password sourcing.** The PKCS#11 PIN comes from the same orchestrator secret store as the per-tenant KEKs. Fetched once at construction, never logged.
-- **Atomic generate-then-insert.** Always paired with the cross-database-portable rotation discipline: backend (HSM object or DB ciphertext) first, mgmt (DID log entry) second. Deterministic `CKA_ID` (PKCS#11) or deterministic key alias (cloud KMS) makes the backend-side step idempotent under retry.
+- **AAD rebind on `commit_rotation`.** The AAD includes `status`, so promoting `pending_next` to `active` requires re-`wrap` (which is two trait calls per role: `unwrap` + `wrap`). Cost is small and only on the management binary.
+- **`Ciphertext` is opaque to the keystore.** Whatever the impl needs (nonce, version prefix, GCM tag) lives inside the blob. The DB stores it as a `BYTEA`; the only structured data the keystore exposes is the `kek_version` column.
+- **Backend mismatch on unwrap is a real failure mode.** A keystore row written by one `KekProvider` impl cannot be unwrapped by another. The deployment configuration must keep the impl stable across the data's lifetime; switching impls requires a re-encryption sweep that re-`wrap`s every row.
+- **Vault Transit version arithmetic.** Vault embeds the version number in the ciphertext prefix (`vault:v3:…`). The impl parses this and verifies it matches the `version` argument passed to `unwrap` — guards against silent provider drift.
+- **PKCS#11 session pooling.** Same shape as the Vault Transit HTTP client pool. Pool size is a deployment knob; default 8.
 
 ## Open
 
-- **`SignerError` granularity.** Current variants: `KeyNotFound`, `GenerationAlreadyExists`, `KekUnavailable`, `Unhealthy`, `Backend`. Expect a few more variants for specific recoverable conditions as impls are written.
-- **`KekProvider` trait.** Shape and orchestrator backends to be specified in a separate spec; the DB-backed `Signer` impl depends on it.
-- **Rotation orchestration.** The cross-DB-portable discipline (write keystore first, mgmt second, idempotent retry) lives above the trait — orchestrated by the management API. Where exactly it lives in the management layer is open.
+- **`SignerError` granularity.** Current variants cover the major failure modes; expect a few more (e.g., a distinct variant for "registry/keystore disagreement on the active key") as the reconciliation logic is written.
+- **Vault Transit details.** Auth method (token vs AppRole vs Kubernetes auth), retry/backoff for transient `503`s, and the policy required by the issuer's role are TBD in the orchestrator-specific spec.
+- **PKCS#11 details.** Vendor-specific quirks (label/ID length limits, `CKM_AES_GCM` parameter shape across libraries) are TBD when an HSM is procured.
+- **Re-encryption sweep packaging.** Whether the sweep runs as a tokio task inside the management binary's process, as a separate one-shot binary scheduled by the operator, or both. Throttle/batch knobs to surface.
+- **Reconciliation entry point.** The startup-time check that compares the registry's latest authorized key against the keystore's active row — likely a free function in the management layer that takes a `KeyManager` and a registry client. Where exactly it sits, and whether it's invoked from `main` or from a dedicated reconciliation step, is open.
 - **Verification helpers.** Wallet-side and verifier-side signature verification doesn't need the trait; a `swiyu-didtool::crypto::verify_*` helper covers it. Coordination point only.
-- **Schema constraint check shape.** The ciphertext-vs-handle exclusivity could be a single multi-column CHECK or three separate ones. Implementation choice when the migration lands.
