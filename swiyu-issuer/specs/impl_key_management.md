@@ -387,20 +387,33 @@ Concrete `KekProvider` / `KEKManager` impls live in `swiyu-issuer/src/kek/<backe
 
 ### `FilesystemKekManager` (`kek/fs.rs`, dev-only)
 
-Behind cargo feature `dev-kek-fs`. Construction takes a `&Path` to a TOML file:
+Behind cargo feature `dev-kek-fs`. Construction takes a `&Path`. The path is resolved from the env var `SWIYU_DEV_KEK_FS_PATH` at the binary's wiring layer; the constructor itself takes the resolved `&Path` so unit tests don't depend on env state. If the env var is unset while the feature is compiled in and the tier is `Alpha`, the wiring layer returns an error naming the var.
 
-```toml
-[tenant.swiss-canton-zh]
-v1 = "<32 hex bytes>"
-v2 = "<32 hex bytes>"
-current = "v2"
+The YAML file at that path:
+
+```yaml
+tenants:
+  tenant_9hXq2vRtL8pK7f:
+    # display_name: "Gemeinde Buchs"   # reserved; not yet on the tenant domain model
+    current_kek: v2
+    keks:
+      v1: "<32 hex bytes>"
+      v2: "<32 hex bytes>"
+  tenant_AbC3xY9mZ2qR4t:
+    current_kek: v1
+    keks:
+      v1: "<32 hex bytes>"
 ```
+
+Tenants are keyed by the **prefixed** id form (`tenant_<bare>`) — matching the `Display`/`Serialize` convention in `swiyu-issuer/src/domain/ids.rs`. The deserializer parses each key via `TenantId::from_str` so the same validation rules apply as in management-API bodies: prefix required, bare segment must be valid base58.
+
+The optional `display_name` field is reserved for when the tenant domain model gains one (e.g., `"Gemeinde Buchs"`). Until then, the deserializer accepts the field and ignores it (keeps the YAML forward-compatible) but has no domain-side use for it. When the domain model adds the field, the loader can start propagating it.
 
 Refuses to construct unless `MaturityTier == Alpha`. Refuses to load if the file is group- or world-readable. Emits a `WARN` log line on construction naming the path and tier.
 
 `wrap` / `unwrap` perform AES-256-GCM in process, with a fresh 12-byte nonce per `wrap` (the nonce is prepended to the ciphertext bytes inside `Ciphertext`). AAD passes through to the AES-GCM AAD parameter unchanged.
 
-`introduce_version` writes a new `vN+1` entry into the TOML file and updates `current`. `retire_version` deletes the entry. `delete_tenant` removes the `[tenant.<id>]` block. The file is rewritten atomically (temp file + rename).
+`introduce_version` writes a new `vN+1` entry into the `keks` map and updates `current_kek`. `retire_version` deletes the entry. `delete_tenant` removes the tenant's whole map entry. The file is rewritten atomically (temp file + rename).
 
 `non_exportable_kek()` returns `false`.
 

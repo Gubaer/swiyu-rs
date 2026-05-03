@@ -63,7 +63,7 @@ The keystore architecture is a clean two-layer split:
 
 Three KEK backends are in scope, ranked by trust strength:
 
-1. **Filesystem (dev only).** The KEK lives in a TOML file on the developer's machine; the application reads the bytes and does AES-256-GCM in-process. Compiled in only with the `dev-kek-fs` cargo feature; a non-alpha binary cannot construct it. See [Dev-only filesystem KEK provider](#dev-only-filesystem-kek-provider).
+1. **Filesystem (dev only).** The KEK lives in a YAML file on the developer's machine; the application reads the bytes and does AES-256-GCM in-process. Compiled in only with the `dev-kek-fs` cargo feature; a non-alpha binary cannot construct it. See [Dev-only filesystem KEK provider](#dev-only-filesystem-kek-provider).
 2. **Software service with server-side crypto** — Hashicorp Vault Transit. The KEK is created inside Vault (`exportable=false`) and never leaves; wrap/unwrap delegates to Transit's `encrypt`/`decrypt` endpoints. Security boundary: the Vault process and its auto-unseal mechanism.
 3. **Hardware-rooted** — PKCS#11 / HSM. The KEK is a `CKO_SECRET_KEY` with `CKA_EXTRACTABLE=false`; wrap/unwrap is performed inside the HSM via `CKM_AES_GCM`. Security boundary: the HSM hardware.
 
@@ -81,7 +81,7 @@ Issuer private keys are *always* stored in the RDBMS as AEAD ciphertext. What va
 
 | Tier               | Issuer-key storage   | KEK location                    | Wrap/unwrap happens on  | `non_exportable_kek` |
 |--------------------|----------------------|---------------------------------|-------------------------|-----------------------|
-| Alpha (dev)        | RDBMS ciphertext     | Filesystem (TOML, dev gating)   | Application host        | false                  |
+| Alpha (dev)        | RDBMS ciphertext     | Filesystem (YAML, dev gating)   | Application host        | false                  |
 | Beta / Intermediate | RDBMS ciphertext     | Vault Transit                   | Vault server            | true (with `exportable=false` config)   |
 | Production         | RDBMS ciphertext     | HSM via PKCS#11                 | HSM                     | true                   |
 
@@ -100,7 +100,7 @@ Where we encrypt at rest (alpha through intermediate), private keys are wrapped 
 - **Algorithm**: AES-256-GCM.
 - **Granularity**: one symmetric KEK **per tenant**.
 - **KEK location**: indexed by `tenant_id`, supplied by a `KekProvider` impl. The KEK material is never in the DB and (outside the dev tier) never on the application filesystem. The provider must support multiple KEK versions for the same tenant coexisting (see [KEK rotation](#kek-rotation) for why) and must offer `wrap`/`unwrap` operations that bind AAD. Three backends are in scope:
-  - `FilesystemKekManager` — *dev only*. TOML file holding `tenant_id → { version → KEK, current = …}`. Wraps and unwraps in process. See [Dev-only filesystem KEK provider](#dev-only-filesystem-kek-provider) for the gating rules. Compiled in only with the `dev-kek-fs` cargo feature; non-alpha binaries cannot construct it.
+  - `FilesystemKekManager` — *dev only*. YAML file holding `tenant_id → { keks, current_kek }`. Wraps and unwraps in process. See [Dev-only filesystem KEK provider](#dev-only-filesystem-kek-provider) for the gating rules. Compiled in only with the `dev-kek-fs` cargo feature; non-alpha binaries cannot construct it.
   - `VaultTransitKekManager` — *intermediate / production-capable*. Hashicorp Vault Transit secrets engine. The KEK is created inside Vault and never leaves. Wrap/unwrap delegates to Transit's `encrypt`/`decrypt` endpoints with the AAD passed as `context`. `non_exportable_kek()` reports the configured key's `exportable` flag; production requires `exportable=false`.
   - `Pkcs11KekManager` — *production*. The KEK is a `CKO_SECRET_KEY` on the HSM with `CKA_EXTRACTABLE=false`. Wrap/unwrap uses an AAD-supporting GCM mechanism (e.g., `CKM_AES_GCM`).
   
@@ -137,24 +137,29 @@ The cost of being able to read rows wrapped under a retired KEK during the migra
 
 ### Dev-only filesystem KEK provider
 
-For local development on a single machine, the operational ceremony of running Vault or pointing at a cloud secret manager is a friction we want to avoid. The keystore therefore admits one — and only one — KEK provider that reads from the filesystem: a TOML file holding a tenant-keyed map of versions, structured to mirror the production multi-version shape so rotation flows can be exercised locally.
+For local development on a single machine, the operational ceremony of running Vault or pointing at a cloud secret manager is a friction we want to avoid. The keystore therefore admits one — and only one — KEK provider that reads from the filesystem: a YAML file holding a tenant-keyed map of versions, structured to mirror the production multi-version shape so rotation flows can be exercised locally.
 
 This provider is **strictly for developer machines**. It is not used in CI staging tiers, not used in any deployed environment, and not a fallback for misconfigured production. The guards below make accidental production use a hard error rather than a soft drift:
 
 - **Compile-time gate.** The impl lives behind a cargo feature `dev-kek-fs`, off by default. Production build profiles do not enable it; the type is not even reachable in the resulting binary. CI for production-target builds asserts the feature is off.
 - **Construction-time refusal by tier.** Even when compiled in, the provider's constructor refuses to return a value if the binary's `MaturityTier` is anything other than `Alpha`. Returns an explicit error, never falls through silently.
 - **File permission check.** Refuses to load if the file is group- or world-readable. Catches "I committed it / it landed in a shared directory" mistakes.
-- **Path is explicit.** The operator passes the path via config or env var; there is no defaulted location. A missing path is an error, not a fallback to "well, maybe nothing's encrypted today."
+- **Path is explicit, supplied by env var `SWIYU_DEV_KEK_FS_PATH`.** No defaulted location. If the var is unset while the `dev-kek-fs` feature is compiled in and the tier is `Alpha`, startup fails with an error naming the var. CLI flag and config-file mechanisms are deliberately not used: a CLI flag is friction every `cargo run`, a config-file entry creates a chicken-and-egg if that config file's own location is in question. Recommended location for the file: `~/.config/swiyu-issuer/dev-keks.yml` with mode `0600`. Never under the repo, even gitignored — too easy to commit by accident. A `.envrc` (direnv) per developer keeps `SWIYU_DEV_KEK_FS_PATH` confined to the project directory.
 - **Loud startup log line at WARN level**, naming the file path and tier, every time the provider is constructed. There is no silent dev mode.
 
 File format (sketch — finalised in [`impl_key_management.md`](impl_key_management.md)):
 
-```toml
-[tenant.swiss-canton-zh]
-v1 = "<32 hex bytes>"
-v2 = "<32 hex bytes>"
-current = "v2"
+```yaml
+tenants:
+  tenant_9hXq2vRtL8pK7f:
+    # display_name: "Gemeinde Buchs"   # placeholder; not yet on the tenant domain model
+    current_kek: v2
+    keks:
+      v1: "<32 hex bytes>"
+      v2: "<32 hex bytes>"
 ```
+
+Tenants are keyed by their **prefixed** id form (`tenant_<bare>`), matching the convention used in management-API JSON bodies and log lines (see `swiyu-issuer/src/domain/ids.rs`). A `display_name` field is reserved for when the tenant domain model gains one; the impl tolerates both its presence and its absence.
 
 The provider exposes the same `KekProvider` interface as the production-grade providers; the only difference is its construction signature (it takes a file path) and its tier check.
 
