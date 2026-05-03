@@ -11,14 +11,18 @@ base64 = "0.22"
 bs58 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-ed25519-dalek = "2"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 getrandom = "0.4"
 humantime = "2"
 jsonschema = "0.46"
+p256 = { version = "0.13", features = ["ecdsa"] }
+# rand_core 0.6 matches what ed25519-dalek 2.x and p256 0.13 expect for their RNG-taking APIs.
+# We only need OsRng, so pull in rand_core rather than the full rand crate.
+rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.11"
 serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "chrono", "json"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "chrono", "json", "uuid"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net"] }
 tower = "0.5"

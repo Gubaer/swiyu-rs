@@ -18,6 +18,6 @@ pub use issuer::Issuer;
 pub use nonce::{NonceHash, NonceSecret};
 pub use pre_auth_code::PreAuthCode;
 pub use signing_engine::{
-    GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine,
-    SigningEngineError,
+    DevSigningEngine, GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature,
+    SigningEngine, SigningEngineError,
 };

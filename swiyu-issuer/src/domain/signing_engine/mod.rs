@@ -5,6 +5,9 @@ use uuid::Uuid;
 
 pub use swiyu_core::KeyRole;
 
+pub mod dev;
+pub use dev::DevSigningEngine;
+
 /// The signing algorithm of a key pair.
 ///
 /// Limited to the two algorithms required by SWIYU. The mapping from
