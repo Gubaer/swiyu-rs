@@ -1,3 +1,4 @@
+pub mod build;
 pub mod scid;
 pub mod verify;
 
