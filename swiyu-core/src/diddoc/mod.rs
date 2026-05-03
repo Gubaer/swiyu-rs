@@ -182,6 +182,12 @@ impl DIDDoc {
         self
     }
 
+    /// Appends an entry to the `capabilityDelegation` array.
+    pub fn add_capability_delegation(mut self, r: VerificationMethodOrRef) -> Self {
+        self.capability_delegation.push(r);
+        self
+    }
+
     /// Parses a DIDDoc from an already-parsed JSON-LD value.
     ///
     /// Expects the JSON-LD representation described in

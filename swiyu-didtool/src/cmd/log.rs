@@ -1,19 +1,19 @@
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use tracing::debug;
 
-use swiyu_core::did::{DID, DIDError};
-use swiyu_core::didlog::{DIDDocState, DIDLog, DIDLogEntry, DIDLogError};
+use swiyu_core::did::DID;
+use swiyu_core::didlog::verify::{DIDLogVerifyError, verify_log};
+use swiyu_core::didlog::{DIDDocState, DIDLog, DIDLogEntry, DIDLogError, LogEntryFormat};
 
+use crate::cmd::ResolveError;
+use crate::cmd::http::{FetchError, FetchOutcome};
 use crate::keystore::{KeyStore, KeyStoreError};
 
 const DEFAULT_INPUT: &str = "did.jsonl";
-const DEFAULT_MAX_BYTES: usize = 50 * 1024 * 1024;
-const ENV_MAX_BYTES: &str = "DIDTOOL_LOG_MAX_BYTES";
-const FETCH_BODY_SNIPPET: usize = 200;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LogError {
@@ -39,40 +39,16 @@ pub enum LogError {
     },
     #[error("write to stdout failed: {0}")]
     WriteStdout(#[source] std::io::Error),
-    #[error("invalid DID '{target}': {source}")]
-    Did {
-        target: String,
-        #[source]
-        source: DIDError,
-    },
-    #[error("no entry found for '{0}' in the key store")]
-    KeyStoreLookup(String),
+    #[error(transparent)]
+    Fetch(#[from] FetchError),
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
     #[error("DID log parse error: {0}")]
     LogParse(#[from] DIDLogError),
-    #[error("HTTPS request to '{url}' failed: {source}")]
-    Http {
-        url: String,
-        #[source]
-        source: reqwest::Error,
-    },
-    #[error("registry returned HTTP {status} for '{url}': {body}")]
-    HttpStatus {
-        url: String,
-        status: u16,
-        body: String,
-    },
-    #[error("reading response body for '{url}' failed: {source}")]
-    FetchRead {
-        url: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("response body for '{url}' exceeds {limit} bytes (override with {ENV_MAX_BYTES})")]
-    TooLarge { url: String, limit: usize },
-    #[error("response body for '{url}' is not valid UTF-8")]
-    NotUtf8 { url: String },
+    #[error("DID log failed verification: {0}")]
+    Verification(#[from] DIDLogVerifyError),
     #[error("invalid --at selector '{0}': must be 'latest' or a positive integer")]
     BadSelector(String),
     #[error("no entry at index {index} (log has {total} entries)")]
@@ -152,12 +128,12 @@ pub(crate) fn load_log(
     if did.is_some() && input.is_some() {
         return Err(LogError::AmbiguousSource);
     }
-    let (text, source_path) = match did {
+    let (text, source_path, target_did) = match did {
         Some(target) => {
-            let resolved = resolve_did(store, &target)?;
+            let resolved = crate::cmd::resolve_did(store, &target)?;
             let url = resolved.log_url();
             debug!("resolved DID to log URL: {}", url);
-            (fetch_log(&url)?, None)
+            (fetch_log(&url)?, None, Some(resolved))
         }
         None => {
             let path = input.unwrap_or_else(|| PathBuf::from(DEFAULT_INPUT));
@@ -166,17 +142,53 @@ pub(crate) fn load_log(
                 path: path.clone(),
                 source,
             })?;
-            (text, Some(path))
+            (text, Some(path), None)
         }
     };
     let raw_lines = collect_raw_lines(&text);
     let log = DIDLog::try_from_jsonl(&text)?;
     debug!("loaded {} log entries", log.entries().len());
+    verify_loaded_log(&log, target_did.as_ref())?;
     Ok(LoadedLog {
         raw_lines,
         log,
         source_path,
     })
+}
+
+/// Verifies the loaded DID log against the chain integrity rules of did:tdw 0.3.
+///
+/// `target_did` is the DID the user explicitly asked to resolve (`--did`); when
+/// present, the log MUST authenticate as that DID. When absent (a `--input`
+/// load), the log is verified against the DID it announces in its own genesis
+/// state — this catches accidental tampering but does not provide cryptographic
+/// provenance against an adversary who can rewrite the local file.
+///
+/// did:webvh logs are skipped (verifier not yet implemented).
+fn verify_loaded_log(log: &DIDLog, target_did: Option<&DID>) -> Result<(), LogError> {
+    let is_tdw = log
+        .entries()
+        .first()
+        .is_some_and(|e| matches!(e.format(), LogEntryFormat::TDW03));
+    if !is_tdw {
+        debug!("skipping log verification (not did:tdw 0.3)");
+        return Ok(());
+    }
+
+    let did_for_verify = match target_did {
+        Some(d) => d.clone(),
+        None => match current_did(log).and_then(|s| DID::parse(&s).ok()) {
+            Some(d) => d,
+            None => {
+                debug!("skipping log verification (no DID in genesis state)");
+                return Ok(());
+            }
+        },
+    };
+
+    verify_log(log, &did_for_verify)?;
+    debug!("DID log signature chain verified");
+    Ok(())
 }
 
 fn collect_raw_lines(text: &str) -> Vec<String> {
@@ -186,68 +198,19 @@ fn collect_raw_lines(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn resolve_did(store: &KeyStore, target: &str) -> Result<DID, LogError> {
-    if target.len() == 12 && target.chars().all(|c| c.is_ascii_hexdigit()) {
-        debug!("resolving '{}' as BLAKE3 hash via key store", target);
-        let entry = store
-            .lookup_by_hash(target)?
-            .ok_or_else(|| LogError::KeyStoreLookup(target.to_string()))?;
-        DID::parse(entry.did()).map_err(|e| LogError::Did {
-            target: target.to_string(),
-            source: e,
-        })
-    } else {
-        debug!("parsing '{}' as DID string", target);
-        DID::parse(target).map_err(|e| LogError::Did {
-            target: target.to_string(),
-            source: e,
-        })
-    }
-}
-
+/// Fetches a DID log via HTTPS. A 404 response is *not* "absent" here — a
+/// missing log is a hard error, so we map it to the same `HttpStatus` shape
+/// the previous version produced.
 fn fetch_log(url: &str) -> Result<String, LogError> {
-    let max_bytes = std::env::var(ENV_MAX_BYTES)
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_MAX_BYTES);
-
-    let client = reqwest::blocking::Client::new();
-    debug!("GET {}", url);
-    let response = client.get(url).send().map_err(|e| LogError::Http {
-        url: url.to_string(),
-        source: e,
-    })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().unwrap_or_default();
-        let snippet: String = body.chars().take(FETCH_BODY_SNIPPET).collect();
-        return Err(LogError::HttpStatus {
+    debug!("GET {url}");
+    match crate::cmd::http::fetch_text(url)? {
+        FetchOutcome::Ok(text) => Ok(text),
+        FetchOutcome::NotFound => Err(LogError::Fetch(FetchError::HttpStatus {
             url: url.to_string(),
-            status: status.as_u16(),
-            body: snippet,
-        });
+            status: 404,
+            body: String::new(),
+        })),
     }
-
-    // Read at most max_bytes + 1 so we can detect "exceeded" cleanly.
-    let mut buf = Vec::with_capacity(max_bytes.min(1024 * 64));
-    response
-        .take((max_bytes + 1) as u64)
-        .read_to_end(&mut buf)
-        .map_err(|source| LogError::FetchRead {
-            url: url.to_string(),
-            source,
-        })?;
-
-    if buf.len() > max_bytes {
-        return Err(LogError::TooLarge {
-            url: url.to_string(),
-            limit: max_bytes,
-        });
-    }
-    String::from_utf8(buf).map_err(|_| LogError::NotUtf8 {
-        url: url.to_string(),
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +279,12 @@ fn print_list(store: &KeyStore, log: &DIDLog) -> Result<(), LogError> {
         .max()
         .unwrap_or(10)
         .max("VERSION-ID".len());
+    let version_time_width = entries
+        .iter()
+        .map(|e| e.version_time().len())
+        .max()
+        .unwrap_or(0)
+        .max("VERSION-TIME".len());
 
     let did_str = current_did(log);
     let keystore_hash = did_str.as_deref().and_then(|d| keystore_hash_for(store, d));
@@ -337,18 +306,27 @@ fn print_list(store: &KeyStore, log: &DIDLog) -> Result<(), LogError> {
 
     writeln!(
         out,
-        "{vid:<vid_w$}  VERSION-TIME",
+        "{vid:<vid_w$}  {vt:<vt_w$}  DEACTIVATED",
         vid = "VERSION-ID",
         vid_w = version_id_width,
+        vt = "VERSION-TIME",
+        vt_w = version_time_width,
     )
     .map_err(LogError::WriteStdout)?;
     for entry in entries {
+        let deactivated = if entry.parameters().deactivated() == Some(true) {
+            "yes"
+        } else {
+            "no"
+        };
         writeln!(
             out,
-            "{vid:<vid_w$}  {vt}",
+            "{vid:<vid_w$}  {vt:<vt_w$}  {d}",
             vid = entry.version_id(),
             vid_w = version_id_width,
             vt = entry.version_time(),
+            vt_w = version_time_width,
+            d = deactivated,
         )
         .map_err(LogError::WriteStdout)?;
     }

@@ -1,4 +1,5 @@
 pub mod scid;
+pub mod verify;
 
 use multihash_codetable::{Code, MultihashDigest};
 use serde_json::{Map, Value, json};

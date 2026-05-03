@@ -1,16 +1,10 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use tracing::debug;
 
-use ed25519_dalek::Signer;
 use swiyu_core::did::{DID, DIDError};
-use swiyu_core::diddoc::public_keys::{
-    ECKey, PublicKey, PublicKeyJWK, ed25519_verifying_key_to_multikey,
-};
-use swiyu_core::diddoc::{DIDDoc, VerificationMethod, VerificationMethodOrRef};
-use swiyu_core::didlog::eddsa_jcs_2022_hash;
+use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 use swiyu_core::didlog::scid::derive_entry_hash;
 
 use crate::cmd::log::{LoadedLog, LogError, current_did, load_log};
@@ -48,16 +42,8 @@ pub enum UpdateError {
     NoChange,
     #[error("--rotate {role} and --{role}-key are mutually exclusive")]
     ConflictingRotation { role: &'static str },
-    #[error("--did/HTTPS source: --out is required (cannot append in place)")]
-    OutRequiredForRemote,
-    #[error("file '{}' already exists; pass --force to overwrite", path.display())]
-    FileExists { path: PathBuf },
-    #[error("cannot write '{}': {source}", path.display())]
-    WriteOutput {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    WriteLog(#[from] crate::cmd::file::WriteLogError),
     #[error("DID log is empty — nothing to update against")]
     EmptyLog,
     #[error("could not extract a DID from the log (no entry has a Value state)")]
@@ -74,10 +60,8 @@ pub enum UpdateError {
         #[source]
         source: CryptoError,
     },
-    #[error("provide --partner-id or set SWIYU_PARTNER_ID (or use --no-publish)")]
-    PartnerIdMissing,
-    #[error("provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL (or use --no-publish)")]
-    RegistryUrlMissing,
+    #[error(transparent)]
+    RegistryArgs(#[from] crate::cmd::RegistryArgsError),
     #[error("cannot extract registry identifier (UUID) from DID '{0}'")]
     IdentifierExtraction(String),
     #[error(
@@ -88,6 +72,18 @@ pub enum UpdateError {
         source: crate::swiyu::SwiyuError,
         path: PathBuf,
     },
+    #[error(
+        "registry upload of new DID log failed: {source} — new entry saved to fallback file {}; retry manually with this file", path.display()
+    )]
+    PublishFailedPending {
+        #[source]
+        source: crate::swiyu::SwiyuError,
+        path: PathBuf,
+    },
+    #[error(
+        "--did used without --out and --no-publish set: the new log entry would have nowhere to go (use --out to save it locally, or drop --no-publish to publish to the registry)"
+    )]
+    NoTarget,
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
     #[error(transparent)]
@@ -98,6 +94,13 @@ pub enum UpdateError {
 
 pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError> {
     let plan = plan_rotation(&args)?;
+
+    // With --did, the log is fetched over HTTPS and there is no local file to
+    // append to. Combined with --no-publish and no --out, the new entry would
+    // be discarded — reject early.
+    if args.did.is_some() && args.out.is_none() && args.no_publish {
+        return Err(UpdateError::NoTarget);
+    }
 
     // --- load existing log ---
     let loaded = load_log(store, args.did.clone(), args.input.clone())?;
@@ -136,7 +139,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
     debug!("authorized rotated: {}", authorized_rotated);
 
     // --- new DID document ---
-    let new_doc = build_did_doc(&did_str, &staged);
+    let new_doc = super::diddoc::build_did_doc(&did_str, &staged);
 
     // --- parameters: only changed fields ---
     let mut params = serde_json::Map::new();
@@ -165,7 +168,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
     entry_value[0] = json!(new_version_id);
 
     // --- proof: signed by previous authorized key, hashes only the DID document ---
-    let proof = build_proof(
+    let proof = super::proof::build_proof(
         &prev_authorized,
         &entry_value[3]["value"],
         &prev_authorized_multikey,
@@ -177,11 +180,20 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
         arr.push(json!([proof]));
     }
 
-    // --- write log (atomic-rename or --out) ---
+    // --- write log (atomic-rename, --out, or skip for --did without --out) ---
     let new_line = serde_json::to_string(&entry_value)?;
     let updated_log = build_updated_log(&loaded, &new_line);
-    let written_to = write_log(&updated_log, &loaded.source_path, &args)?;
-    debug!("wrote updated DID log to {}", written_to.display());
+    let written_to = crate::cmd::file::write_log(
+        &updated_log,
+        loaded.source_path.as_deref(),
+        args.out.as_deref(),
+        args.force,
+    )?;
+    if let Some(path) = &written_to {
+        debug!("wrote updated DID log to {}", path.display());
+    } else {
+        debug!("no local log file written; persistence relies on registry publish");
+    }
 
     // --- commit new keys to key store ---
     let new_version = entry.add_version(staged)?;
@@ -190,28 +202,43 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
     // --- publish to registry (unless --no-publish) ---
     let mut published_url: Option<String> = None;
     if !args.no_publish {
-        let partner_id = args.partner_id.ok_or(UpdateError::PartnerIdMissing)?;
-        let registry_url = args.registry_url.ok_or(UpdateError::RegistryUrlMissing)?;
+        let (partner_id, registry_url) = crate::cmd::require_registry_credentials(
+            args.partner_id,
+            args.registry_url,
+            " (or use --no-publish)",
+        )?;
         let identifier = extract_registry_identifier(&did)
             .ok_or_else(|| UpdateError::IdentifierExtraction(did_str.clone()))?;
         debug!("publishing updated DID log to registry");
-        crate::swiyu::publish_entry(
+        if let Err(source) = crate::swiyu::publish_entry(
             &registry_url,
             &partner_id,
             &identifier,
             updated_log.trim_end(),
-        )
-        .map_err(|source| UpdateError::PublishFailed {
-            source,
-            path: written_to.clone(),
-        })?;
+        ) {
+            return Err(match &written_to {
+                Some(path) => UpdateError::PublishFailed {
+                    source,
+                    path: path.clone(),
+                },
+                None => {
+                    let pending = crate::cmd::file::write_pending_log(&updated_log)?;
+                    UpdateError::PublishFailedPending {
+                        source,
+                        path: pending,
+                    }
+                }
+            });
+        }
         published_url = Some(did.log_url());
         debug!("published to {}", published_url.as_deref().unwrap_or(""));
     }
 
     println!("Updated DID: {did_str}");
     println!("New versionId: {new_version_id}");
-    println!("Saved DID log: {}", written_to.display());
+    if let Some(path) = &written_to {
+        println!("Saved DID log: {}", path.display());
+    }
     println!("Keystore hash: {}", entry.hash());
     println!("Keystore version: {new_version}");
     if let Some(url) = published_url {
@@ -349,72 +376,6 @@ fn stage_keys(entry: &KeyStoreEntry, version: u32, plan: &Plan) -> Result<Staged
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Entry construction helpers
-
-fn build_did_doc(did: &str, staged: &StagedKeys) -> Value {
-    let auth_vm_id = format!("{did}#authentication-key-01");
-    let assert_vm_id = format!("{did}#assertion-key-01");
-
-    let (auth_x, auth_y) = staged.authentication_key_coords();
-    let (assert_x, assert_y) = staged.assertion_key_coords();
-
-    let auth_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
-        ECKey::from_p256_coordinates(&auth_x, &auth_y).with_kid("authentication-key-01".into()),
-    )));
-    let assert_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
-        ECKey::from_p256_coordinates(&assert_x, &assert_y).with_kid("assertion-key-01".into()),
-    )));
-
-    DIDDoc::new(did.to_string())
-        .with_context(json!([
-            "https://www.w3.org/ns/did/v1",
-            "https://w3id.org/security/jwk/v1"
-        ]))
-        .add_verification_method(VerificationMethod::new(
-            auth_vm_id.clone(),
-            "JsonWebKey2020".into(),
-            did.to_string(),
-            auth_key,
-        ))
-        .add_verification_method(VerificationMethod::new(
-            assert_vm_id.clone(),
-            "JsonWebKey2020".into(),
-            did.to_string(),
-            assert_key,
-        ))
-        .add_authentication(VerificationMethodOrRef::Reference(auth_vm_id))
-        .add_assertion_method(VerificationMethodOrRef::Reference(assert_vm_id))
-        .to_jsonld()
-}
-
-pub(super) fn build_proof(
-    signer: &ed25519_dalek::SigningKey,
-    document: &Value,
-    authorized_multikey: &str,
-    version_id: &str,
-    proof_purpose: &str,
-    now: &str,
-) -> Value {
-    let vm_id = format!("did:key:{authorized_multikey}#{authorized_multikey}");
-    let proof_config = json!({
-        "type": "DataIntegrityProof",
-        "cryptosuite": "eddsa-jcs-2022",
-        "verificationMethod": vm_id,
-        "proofPurpose": proof_purpose,
-        "challenge": version_id,
-        "created": now,
-    });
-
-    let hash_data = eddsa_jcs_2022_hash(document, &proof_config);
-    let signature = signer.sign(&hash_data);
-    let proof_value = format!("z{}", bs58::encode(signature.to_bytes()).into_string());
-
-    let mut proof = proof_config.as_object().unwrap().clone();
-    proof.insert("proofValue".into(), json!(proof_value));
-    Value::Object(proof)
-}
-
 pub(super) fn compute_version_time(prev_version_time: &str) -> String {
     // Backdate by 5 s to absorb client clock skew, but never earlier than (prev + 1 s).
     let now = chrono::Utc::now() - chrono::Duration::seconds(5);
@@ -445,42 +406,6 @@ pub(super) fn build_updated_log(loaded: &LoadedLog, new_line: &str) -> String {
         updated.push('\n');
     }
     updated
-}
-
-fn write_log(
-    content: &str,
-    source_path: &Option<PathBuf>,
-    args: &UpdateArgs,
-) -> Result<PathBuf, UpdateError> {
-    if let Some(path) = &args.out {
-        if path.exists() && !args.force {
-            return Err(UpdateError::FileExists { path: path.clone() });
-        }
-        fs::write(path, content).map_err(|source| UpdateError::WriteOutput {
-            path: path.clone(),
-            source,
-        })?;
-        return Ok(path.clone());
-    }
-
-    let source = source_path
-        .clone()
-        .ok_or(UpdateError::OutRequiredForRemote)?;
-    write_atomic(&source, content).map_err(|source_err| UpdateError::WriteOutput {
-        path: source.clone(),
-        source: source_err,
-    })?;
-    Ok(source)
-}
-
-/// Writes `content` to `target` via a sibling `.tmp` file followed by an atomic rename, so a
-/// crash mid-write cannot corrupt an existing file at `target`.
-pub(super) fn write_atomic(target: &Path, content: &str) -> std::io::Result<()> {
-    let mut tmp_name = target.as_os_str().to_os_string();
-    tmp_name.push(".tmp");
-    let tmp = PathBuf::from(tmp_name);
-    fs::write(&tmp, content)?;
-    fs::rename(&tmp, target)
 }
 
 #[cfg(test)]
