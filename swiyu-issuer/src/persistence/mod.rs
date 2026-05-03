@@ -4,6 +4,7 @@ mod errors;
 mod helpers;
 pub mod issuers;
 pub mod oidc;
+pub mod operation_tasks;
 mod pool;
 
 pub use errors::PersistenceError;
