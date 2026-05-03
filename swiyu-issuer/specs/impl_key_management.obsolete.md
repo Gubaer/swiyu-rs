@@ -421,6 +421,8 @@ Refuses to construct unless `MaturityTier == Alpha`. Refuses to load if the file
 
 Talks to Vault's Transit secrets engine. Each tenant maps to a Transit key (`transit/keys/<tenant_id>`), with versions managed by Transit itself (`min_decryption_version`, `latest_version`).
 
+Authentication is **per tenant**, not fleet-wide. The impl holds a cache `tenant_id → VaultClient`; each client authenticates with a tenant-scoped credential (one AppRole per tenant is the default, with policy permitting only that tenant's `transit/encrypt/<tenant>` and `transit/decrypt/<tenant>` paths plus the read needed for `health_check`). Clients are fetched lazily on first `wrap`/`unwrap` for a tenant and evicted from the cache after a configurable idle window (default 15 min). `KEKManager`-only methods (`create_initial_kek`, `introduce_version`, `retire_version`, `delete_tenant`) use a separate, broader-policy credential held by the management binary; the OIDC binary never holds it. See [Runtime trust boundary](aspect-key-management.md#runtime-trust-boundary).
+
 | Trait method | Vault Transit call |
 |---|---|
 | `wrap` | `POST /v1/transit/encrypt/<tenant>` with `plaintext` (base64) and `context` (base64 of AAD). Returns `ciphertext` like `vault:v3:…`; the `:vN:` segment is the version label. |
@@ -451,7 +453,7 @@ Talks to an HSM via PKCS#11. Each tenant's KEK is one or more `CKO_SECRET_KEY` o
 | `current_version` | Highest `vN` from `list_versions`. |
 | `delete_tenant` | `C_DestroyObject` for every key with `CKA_LABEL = tenant_id`. |
 
-The impl maintains a pool of pre-authenticated sessions (4–16, configurable), runs each call inside `tokio::task::spawn_blocking`. PIN/password is sourced from the deployment's secret-injection mechanism (e.g., a Kubernetes projected file), fetched once at construction, never logged.
+The impl maintains a **per-tenant** pool of pre-authenticated sessions, fetched lazily on first traffic for a tenant and evicted on idle (default 15 min); each call runs inside `tokio::task::spawn_blocking`. Per-tenant authentication is supported on HSMs that expose per-key (`CKA_ALWAYS_AUTHENTICATE`) or per-slot login; on those, each tenant's PIN/password is sourced from a per-tenant entry in the deployment's secret-injection mechanism (e.g., a Kubernetes projected directory keyed by tenant id), fetched lazily, never logged. On HSMs that lack per-key/per-slot authentication the impl degrades to one shared PIN scope per slot, and the deployment runbook records the residual exposure. See [Runtime trust boundary](aspect-key-management.md#runtime-trust-boundary).
 
 `non_exportable_kek()` returns `true`, asserted at construction time by sampling a key's `CKA_EXTRACTABLE` attribute.
 
@@ -463,12 +465,12 @@ The impl maintains a pool of pre-authenticated sessions (4–16, configurable), 
 - **`Ciphertext` is opaque to the keystore.** Whatever the impl needs (nonce, version prefix, GCM tag) lives inside the blob. The DB stores it as a `BYTEA`; the only structured data the keystore exposes is the `kek_version` column.
 - **Backend mismatch on unwrap is a real failure mode.** A keystore row written by one `KekProvider` impl cannot be unwrapped by another. The deployment configuration must keep the impl stable across the data's lifetime; switching impls requires a re-encryption sweep that re-`wrap`s every row.
 - **Vault Transit version arithmetic.** Vault embeds the version number in the ciphertext prefix (`vault:v3:…`). The impl parses this and verifies it matches the `version` argument passed to `unwrap` — guards against silent provider drift.
-- **PKCS#11 session pooling.** Same shape as the Vault Transit HTTP client pool. Pool size is a deployment knob; default 8.
+- **PKCS#11 session pooling.** Per-tenant (see [Runtime trust boundary](aspect-key-management.md#runtime-trust-boundary)). Same shape as the Vault Transit per-tenant HTTP client cache. Per-tenant pool size and the per-instance cap on cached tenants are deployment knobs.
 
 ## Open
 
 - **`SignerError` granularity.** Current variants cover the major failure modes; expect a few more (e.g., a distinct variant for "registry/keystore disagreement on the active key") as the reconciliation logic is written.
-- **Vault Transit details.** Auth method (token vs AppRole vs Kubernetes auth), retry/backoff for transient `503`s, and the policy required by the issuer's role are TBD in the orchestrator-specific spec.
+- **Vault Transit details.** Auth method (token vs AppRole vs Kubernetes auth), retry/backoff for transient `503`s, and the policy required by the issuer's role are TBD in the orchestrator-specific spec. The per-tenant scoping requirement from [Runtime trust boundary](aspect-key-management.md#runtime-trust-boundary) constrains the choice — whatever auth method is picked must support one credential per tenant with policy scoped to that tenant's Transit paths.
 - **PKCS#11 details.** Vendor-specific quirks (label/ID length limits, `CKM_AES_GCM` parameter shape across libraries) are TBD when an HSM is procured.
 - **Re-encryption sweep packaging.** Whether the sweep runs as a tokio task inside the management binary's process, as a separate one-shot binary scheduled by the operator, or both. Throttle/batch knobs to surface.
 - **Reconciliation entry point.** The startup-time check that compares the registry's latest authorized key against the keystore's active row — likely a free function in the management layer that takes a `KeyManager` and a registry client. Where exactly it sits, and whether it's invoked from `main` or from a dedicated reconciliation step, is open.

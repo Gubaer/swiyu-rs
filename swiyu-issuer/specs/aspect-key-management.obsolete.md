@@ -75,6 +75,22 @@ What's deliberately *not* in this list:
 - **Deliver-at-start mechanisms** (systemd-creds, Vault KV v1). Cannot serve multiple coexisting KEK versions, breaks lock-free rotation.
 - **Cloud KMS as a separate backend.** Vault Transit is sufficient for the "encrypt-as-a-service" niche; if a deployment specifically requires AWS KMS / GCP KMS / Azure Managed HSM, it can be added as a fourth `KekProvider` impl using the same trait surface.
 
+## Runtime trust boundary
+
+The storage taxonomy above frames the **KEK** as the security boundary against an attacker who has the database. That is accurate for the at-rest threat. It is *not* the boundary for an attacker with code execution in a running issuer process: once a private key is unwrapped to sign, it is plaintext in process memory, and the process holding the `KekProvider` can ask it to unwrap any ciphertext for any tenant it can read.
+
+The OIDC binary is the higher-risk of the two processes — it terminates wallet-facing OIDC4VCI traffic and therefore carries the larger attack surface. Code execution there gives an attacker (a) `SELECT` on `swiyu_issuer_keystore.signing_keys`, which it needs to sign at all, and (b) the ability to call `KekProvider::unwrap` for any `(tenant, version)` the running process has the backend credentials to address. The capability split between `Signer` (read) and `KeyManager` (write) bounds *minting and rotation*, not *decryption*: the OIDC binary can decrypt every tenant's keys whether or not it can rotate them.
+
+The decisions below shrink the blast radius of an OIDC RCE without re-architecting the signing path. They reduce a one-shot fleet compromise to an enumerate-and-pivot attack visible in backend audit logs; they do not eliminate it. A more aggressive bound (per-tenant signing sidecar) is recorded in [Open](#open).
+
+- **Per-tenant backend credentials, not a fleet-wide one.** A `KekProvider` impl authenticates to its backend with a credential scoped to one tenant, not one credential authorized for the whole fleet. For Vault Transit: one AppRole (or token) per tenant, policy restricted to that tenant's Transit key paths. For PKCS#11 on HSMs that support per-key or per-slot authentication (`CKA_ALWAYS_AUTHENTICATE`, multi-slot deployments): one authenticated session per tenant. On HSMs that don't, this mitigation degrades to "best effort" and the residual is recorded in the deployment runbook. For the dev filesystem provider it is intrinsic — only loaded YAML entries are addressable.
+- **Lazy credential acquisition.** A tenant's backend credential is fetched on first traffic for that tenant, not at boot. An OIDC instance that has only served tenants {A, B} holds credentials for {A, B} only; an attacker who lands on it must trigger fresh acquisitions to reach other tenants, and each acquisition leaves a record at the backend.
+- **Idle eviction.** Tenant credentials evict from the in-memory cache after a configurable idle window (default: 15 minutes). An attacker who lands on an instance that has been idle for a given tenant gets nothing for that tenant without forcing a re-fetch.
+- **Audit at the KEK backend.** Every credential acquisition (Vault token issuance / AppRole login, HSM session open) is logged at the backend with the requesting instance identity. A burst of tenant-credential acquisitions from one OIDC instance is the highest-fidelity signal of an attacker enumerating tenants, and is the SOC's primary detection for this class of attack.
+- **Memory hygiene at the unwrap boundary.** Plaintext bytes returned from `KekProvider::unwrap` live in a zeroize-on-drop wrapper and are dropped before `Signer::sign` returns. This bounds a `/proc/<pid>/mem` read or core dump to keys actively being signed at that instant rather than the full set of keys the process has ever decrypted. The broader signing-path memory hygiene (full zeroize coverage, optional `mlock`) is its own slice not yet detailed here.
+
+These choices are deployment-tier-independent: they apply equally to Vault Transit and PKCS#11. The dev filesystem provider is single-process and single-machine, so per-tenant scoping is enforced trivially by what the developer chose to put in the YAML file.
+
 ## Maturity-tier mapping
 
 Issuer private keys are *always* stored in the RDBMS as AEAD ciphertext. What varies across maturity tiers is only where the **KEK** lives — and therefore where the AEAD operations actually happen:
@@ -89,7 +105,7 @@ Three consequences of this table:
 
 **The encryption code path is on from alpha onward.** Ciphertext is the only shape ever written to the keystore. There are no `if maturity == prod { encrypt() }` branches; what varies is the KEK provider, not whether wrapping happens.
 
-**The issuer's private keys always touch process memory.** When the application signs, it asks the KEK provider to unwrap a ciphertext, then signs in-process with the unwrapped bytes. The security boundary is the KEK, not the issuer key — that's why hardening focuses on KEK exportability, not issuer-key exportability.
+**The issuer's private keys always touch process memory.** When the application signs, it asks the KEK provider to unwrap a ciphertext, then signs in-process with the unwrapped bytes. The KEK is the security boundary against an attacker who has the *database*; the signing *process* is the security boundary against an attacker with code execution on the application host — see [Runtime trust boundary](#runtime-trust-boundary). That's why hardening focuses both on KEK exportability *and* on per-tenant scoping of the runtime KEK access path.
 
 **Production refuses to start unless `KekProvider::non_exportable_kek()` returns true.** The dev filesystem provider is gated separately to make this constraint a soft contract at construction time and a hard refusal in any non-alpha binary.
 
@@ -230,6 +246,7 @@ The decisions that govern the draft:
 - **`health_check()`** at boot — refuses startup if the KEK backend isn't reachable or authenticated. Parallel to `Signer::health_check`.
 - **Tenant lifecycle.** `create_initial_kek` runs at tenant provisioning, alongside `swiyu_issuer_mgmt.tenants` insertion. `delete_tenant` runs at deprovisioning, after every issuer's keys have been deleted.
 - **No DB-backed `KEKManager` impl.** Putting KEKs in the same DB they protect would defeat the threat model. The trait's impls live in their own module (`swiyu-issuer/src/kek/`), each talking to one orchestrator service.
+- **Per-tenant backend credentials.** Every impl authenticates to its backend with a credential scoped to one tenant, fetched lazily on first traffic for that tenant and evicted on idle. The trait surface is unchanged — `wrap`/`unwrap` already key on tenant; only the impl's authentication topology changes. See [Runtime trust boundary](#runtime-trust-boundary).
 
 ## Code implications
 
@@ -239,6 +256,7 @@ The decisions that govern the draft:
 - **Atomic rotation** uses the four-step discipline above. The keystore admits at most one `active` row and at most one `pending_next` row per `(tenant_id, issuer_id)`; rotation is the staged transition between them.
 - **Reconciliation hook** runs on startup before the issuer accepts traffic: compare the registry's latest authorized key against the keystore. Three cases — match, complete-the-commit, refuse-to-start — and a structured log line for each.
 - **Production startup gate.** The production binary refuses to start unless `KekProvider::non_exportable_kek()` returns true and the registry's latest authorized key matches the keystore's active row.
+- **Tenant-credential cache lives inside each `KekProvider` impl.** Lazy fetch on first `wrap`/`unwrap` for a tenant, idle eviction, audit-logged at the backend. `Signer` and `KeyManager` callers don't see this — they pass a tenant id and the impl handles credential lifecycle. Configuration knobs (idle window, per-instance tenant cap) live with the impl. See [Runtime trust boundary](#runtime-trust-boundary).
 
 ## Open
 
@@ -248,3 +266,5 @@ The decisions that govern the draft:
 - **KEK rotation cadence and retirement policy** — how often KEKs are rotated routinely, the maximum age of a "retired-but-still-readable" KEK version (i.e., the deadline by which the sweep must have migrated all rows off it), and the operator-facing trigger for an emergency rotation.
 - **Reconciliation policy details** — which exact comparisons (current `authorized` key only, or all three roles), and whether a mismatch should ever auto-recover beyond the commit-the-pending case. Lean: minimal auto-recovery, operator-driven for everything else. Not yet locked.
 - **Multi-DID / multi-algorithm posture.** Not relevant for v0.1; the `Signer` trait must not preclude it. Tracked as a constraint on the impl rather than an immediate requirement.
+- **Per-tenant signing sidecar (tier-3 deployments).** A more aggressive bound on RCE blast radius than the per-tenant credential scoping in [Runtime trust boundary](#runtime-trust-boundary): one small signing process per tenant (or per shard), each loading exactly one tenant's backend credential, with the OIDC binary forwarding `sign` requests over a Unix socket. RCE in OIDC then compromises no tenant directly; RCE in one sidecar compromises one. Cost: a per-tenant process count and an IPC hop on every signature. Not built unless a deployment policy requires it.
+- **Tenant-credential cache configuration.** Concrete defaults for the idle window, the per-instance cap on cached tenant credentials, and the eviction policy on cap pressure (LRU vs refuse-and-let-orchestrator-rebalance). The 15-minute default in [Runtime trust boundary](#runtime-trust-boundary) is a placeholder pending operator input.
