@@ -1,12 +1,15 @@
 use std::path::PathBuf;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::debug;
 
 use swiyu_core::did::DID;
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
+use swiyu_core::didlog::LogEntryFormat;
+use swiyu_core::didlog::build::{
+    append_proof, build_initial_entry, set_version_id, strip_proof_slot,
+};
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
-use swiyu_core::didlog::{DIDDocState, DIDLogEntry, LogEntryFormat, LogParameters};
 
 use crate::crypto::{CryptoError, generate_ecdsa_key_pair, generate_eddsa_key_pair};
 use crate::keystore::{KeyStore, KeyStoreError, StagedKeys};
@@ -105,11 +108,12 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
 
     // --- genesis log entry (with {SCID} placeholders, no proof slot yet) ---
     let now = now_iso8601();
-    let entry_template = build_genesis_entry(
+    let entry_template = build_initial_entry(
         &args.format,
         &authorized_multikey,
         &did_placeholder_str,
-        &staged,
+        &staged.authentication_key_coords(),
+        &staged.assertion_key_coords(),
         &now,
     );
 
@@ -325,104 +329,6 @@ fn prepare_keys(args: &CreateArgs) -> Result<StagedKeys, CreateError> {
         authentication_signing,
         assertion_signing,
     ))
-}
-
-fn build_genesis_entry(
-    format: &LogEntryFormat,
-    authorized_multikey: &str,
-    did_placeholder_str: &str,
-    staged: &StagedKeys,
-    now: &str,
-) -> DIDLogEntry {
-    let method_str = match format {
-        LogEntryFormat::TDW03 => "did:tdw:0.3",
-        LogEntryFormat::WebVH10 => "did:webvh:1.0",
-    };
-
-    let parameters = match format {
-        LogEntryFormat::TDW03 => LogParameters::new_tdw(
-            Some(method_str.into()),
-            Some("{SCID}".into()),
-            Some(vec![authorized_multikey.into()]),
-            None,        // prerotation
-            None,        // next_key_hashes
-            Some(false), // portable (DID Toolbox includes this explicitly)
-            None,        // deactivated
-            None,        // ttl
-            None,        // witness
-        ),
-        LogEntryFormat::WebVH10 => LogParameters::new_webvh(
-            Some(method_str.into()),
-            Some("{SCID}".into()),
-            Some(vec![authorized_multikey.into()]),
-            None, // prerotation
-            None, // next_key_hashes
-            None, // portable
-            None, // deactivated
-            None, // ttl
-            None, // witness
-            None, // watchers (did:webvh only)
-        ),
-    };
-
-    let genesis_doc = super::diddoc::build_did_doc(did_placeholder_str, staged);
-    let state = DIDDocState::Value(genesis_doc);
-
-    match format {
-        LogEntryFormat::TDW03 => {
-            DIDLogEntry::new_tdw("{SCID}".into(), now.into(), parameters, state, vec![])
-        }
-        LogEntryFormat::WebVH10 => {
-            DIDLogEntry::new_webvh("{SCID}".into(), now.into(), parameters, state, vec![])
-        }
-    }
-}
-
-fn strip_proof_slot(entry: &mut Value, format: &LogEntryFormat) {
-    match format {
-        LogEntryFormat::TDW03 => {
-            if let Some(arr) = entry.as_array_mut() {
-                arr.pop();
-            }
-        }
-        LogEntryFormat::WebVH10 => {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.remove("proof");
-            }
-        }
-    }
-}
-
-fn set_version_id(entry: &mut Value, version_id: &str, format: &LogEntryFormat) {
-    match format {
-        LogEntryFormat::TDW03 => {
-            if let Some(arr) = entry.as_array_mut()
-                && let Some(slot) = arr.first_mut()
-            {
-                *slot = json!(version_id);
-            }
-        }
-        LogEntryFormat::WebVH10 => {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.insert("versionId".into(), json!(version_id));
-            }
-        }
-    }
-}
-
-fn append_proof(entry: &mut Value, proof: Value, format: &LogEntryFormat) {
-    match format {
-        LogEntryFormat::TDW03 => {
-            if let Some(arr) = entry.as_array_mut() {
-                arr.push(json!([proof]));
-            }
-        }
-        LogEntryFormat::WebVH10 => {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.insert("proof".into(), json!([proof]));
-            }
-        }
-    }
 }
 
 fn now_iso8601() -> String {

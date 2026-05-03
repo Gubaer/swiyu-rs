@@ -1,3 +1,4 @@
+pub mod builder;
 pub mod public_keys;
 pub use public_keys::{KeyUse, PublicKey, PublicKeyJWK, PublicKeyMultibase};
 
