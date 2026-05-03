@@ -151,6 +151,90 @@ The link from the e-ID identity to the freshly-issued PoR is established at BA, 
 
 This is why the v0.1.0 management API takes the resident's claims from BA without seeing the e-ID itself: BA owns the verification step; `swiyu-issuer` owns the issuance step; they meet at the management API.
 
+## Reference precedent: the eLFA pilot
+
+The Swiss federal pilot **elektronischer Lernfahrausweis** (eLFA, "electronic learner driving permit") is a directly comparable SD-JWT VC deployment on the SWIYU infrastructure: piloted in Appenzell Ausserrhoden from April 2024, extended to Bern, Neuenburg and Wallis from June 2025, and on a path to national rollout. ASTRA's directive of 11 June 2025 ("Weisungen betreffend das Pilotprojekt «elektronische Lernfahrausweise»") is the authoritative public reference for how a higher-assurance Swiss-issued VC handles the presenter–subject gap. Useful prior art for `urn:communal:local-residence-id`.
+
+### What the eLFA carries
+
+Per directive §B, the eLFA's claims mirror the paper version: name and given name, **photo**, signature, birth date, place of origin, issue and expiry dates, issuing authority, permit number, FABER-PIN, category and category extras. The portrait is a first-class claim, not an afterthought.
+
+### Two distinct verifier flows, split by stakes
+
+The eLFA pilot does not run a single SSI flow for all verifiers. Police checks and third-party checks are handled differently:
+
+- **Police roadside check (§E.I) — not pure SSI.** The holder shows a QR code in the swiyu-App carrying only `Name`, `Vorname`, `Geburtsdatum`, and the permit number. Police scan it and look the holder up in the federal **IVZ-Personen** register from their own systems. The eLFA QR is effectively an index into the federal database; the photo the officer compares is whatever IVZ-Personen returns. SD-JWT VC and OID4VP are bypassed entirely. The directive draws the parallel itself: *"ähnlich wie bei der Prüfung eines Führerausweises mit QR-Code."*
+- **Third-party check via the LicenceCheck web app (§E.II) — pure SSI over OID4VP.** Two modes: a *Minimalüberprüfung* (photo, expiry, category, category extras, A and B extras) and a *Maximalüberprüfung* (everything in the eLFA). Both surface the **photo**; the verifier compares it visually to the person in front of them. This is the "photo claim on the credential, attended verification" pattern from layer 3 above.
+
+### Layer-3 answer in one sentence
+
+The eLFA closes the subject↔human gap by **(a)** embedding a portrait claim for attended visual comparison, and **(b)** for the highest-stakes verifier (police), bypassing SSI in favour of a federal-database lookup keyed by a low-cardinality QR.
+
+### What the eLFA explicitly does not do
+
+- **No SWIYU e-ID pairing.** The eLFA stands alone — no second credential is involved. None of approaches 1, 2, or 3 from *Linking to the SWIYU e-ID* apply. At pilot launch the e-ID was not broadly available, and the eLFA was designed to stand alone; that has held through expansion.
+- **No biometric template.** No unattended (turnstile-style) flow.
+- **No reliance on the paper permit at verification time.** Paper is still issued in parallel (§A), but the directive is explicit (§C, §G): *"Das Vorweisen des eLFA allein genügt zum Nachweis der Fahrberechtigung."*
+
+### Implications for `urn:communal:local-residence-id`
+
+- **The eLFA chose the portrait claim, not e-ID pairing — at a much higher assurance bar than v0.1.0.** Roadside police checks have legal consequences; the federal pilot still judged a portrait sufficient for layer 3 and did not introduce a second credential. Useful precedent if our assurance bar ever rises beyond the v0.1.0 ski-lift attendant scenario.
+- **High-stakes verifiers may legitimately bypass SSI.** It is acceptable Swiss practice for a high-stakes verifier to short-circuit the SSI presentation with a federal back-end lookup, treating the credential as a *trusted handle* into a register rather than as the source of truth for layer-3 evidence. Worth keeping in our solution space if a future verifier scenario cannot rely on what the SD-JWT VC alone carries.
+- **The e-ID-linking puzzle was side-stepped by not depending on the e-ID.** The current v0.1.0 commitment to approach 1 with no e-ID-referencing claim is consistent with what ASTRA shipped — the only material difference is the portrait. Note however that the federal precedent did not wait for e-ID ecosystem maturity to deliver layer 3; it embedded a portrait. This is a data point against the *Open* item below that leans toward e-ID pairing once the ecosystem matures.
+
+Source: ASTRA Weisungen Pilotprojekt «elektronische Lernfahrausweise», 11 June 2025 — `https://www.astra.admin.ch/dam/astra/de/dokumente/dokumente-strassenverkehr/weisungen/weisungen-pilotprojekt-elektronische-lernfahrausweise.pdf.download.pdf/Weisungen_Pilotprojekt_elektronische_Lernfahrausweise.pdf`.
+
+## Reference precedent: the DMZ Maturazeugnis pilot
+
+`Educa-CH/dmz` is a prototype, built on Procivis One Desk APIs over the SWIYU infrastructure, demonstrating issuance of a digital Maturazeugnis and a downstream university registration flow. The educa.ch project page positions it as an innovation project under the DVS programme. The prototype shows what was chosen to demonstrate; production behaviour may differ.
+
+### What the Maturazeugnis credential carries
+
+Claims are educational and biographical only: `Vorname`, `Nachname`, `Heimatort`, `Geburtsdatum`, education duration, subject grades (Französisch, Deutsch, Englisch, Math, Bio, Chemie, Physik, Geschichte, Philosophie, Bildnerisches Gestalten), elective and supplementary subjects, thesis title, issuing school and canton. **No portrait, no biometric template.**
+
+### How the university registration flow closes the gap
+
+Three credentials, two presentations, one matching check:
+
+1. **Verifier requests the SWIYU e-ID via OID4VP.** Holder presents.
+2. **Verifier requests the Maturazeugnis via OID4VP.** Holder presents.
+3. **The application matches `Vorname` + `Nachname` + `Geburtsdatum` across the two credentials.** If the triple matches, registration is accepted.
+4. **The university issues a new student-card credential (Studienausweis)** carrying matriculation number, **portrait** (sourced from the e-ID at registration time), name, birth date, expiry. Subsequent daily verification on campus uses this card, and *its* portrait becomes the layer-3 anchor going forward.
+
+### Layer-3 answer in one sentence
+
+The DMZ closes the subject↔human gap by **delegating it to the e-ID at a one-time bridging moment, linked by a name-plus-birthdate match**, then re-issuing a portrait-carrying derived credential for ongoing use inside the university domain.
+
+### How this maps to the *Linking to the SWIYU e-ID* taxonomy
+
+The DMZ flow is **approach 2a with a composite identifier**: instead of a single stable subject identifier from the e-ID, it matches a tuple of nominal claims (`Vorname`, `Nachname`, `Geburtsdatum`) that already appear on both credentials. This sidesteps the BGEID concern about embedding a global correlation handle, at the cost of weaker uniqueness.
+
+### Tradeoffs the DMZ accepts
+
+- **Composite-claim matching is weaker than cryptographic linkage.** Name and birthdate collisions exist (twins, common Swiss names). It is "probably unique" rather than "provably distinct." The DMZ tolerates this because the verifier is also doing manual review and the registration moment is one-shot and low-frequency.
+- **Privacy is mostly a non-issue here, by accident of the data.** Name and birthdate already appear on every academic transcript, so the marginal correlation cost of using them as link fields is essentially zero. That trade gets worse fast for credentials whose link fields would otherwise be private.
+- **Hard dependency on the e-ID at registration.** No e-ID, no registration. The DMZ accepts this because every applicant is expected to have one.
+- **Layer 3 is solved twice.** Once at registration via the e-ID's portrait; again, ongoing, via the student card. Issuer-side complexity, not verifier-side complexity.
+
+### Comparison with the eLFA
+
+| Dimension                          | eLFA                                   | DMZ Maturazeugnis                                |
+|------------------------------------|----------------------------------------|--------------------------------------------------|
+| Portrait on the primary credential | Yes                                    | No                                               |
+| Depends on the e-ID                | No                                     | Yes, at registration                             |
+| Cross-credential link mechanism    | None (stand-alone)                     | Match `Vorname` + `Nachname` + `Geburtsdatum`    |
+| High-stakes verifier path          | Federal database lookup (IVZ-Personen) | n/a; uses follow-on student card                 |
+| Credentials in the flow            | 1                                      | 3 (e-ID, Maturazeugnis, student card)            |
+| Where layer 3 lives                | In the credential, plus federal DB     | At the e-ID, plus a derived credential           |
+
+### Implications for `urn:communal:local-residence-id`
+
+- **Approach 2 is real Swiss practice — using a composite of nominal claims, not a single identifier.** If the SWIYU e-ID does not eventually expose a stable subject identifier safe for commune-context use, the DMZ pattern (match on already-public nominal fields) is a workable fallback that keeps verifier-side complexity manageable.
+- **The "bridge once, mint a derived credential" pattern is a useful lever for higher-stakes future scenarios.** If a commune-issued PoR ever needs to bridge into a high-stakes verifier domain (e.g. a regulated benefit), the DMZ pattern — bridge through the e-ID at enrolment, mint a derived credential carrying the portrait, fall back on it thereafter — is more attractive than embedding a portrait directly in the base PoR.
+- **Two precedents, two answers.** The eLFA put layer 3 inside the credential; the DMZ delegated it to the e-ID at a single bridging moment. There is no SWIYU-wide convention; the Open item below should be read in light of *both* precedents, not just one.
+
+Source: `Educa-CH/dmz` prototype — `https://github.com/Educa-CH/dmz`; live demo at `https://dmz.educa.ch/overview`; project page at `https://www.educa.ch/de/themen/digitale-identitaet/dvs-innovationsprojekt-digitales-maturitaetszeugnis`.
+
 ## v0.1.0 decision
 
 The first issued credential, `urn:communal:local-residence-id`, ships **without a portrait claim**. The schema in [`impl_credential_schema.md`](impl_credential_schema.md) carries identity-bearing claims (`family_name`, `given_name`, `birth_date`, `address`, `valid_until`) but no image.
