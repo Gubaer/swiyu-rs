@@ -1,10 +1,11 @@
 use sqlx::Row;
 use sqlx::postgres::{PgConnection, PgRow};
+use uuid::Uuid;
 
-use crate::domain::{Issuer, IssuerId, TenantId};
+use crate::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
 
 use super::PersistenceError;
-use super::helpers::integrity_from;
+use super::helpers::{integrity_from, map_database_error};
 
 pub async fn exists_for_tenant(
     conn: &mut PgConnection,
@@ -43,7 +44,10 @@ pub async fn find_by_id(
 ) -> Result<Option<Issuer>, PersistenceError> {
     let row = sqlx::query(
         r#"
-        SELECT id, tenant_id, did, signing_key_id,
+        SELECT id, tenant_id, did,
+               state, description,
+               authorized_key_id, authentication_key_id, assertion_key_id,
+               signing_key_id,
                display_name, logo_uri, locale
         FROM issuers
         WHERE id = $1
@@ -56,11 +60,47 @@ pub async fn find_by_id(
     row.map(|row| row_to_issuer(&row)).transpose()
 }
 
+pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), PersistenceError> {
+    sqlx::query(
+        r#"
+        INSERT INTO issuers (
+            id, tenant_id, did,
+            state, description,
+            authorized_key_id, authentication_key_id, assertion_key_id,
+            signing_key_id,
+            display_name, logo_uri, locale
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        "#,
+    )
+    .bind(issuer.id.bare())
+    .bind(issuer.tenant_id.bare())
+    .bind(&issuer.did)
+    .bind(issuer.state.map(IssuerState::as_str))
+    .bind(issuer.description.as_deref())
+    .bind(issuer.authorized_key_id.map(|k| *k.as_uuid()))
+    .bind(issuer.authentication_key_id.map(|k| *k.as_uuid()))
+    .bind(issuer.assertion_key_id.map(|k| *k.as_uuid()))
+    .bind(issuer.signing_key_id.as_deref())
+    .bind(issuer.display_name.as_deref())
+    .bind(issuer.logo_uri.as_deref())
+    .bind(issuer.locale.as_deref())
+    .execute(conn)
+    .await
+    .map_err(map_database_error)?;
+    Ok(())
+}
+
 fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
     let id: String = row.try_get("id")?;
     let tenant_id: String = row.try_get("tenant_id")?;
     let did: String = row.try_get("did")?;
-    let signing_key_id: String = row.try_get("signing_key_id")?;
+    let state: Option<String> = row.try_get("state")?;
+    let description: Option<String> = row.try_get("description")?;
+    let authorized_key_id: Option<Uuid> = row.try_get("authorized_key_id")?;
+    let authentication_key_id: Option<Uuid> = row.try_get("authentication_key_id")?;
+    let assertion_key_id: Option<Uuid> = row.try_get("assertion_key_id")?;
+    let signing_key_id: Option<String> = row.try_get("signing_key_id")?;
     let display_name: Option<String> = row.try_get("display_name")?;
     let logo_uri: Option<String> = row.try_get("logo_uri")?;
     let locale: Option<String> = row.try_get("locale")?;
@@ -69,14 +109,14 @@ fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
         id: IssuerId::from_bare(id).map_err(integrity_from)?,
         tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
         did,
-        // Transitional fields not yet populated from the DB. The
-        // schema columns ship in the issuer-management slice; until
-        // then existing rows are read with the new fields as None.
-        state: None,
-        description: None,
-        authorized_key_id: None,
-        authentication_key_id: None,
-        assertion_key_id: None,
+        state: state
+            .map(|s| IssuerState::parse(&s))
+            .transpose()
+            .map_err(integrity_from)?,
+        description,
+        authorized_key_id: authorized_key_id.map(KeyPairId::from_uuid),
+        authentication_key_id: authentication_key_id.map(KeyPairId::from_uuid),
+        assertion_key_id: assertion_key_id.map(KeyPairId::from_uuid),
         signing_key_id,
         display_name,
         logo_uri,

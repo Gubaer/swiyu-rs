@@ -80,9 +80,11 @@ pub struct Issuer {
 
     /// Legacy: opaque handle into the `swiyu-didtool` keystore. The
     /// OIDC binary reads this for credential signing on the seeded
-    /// dev row; removed when the OIDC binary migrates to
-    /// SigningEngine-based signing.
-    pub signing_key_id: String,
+    /// dev row. `None` for issuers created through the SigningEngine
+    /// task flow, which carry their key handles in the three
+    /// `*_key_id` fields above. Removed when the OIDC binary
+    /// migrates to SigningEngine-based signing.
+    pub signing_key_id: Option<String>,
 
     /// Display name. Currently optional; becomes required (and loses
     /// the `Option<…>` wrapper) when the legacy migration completes.
@@ -124,7 +126,7 @@ mod tests {
             authorized_key_id: None,
             authentication_key_id: None,
             assertion_key_id: None,
-            signing_key_id: "fixture".into(),
+            signing_key_id: Some("fixture".into()),
             display_name: None,
             logo_uri: None,
             locale: None,
