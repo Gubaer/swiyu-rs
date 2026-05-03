@@ -3027,6 +3027,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "swiyu-registries"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "swiyu-core",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"

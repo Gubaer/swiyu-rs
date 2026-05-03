@@ -1,0 +1,24 @@
+[package]
+name = "swiyu-registries"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+# Async HTTP clients for the SWIYU-operated registries (Identifier
+# Registry, and later Status Registry, Trust Registry). Pure-data
+# types continue to live in swiyu-core; this crate is the place that
+# pulls in reqwest and tokio.
+
+[features]
+default = ["identifier"]
+identifier = []
+status = []
+trust = []
+
+[dependencies]
+swiyu-core = { path = "../swiyu-core" }
+reqwest = { version = "0.13", features = ["json", "rustls", "webpki-roots"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros"] }
