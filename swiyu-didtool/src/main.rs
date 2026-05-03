@@ -14,7 +14,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use swiyu_core::didlog::LogEntryFormat;
 use tracing::debug;
 
-use keystore::{KeyRole, KeyStore};
+use keystore::{KeyRole, KeyStore, key_role_file_stem};
 
 #[derive(Parser)]
 #[command(name = "didtool", about = "Manage did:tdw and did:webvh identities")]
@@ -666,7 +666,7 @@ fn cmd_show(
             let key_role: KeyRole = role.into();
             debug!(
                 "showing {} public key (version: {})",
-                key_role.file_stem(),
+                key_role_file_stem(key_role),
                 version.map_or("latest".to_string(), |v| v.to_string())
             );
             let pem = entry.public_key_pem(key_role, version)?;
@@ -705,7 +705,7 @@ fn cmd_export(
     let visibility = if private { "private" } else { "public" };
     debug!(
         "exporting {} {} key to {}",
-        key_role.file_stem(),
+        key_role_file_stem(key_role),
         visibility,
         out.display()
     );

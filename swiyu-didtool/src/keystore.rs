@@ -51,24 +51,13 @@ pub enum KeyStoreError {
 
 pub type KeyStoreResult<T> = Result<T, KeyStoreError>;
 
-/// The three key roles held per DID in the key store.
-#[derive(Debug, Clone, Copy)]
-pub enum KeyRole {
-    /// EdDSA key — signs DID log entries.
-    Authorized,
-    /// ECDSA key — used for DID authentication.
-    Authentication,
-    /// ECDSA key — signs verifiable credentials.
-    Assertion,
-}
+pub use swiyu_core::KeyRole;
 
-impl KeyRole {
-    pub(crate) fn file_stem(self) -> &'static str {
-        match self {
-            KeyRole::Authorized => "authorized",
-            KeyRole::Authentication => "authentication",
-            KeyRole::Assertion => "assertion",
-        }
+pub(crate) fn key_role_file_stem(role: KeyRole) -> &'static str {
+    match role {
+        KeyRole::Authorized => "authorized",
+        KeyRole::Authentication => "authentication",
+        KeyRole::Assertion => "assertion",
     }
 }
 
@@ -324,7 +313,7 @@ impl KeyStoreEntry {
         let visibility = if private { "private" } else { "public" };
         self.entry_dir
             .join(format!("{version:04}"))
-            .join(format!("{}-{visibility}.pem", role.file_stem()))
+            .join(format!("{}-{visibility}.pem", key_role_file_stem(role)))
     }
 }
 
