@@ -69,6 +69,14 @@ fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
         id: IssuerId::from_bare(id).map_err(integrity_from)?,
         tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
         did,
+        // Transitional fields not yet populated from the DB. The
+        // schema columns ship in the issuer-management slice; until
+        // then existing rows are read with the new fields as None.
+        state: None,
+        description: None,
+        authorized_key_id: None,
+        authentication_key_id: None,
+        assertion_key_id: None,
         signing_key_id,
         display_name,
         logo_uri,
