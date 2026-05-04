@@ -65,7 +65,7 @@ pub fn cmd_verify_trust(
             .map_err(|reason| BusinessEntityError::Statement { n: i + 1, reason })?;
         decoded.push(s);
     }
-    decoded.sort_by(|a, b| b.iat.cmp(&a.iat));
+    decoded.sort_by_key(|s| std::cmp::Reverse(s.iat));
 
     let mut ctx = VerifyContext::new(expected_issuer);
     let now = Utc::now().timestamp().max(0) as u64;
