@@ -60,6 +60,37 @@ pub async fn find_by_id(
     row.map(|row| row_to_issuer(&row)).transpose()
 }
 
+/// Tenant-scoped variant of [`find_by_id`].
+///
+/// The management API never resolves an issuer outside the caller's
+/// tenant, so the SELECT filters on both columns and "wrong tenant"
+/// collapses to the same `Ok(None)` as "no such issuer". Handlers
+/// then map either case to a generic 404 — the BA cannot probe for
+/// the existence of issuers in other tenants.
+pub async fn find_by_id_for_tenant(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+) -> Result<Option<Issuer>, PersistenceError> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, tenant_id, did,
+               state, description,
+               authorized_key_id, authentication_key_id, assertion_key_id,
+               signing_key_id,
+               display_name, logo_uri, locale
+        FROM issuers
+        WHERE id = $1 AND tenant_id = $2
+        "#,
+    )
+    .bind(issuer_id.bare())
+    .bind(tenant_id.bare())
+    .fetch_optional(conn)
+    .await?;
+
+    row.map(|row| row_to_issuer(&row)).transpose()
+}
+
 pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), PersistenceError> {
     sqlx::query(
         r#"

@@ -1,17 +1,17 @@
 //! HTTP handlers for the issuer-management endpoints.
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::Utc;
 use serde_json::json;
 
-use crate::domain::{IssuerId, OperationTask, TaskId, TaskState, TaskType};
+use crate::domain::{Issuer, IssuerId, OperationTask, TaskId, TaskState, TaskType};
 use crate::persistence;
 
 use super::AppState;
 use super::auth::TenantContext;
-use super::dto::{CreateIssuerResponse, CreateIssuerSubmission};
+use super::dto::{CreateIssuerResponse, CreateIssuerSubmission, GetIssuerResponse};
 use super::error::ApiError;
 
 /// Maximum byte length applied to BA-supplied free-text fields after
@@ -81,6 +81,70 @@ pub async fn create(
             issuer_id: issuer_id.to_string(),
         }),
     ))
+}
+
+pub async fn get(
+    State(state): State<AppState>,
+    Path(issuer_id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<Json<GetIssuerResponse>, ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
+        "issuer fetch requested",
+    );
+
+    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
+        details: format!("issuer_id path parameter: {err}"),
+    })?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let issuer = persistence::issuers::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    Ok(Json(issuer_to_response(issuer)?))
+}
+
+/// Projects an `Issuer` to its BA-facing wire DTO.
+///
+/// Returns `ApiError::NotFound` for the seeded legacy row (state ==
+/// None): that row pre-dates the issuer-management flow and is not
+/// part of the v1 surface, so we hide it the same way we hide
+/// cross-tenant rows. Any other issuer was written by
+/// `worker::create_issuer::persist_issuer`, which always sets the
+/// fields the response needs, so the remaining unwraps are safe by
+/// construction — a `None` here would mean the DB row is corrupt
+/// and an internal error response is appropriate.
+fn issuer_to_response(issuer: Issuer) -> Result<GetIssuerResponse, ApiError> {
+    let state = issuer.state.ok_or(ApiError::NotFound)?;
+    let description = issuer.description.ok_or_else(|| internal("description"))?;
+    let display_name = issuer
+        .display_name
+        .ok_or_else(|| internal("display_name"))?;
+
+    Ok(GetIssuerResponse {
+        id: issuer.id.to_string(),
+        did: issuer.did,
+        state: state.as_str().to_string(),
+        description,
+        display_name,
+    })
+}
+
+fn internal(field: &'static str) -> ApiError {
+    ApiError::Internal(Box::new(std::io::Error::other(format!(
+        "issuer row missing BA-facing field `{field}`"
+    ))))
 }
 
 /// Trims and length-checks an optional BA-supplied field.

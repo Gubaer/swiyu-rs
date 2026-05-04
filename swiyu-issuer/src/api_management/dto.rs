@@ -38,6 +38,33 @@ pub struct CreateIssuerResponse {
     pub issuer_id: String,
 }
 
+/// Response body returned by `GET /api/v1/issuers/{issuer_id}` on
+/// success (HTTP 200).
+///
+/// Carries the BA-facing projection of an issuer. Deliberately
+/// omits:
+///
+/// - `tenant_id` — the BA already knows their tenant (it's bound to
+///   the API token), so echoing it adds noise without information.
+/// - `authorized_key_id` / `authentication_key_id` /
+///   `assertion_key_id` — these are internal SigningEngine handles
+///   the BA cannot act on, so exposing them is implementation leak.
+/// - `signing_key_id`, `logo_uri`, `locale` — legacy transitional
+///   fields, removed with the OIDC migration.
+///
+/// The seeded dev row from migration 0004 lacks `state` and is
+/// filtered out by the handler with a 404 — every issuer that lands
+/// in this DTO has the fields below set, so they appear without
+/// `Option<…>` wrappers.
+#[derive(Debug, Serialize)]
+pub struct GetIssuerResponse {
+    pub id: String,
+    pub did: String,
+    pub state: String,
+    pub description: String,
+    pub display_name: String,
+}
+
 /// Request body for creating a credential offer.
 ///
 /// Submitted by a business application to
