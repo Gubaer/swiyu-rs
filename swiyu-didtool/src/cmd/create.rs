@@ -1,17 +1,15 @@
 use std::path::PathBuf;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::debug;
 
 use swiyu_core::did::DID;
-use swiyu_core::diddoc::public_keys::{
-    ECKey, PublicKey, PublicKeyJWK, ed25519_verifying_key_to_multikey,
+use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
+use swiyu_core::didlog::LogEntryFormat;
+use swiyu_core::didlog::build::{
+    append_proof, build_initial_entry, set_version_id, strip_proof_slot,
 };
-use swiyu_core::diddoc::{DIDDoc, VerificationMethod, VerificationMethodOrRef};
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
-use swiyu_core::didlog::{
-    DIDDocState, DIDLogEntry, LogEntryFormat, LogParameters, eddsa_jcs_2022_hash,
-};
 
 use crate::crypto::{CryptoError, generate_ecdsa_key_pair, generate_eddsa_key_pair};
 use crate::keystore::{KeyStore, KeyStoreError, StagedKeys};
@@ -41,15 +39,13 @@ pub enum CreateError {
     AssertionKey(CryptoError),
     #[error("--authentication-key and --assertion-key must differ")]
     IdenticalKeys,
-    #[error("provide a <url> or --swiyu")]
+    #[error("neither URL nor SWIYU mode set")]
     NoUrlSource,
-    #[error("<url> and --swiyu are mutually exclusive")]
+    #[error("URL and SWIYU mode are mutually exclusive")]
     AmbiguousUrlSource,
-    #[error("provide --partner-id or set SWIYU_PARTNER_ID")]
-    PartnerIdMissing,
-    #[error("provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL")]
-    RegistryUrlMissing,
-    #[error("--no-publish requires --swiyu")]
+    #[error(transparent)]
+    RegistryArgs(#[from] crate::cmd::RegistryArgsError),
+    #[error("--no-publish requires SWIYU mode")]
     NoPublishWithoutSwiyu,
     #[error(
         "DID created and saved locally, but registry upload failed: {source} — retry manually with the file at {path}"
@@ -76,19 +72,16 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         return Err(CreateError::NoPublishWithoutSwiyu);
     }
 
-    // --- resolve URL (and, for --swiyu, the registry-assigned identifier) ---
+    // --- resolve URL (and, in SWIYU mode, the registry-assigned identifier) ---
     let (url, allocation) = match (&args.url, args.swiyu) {
         (Some(_), true) => return Err(CreateError::AmbiguousUrlSource),
         (None, false) => return Err(CreateError::NoUrlSource),
         (None, true) => {
-            let partner_id = args
-                .partner_id
-                .clone()
-                .ok_or(CreateError::PartnerIdMissing)?;
-            let registry_url = args
-                .registry_url
-                .clone()
-                .ok_or(CreateError::RegistryUrlMissing)?;
+            let (partner_id, registry_url) = crate::cmd::require_registry_credentials(
+                args.partner_id.clone(),
+                args.registry_url.clone(),
+                "",
+            )?;
             debug!("allocating DID space via SWIYU identifier registry");
             let allocation = crate::swiyu::allocate_did_url(partner_id, registry_url)?;
             debug!(
@@ -115,11 +108,12 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
 
     // --- genesis log entry (with {SCID} placeholders, no proof slot yet) ---
     let now = now_iso8601();
-    let entry_template = build_genesis_entry(
+    let entry_template = build_initial_entry(
         &args.format,
         &authorized_multikey,
         &did_placeholder_str,
-        &staged,
+        &staged.authentication_key_coords(),
+        &staged.assertion_key_coords(),
         &now,
     );
 
@@ -162,8 +156,8 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         LogEntryFormat::TDW03 => "authentication",
         LogEntryFormat::WebVH10 => "assertionMethod",
     };
-    let proof = build_proof(
-        &staged,
+    let proof = super::proof::build_proof(
+        staged.authorized_signing(),
         &document_for_hash,
         &authorized_multikey,
         &version_id,
@@ -181,7 +175,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
     let entry = store.commit(staged, &real_did)?;
     debug!("committed keys to key store (hash: {})", entry.hash());
 
-    // --- publish to registry (--swiyu only, unless --no-publish) ---
+    // --- publish to registry (SWIYU mode only, unless --no-publish) ---
     let published_url = if let Some(allocation) = &allocation
         && !args.no_publish
     {
@@ -335,213 +329,6 @@ fn prepare_keys(args: &CreateArgs) -> Result<StagedKeys, CreateError> {
         authentication_signing,
         assertion_signing,
     ))
-}
-
-fn build_genesis_entry(
-    format: &LogEntryFormat,
-    authorized_multikey: &str,
-    did_placeholder_str: &str,
-    staged: &StagedKeys,
-    now: &str,
-) -> DIDLogEntry {
-    let method_str = match format {
-        LogEntryFormat::TDW03 => "did:tdw:0.3",
-        LogEntryFormat::WebVH10 => "did:webvh:1.0",
-    };
-
-    let parameters = match format {
-        LogEntryFormat::TDW03 => LogParameters::new_tdw(
-            Some(method_str.into()),
-            Some("{SCID}".into()),
-            Some(vec![authorized_multikey.into()]),
-            None,        // prerotation
-            None,        // next_key_hashes
-            Some(false), // portable (DID Toolbox includes this explicitly)
-            None,        // deactivated
-            None,        // ttl
-            None,        // witness
-        ),
-        LogEntryFormat::WebVH10 => LogParameters::new_webvh(
-            Some(method_str.into()),
-            Some("{SCID}".into()),
-            Some(vec![authorized_multikey.into()]),
-            None, // prerotation
-            None, // next_key_hashes
-            None, // portable
-            None, // deactivated
-            None, // ttl
-            None, // witness
-            None, // watchers (did:webvh only)
-        ),
-    };
-
-    let genesis_doc = build_genesis_doc(did_placeholder_str, staged);
-    let state = DIDDocState::Value(genesis_doc);
-
-    match format {
-        LogEntryFormat::TDW03 => {
-            DIDLogEntry::new_tdw("{SCID}".into(), now.into(), parameters, state, vec![])
-        }
-        LogEntryFormat::WebVH10 => {
-            DIDLogEntry::new_webvh("{SCID}".into(), now.into(), parameters, state, vec![])
-        }
-    }
-}
-
-fn build_genesis_doc(did: &str, staged: &StagedKeys) -> Value {
-    // The authorized (update) key signs DID log entries but is not embedded as a
-    // verification method in the DID document — it lives only in `parameters.updateKeys`
-    // as a multikey, and the proof references it via did:key.
-    let auth_vm_id = format!("{did}#authentication-key-01");
-    let assert_vm_id = format!("{did}#assertion-key-01");
-
-    let (auth_x, auth_y) = staged.authentication_key_coords();
-    let (assert_x, assert_y) = staged.assertion_key_coords();
-
-    let auth_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
-        ECKey::from_p256_coordinates(&auth_x, &auth_y).with_kid("authentication-key-01".into()),
-    )));
-    let assert_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
-        ECKey::from_p256_coordinates(&assert_x, &assert_y).with_kid("assertion-key-01".into()),
-    )));
-
-    DIDDoc::new(did.to_string())
-        .with_context(json!([
-            "https://www.w3.org/ns/did/v1",
-            "https://w3id.org/security/jwk/v1"
-        ]))
-        .add_verification_method(VerificationMethod::new(
-            auth_vm_id.clone(),
-            "JsonWebKey2020".into(),
-            did.to_string(),
-            auth_key,
-        ))
-        .add_verification_method(VerificationMethod::new(
-            assert_vm_id.clone(),
-            "JsonWebKey2020".into(),
-            did.to_string(),
-            assert_key,
-        ))
-        .add_authentication(VerificationMethodOrRef::Reference(auth_vm_id))
-        .add_assertion_method(VerificationMethodOrRef::Reference(assert_vm_id))
-        .to_jsonld()
-}
-
-fn build_proof(
-    staged: &StagedKeys,
-    entry: &Value,
-    authorized_multikey: &str,
-    version_id: &str,
-    proof_purpose: &str,
-    now: &str,
-) -> Value {
-    let vm_id = format!("did:key:{authorized_multikey}#{authorized_multikey}");
-    let proof_config = json!({
-        "type": "DataIntegrityProof",
-        "cryptosuite": "eddsa-jcs-2022",
-        "verificationMethod": vm_id,
-        "proofPurpose": proof_purpose,
-        "challenge": version_id,
-        "created": now
-    });
-
-    let proof_jcs = serde_jcs::to_vec(&proof_config).expect("proof config is serialisable");
-    let document_jcs = serde_jcs::to_vec(entry).expect("document is serialisable");
-    debug!(
-        "JCS proof_config ({} bytes): {}",
-        proof_jcs.len(),
-        String::from_utf8_lossy(&proof_jcs)
-    );
-    debug!(
-        "JCS document ({} bytes): {}",
-        document_jcs.len(),
-        String::from_utf8_lossy(&document_jcs)
-    );
-
-    let hash_data = eddsa_jcs_2022_hash(entry, &proof_config);
-    debug!("hash_data (64 bytes): {}", hex_encode(&hash_data));
-
-    let sig_bytes = staged.sign_with_authorized(&hash_data);
-    debug!("signature (64 bytes): {}", hex_encode(&sig_bytes));
-    debug!(
-        "public key (32 bytes): {}",
-        hex_encode(staged.authorized_key_bytes())
-    );
-    debug!("authorized multikey: {}", authorized_multikey);
-
-    // Local self-check: re-verify our own signature so we know the cryptography path
-    // is internally consistent (any failure here would point to a key/sign mismatch
-    // rather than a canonicalization issue).
-    {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let vk = VerifyingKey::from_bytes(staged.authorized_key_bytes()).unwrap();
-        let sig = Signature::from_bytes(&sig_bytes);
-        match vk.verify(&hash_data, &sig) {
-            Ok(_) => debug!("local self-verification: OK"),
-            Err(e) => debug!("local self-verification FAILED: {}", e),
-        }
-    }
-
-    let proof_value = format!("z{}", bs58::encode(sig_bytes).into_string());
-
-    let mut proof = proof_config.as_object().unwrap().clone();
-    proof.insert("proofValue".into(), json!(proof_value));
-    Value::Object(proof)
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{:02x}", b));
-    }
-    s
-}
-
-fn strip_proof_slot(entry: &mut Value, format: &LogEntryFormat) {
-    match format {
-        LogEntryFormat::TDW03 => {
-            if let Some(arr) = entry.as_array_mut() {
-                arr.pop();
-            }
-        }
-        LogEntryFormat::WebVH10 => {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.remove("proof");
-            }
-        }
-    }
-}
-
-fn set_version_id(entry: &mut Value, version_id: &str, format: &LogEntryFormat) {
-    match format {
-        LogEntryFormat::TDW03 => {
-            if let Some(arr) = entry.as_array_mut()
-                && let Some(slot) = arr.first_mut()
-            {
-                *slot = json!(version_id);
-            }
-        }
-        LogEntryFormat::WebVH10 => {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.insert("versionId".into(), json!(version_id));
-            }
-        }
-    }
-}
-
-fn append_proof(entry: &mut Value, proof: Value, format: &LogEntryFormat) {
-    match format {
-        LogEntryFormat::TDW03 => {
-            if let Some(arr) = entry.as_array_mut() {
-                arr.push(json!([proof]));
-            }
-        }
-        LogEntryFormat::WebVH10 => {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.insert("proof".into(), json!([proof]));
-            }
-        }
-    }
 }
 
 fn now_iso8601() -> String {

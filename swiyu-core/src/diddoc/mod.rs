@@ -1,3 +1,4 @@
+pub mod builder;
 pub mod public_keys;
 pub use public_keys::{KeyUse, PublicKey, PublicKeyJWK, PublicKeyMultibase};
 
@@ -179,6 +180,12 @@ impl DIDDoc {
     /// Appends an entry to the `capabilityInvocation` array.
     pub fn add_capability_invocation(mut self, r: VerificationMethodOrRef) -> Self {
         self.capability_invocation.push(r);
+        self
+    }
+
+    /// Appends an entry to the `capabilityDelegation` array.
+    pub fn add_capability_delegation(mut self, r: VerificationMethodOrRef) -> Self {
+        self.capability_delegation.push(r);
         self
     }
 

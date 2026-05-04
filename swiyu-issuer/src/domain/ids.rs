@@ -146,6 +146,7 @@ define_id!(TenantId, "tenant");
 define_id!(IssuerId, "issuer");
 define_id!(CredentialOfferId, "offer");
 define_id!(ApiTokenId, "apitok");
+define_id!(TaskId, "task");
 
 #[cfg(test)]
 mod tests {

@@ -74,11 +74,11 @@ impl SigningEngine for DevSigningEngine {
     fn sign(
         &self,
         id: &KeyPairId,
-        input: &[u8; 32],
+        input: &[u8],
     ) -> impl Future<Output = Result<Signature, SigningEngineError>> + Send {
         let pool = self.pool.clone();
         let id = *id;
-        let input = *input;
+        let input = input.to_vec();
         async move {
             let row: Option<(String, Vec<u8>)> = sqlx::query_as(
                 "SELECT algorithm, private_key \
@@ -156,7 +156,7 @@ fn generate_ecdsa_p256() -> (Vec<u8>, Vec<u8>) {
     (signing_key.to_bytes().to_vec(), public_bytes)
 }
 
-fn sign_ed25519(private_bytes: &[u8], input: &[u8; 32]) -> Result<Vec<u8>, SigningEngineError> {
+fn sign_ed25519(private_bytes: &[u8], input: &[u8]) -> Result<Vec<u8>, SigningEngineError> {
     let bytes: &[u8; 32] = private_bytes.try_into().map_err(|_| {
         SigningEngineError::Backend(
             format!(
@@ -171,7 +171,13 @@ fn sign_ed25519(private_bytes: &[u8], input: &[u8; 32]) -> Result<Vec<u8>, Signi
     Ok(signature.to_bytes().to_vec())
 }
 
-fn sign_ecdsa_p256(private_bytes: &[u8], input: &[u8; 32]) -> Result<Vec<u8>, SigningEngineError> {
+fn sign_ecdsa_p256(private_bytes: &[u8], input: &[u8]) -> Result<Vec<u8>, SigningEngineError> {
+    if input.len() != 32 {
+        return Err(SigningEngineError::InvalidInputLength {
+            expected: 32,
+            actual: input.len(),
+        });
+    }
     let signing_key = EcdsaSigningKey::from_slice(private_bytes)
         .map_err(|e| SigningEngineError::Backend(e.to_string().into()))?;
     let signature: EcdsaSignature = signing_key
@@ -208,6 +214,24 @@ mod tests {
         verifying_key.verify(&input, &signature).unwrap();
     }
 
+    // eddsa-jcs-2022 hands Ed25519 a 64-byte concatenation of two SHA-256
+    // hashes; cover that path explicitly so the variable-length contract
+    // stays exercised.
+    #[test]
+    fn ed25519_signs_64_byte_message() {
+        let (private_bytes, public_bytes) = generate_ed25519();
+        let input = [0x3c_u8; 64];
+
+        let signature_bytes = sign_ed25519(&private_bytes, &input).unwrap();
+        assert_eq!(signature_bytes.len(), 64);
+
+        let public_array: [u8; 32] = public_bytes.as_slice().try_into().unwrap();
+        let verifying_key = Ed25519VerifyingKey::from_bytes(&public_array).unwrap();
+        let signature_array: [u8; 64] = signature_bytes.as_slice().try_into().unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&signature_array);
+        verifying_key.verify(&input, &signature).unwrap();
+    }
+
     #[test]
     fn ecdsa_p256_sign_verify_roundtrip() {
         let (private_bytes, public_bytes) = generate_ecdsa_p256();
@@ -219,6 +243,21 @@ mod tests {
         let verifying_key = EcdsaVerifyingKey::from_sec1_bytes(&public_bytes).unwrap();
         let signature = EcdsaSignature::from_slice(&signature_bytes).unwrap();
         verifying_key.verify_prehash(&input, &signature).unwrap();
+    }
+
+    #[test]
+    fn ecdsa_p256_rejects_non_32_byte_input() {
+        let (private_bytes, _) = generate_ecdsa_p256();
+        let input = [0x5a_u8; 31];
+
+        let err = sign_ecdsa_p256(&private_bytes, &input).unwrap_err();
+        match err {
+            SigningEngineError::InvalidInputLength { expected, actual } => {
+                assert_eq!(expected, 32);
+                assert_eq!(actual, 31);
+            }
+            other => panic!("expected InvalidInputLength, got: {other:?}"),
+        }
     }
 
     #[test]

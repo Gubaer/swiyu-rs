@@ -87,7 +87,7 @@ pub trait SigningEngine: Send + Sync {
     async fn sign(
         &self,
         id: &KeyPairId,
-        input: &[u8; 32],
+        input: &[u8],
     ) -> Result<Signature, SigningEngineError>;
 
     async fn delete_keypair(
@@ -102,7 +102,7 @@ Notes on the trait shape:
 - **Async.** Vault is reached over HTTP and the dev engine touches a database, so trait methods are `async`. PKCS#11 calls are synchronous; the HSM-backed implementation will wrap them with `tokio::task::spawn_blocking`. The crate is on Rust 2024 edition, so `async fn` in trait works natively without the `async-trait` macro.
 - **`&self` (not `&mut self`).** Backends manage their own internal synchronisation (HSM session pools, Vault HTTP client, DB pool). The trait stays cheaply shareable.
 - **`Send + Sync`.** swiyu-issuer holds the SigningEngine inside an `Arc` and shares it across request handlers.
-- **Fixed 32-byte input.** Matches the aspect spec: every signing operation in swiyu-issuer signs a 32-byte input (a SHA-256 digest for ECDSA, a 32-byte message for Ed25519).
+- **Variable-length input.** `input: &[u8]` keeps the trait honest about the per-algorithm contract spelled out in `aspect-key-management.md`: ECDSA P-256 expects exactly 32 bytes (a SHA-256 digest); Ed25519 accepts any length and treats the bytes as the message. The earlier `&[u8; 32]` shape was wrong for `eddsa-jcs-2022`, which signs a 64-byte concatenation of two SHA-256 hashes; pre-hashing to fit a 32-byte slot would change the cryptosuite and break verifiers. ECDSA length mismatches surface as `InvalidInputLength`.
 - **`delete_keypair` is idempotent.** Deleting an id that does not exist returns `Ok(())`. The trait postcondition is "the key is gone", which is met either way. `KeyNotFound` is therefore reserved for `sign` and never returned from `delete_keypair`.
 
 ### Errors
@@ -115,6 +115,9 @@ pub enum SigningEngineError {
 
     #[error("unsupported role/algorithm combination")]
     UnsupportedAlgorithm,
+
+    #[error("invalid input length: expected {expected} bytes, got {actual}")]
+    InvalidInputLength { expected: usize, actual: usize },
 
     #[error("backend error: {0}")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),

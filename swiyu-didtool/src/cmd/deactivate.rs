@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use tracing::debug;
@@ -9,9 +8,8 @@ use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::didlog::{DIDDocState, LogEntryFormat};
 
 use crate::cmd::log::{LogError, current_did, load_log};
-use crate::cmd::update::{
-    build_proof, build_updated_log, compute_version_time, extract_registry_identifier, write_atomic,
-};
+use crate::cmd::proof::build_proof;
+use crate::cmd::update::{build_updated_log, compute_version_time, extract_registry_identifier};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
 
 pub struct DeactivateArgs {
@@ -40,20 +38,10 @@ pub enum DeactivateError {
     Did(String, DIDError),
     #[error("no key store entry for DID '{0}' — cannot sign deactivate entry")]
     KeyStoreMiss(String),
-    #[error("--did/HTTPS source: --out is required (cannot append in place)")]
-    OutRequiredForRemote,
-    #[error("file '{}' already exists; pass --force to overwrite", path.display())]
-    FileExists { path: PathBuf },
-    #[error("cannot write '{}': {source}", path.display())]
-    WriteOutput {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("provide --partner-id or set SWIYU_PARTNER_ID (or use --no-publish)")]
-    PartnerIdMissing,
-    #[error("provide --registry-url or set SWIYU_IDENTIFIER_REGISTRY_URL (or use --no-publish)")]
-    RegistryUrlMissing,
+    #[error(transparent)]
+    WriteLog(#[from] crate::cmd::file::WriteLogError),
+    #[error(transparent)]
+    RegistryArgs(#[from] crate::cmd::RegistryArgsError),
     #[error("cannot extract registry identifier (UUID) from DID '{0}'")]
     IdentifierExtraction(String),
     #[error(
@@ -64,6 +52,18 @@ pub enum DeactivateError {
         source: crate::swiyu::SwiyuError,
         path: PathBuf,
     },
+    #[error(
+        "registry upload of deactivation entry failed: {source} — entry saved to fallback file {}; retry manually with this file", path.display()
+    )]
+    PublishFailedPending {
+        #[source]
+        source: crate::swiyu::SwiyuError,
+        path: PathBuf,
+    },
+    #[error(
+        "--did used without --out and --no-publish set: the deactivation entry would have nowhere to go (use --out to save it locally, or drop --no-publish to publish to the registry)"
+    )]
+    NoTarget,
     #[error(transparent)]
     KeyStore(#[from] KeyStoreError),
     #[error(transparent)]
@@ -73,6 +73,13 @@ pub enum DeactivateError {
 }
 
 pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), DeactivateError> {
+    // With --did, the log is fetched over HTTPS and there is no local file to
+    // append to. Combined with --no-publish and no --out, the deactivation
+    // entry would be discarded — reject early.
+    if args.did.is_some() && args.out.is_none() && args.no_publish {
+        return Err(DeactivateError::NoTarget);
+    }
+
     // --- load existing log ---
     let loaded = load_log(store, args.did.clone(), args.input.clone())?;
     if loaded.log.entries().is_empty() {
@@ -142,68 +149,63 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
         arr.push(json!([proof]));
     }
 
-    // --- write log ---
+    // --- write log (atomic-rename, --out, or skip for --did without --out) ---
     let new_line = serde_json::to_string(&entry_value)?;
     let updated_log = build_updated_log(&loaded, &new_line);
-    let written_to = write_log(&updated_log, &loaded.source_path, &args)?;
-    debug!("wrote deactivation log to {}", written_to.display());
+    let written_to = crate::cmd::file::write_log(
+        &updated_log,
+        loaded.source_path.as_deref(),
+        args.out.as_deref(),
+        args.force,
+    )?;
+    if let Some(path) = &written_to {
+        debug!("wrote deactivation log to {}", path.display());
+    } else {
+        debug!("no local log file written; persistence relies on registry publish");
+    }
 
     // --- publish (unless --no-publish) ---
     let mut published_url: Option<String> = None;
     if !args.no_publish {
-        let partner_id = args.partner_id.ok_or(DeactivateError::PartnerIdMissing)?;
-        let registry_url = args
-            .registry_url
-            .ok_or(DeactivateError::RegistryUrlMissing)?;
+        let (partner_id, registry_url) = crate::cmd::require_registry_credentials(
+            args.partner_id,
+            args.registry_url,
+            " (or use --no-publish)",
+        )?;
         let identifier = extract_registry_identifier(&did)
             .ok_or_else(|| DeactivateError::IdentifierExtraction(did_str.clone()))?;
         debug!("publishing deactivation to registry");
-        crate::swiyu::publish_entry(
+        if let Err(source) = crate::swiyu::publish_entry(
             &registry_url,
             &partner_id,
             &identifier,
             updated_log.trim_end(),
-        )
-        .map_err(|source| DeactivateError::PublishFailed {
-            source,
-            path: written_to.clone(),
-        })?;
+        ) {
+            return Err(match &written_to {
+                Some(path) => DeactivateError::PublishFailed {
+                    source,
+                    path: path.clone(),
+                },
+                None => {
+                    let pending = crate::cmd::file::write_pending_log(&updated_log)?;
+                    DeactivateError::PublishFailedPending {
+                        source,
+                        path: pending,
+                    }
+                }
+            });
+        }
         published_url = Some(did.log_url());
     }
 
     println!("Deactivated DID: {did_str}");
     println!("New versionId: {new_version_id}");
-    println!("Saved DID log: {}", written_to.display());
+    if let Some(path) = &written_to {
+        println!("Saved DID log: {}", path.display());
+    }
     if let Some(url) = published_url {
         println!("Published to registry: {url}");
     }
 
     Ok(())
-}
-
-fn write_log(
-    content: &str,
-    source_path: &Option<PathBuf>,
-    args: &DeactivateArgs,
-) -> Result<PathBuf, DeactivateError> {
-    if let Some(path) = &args.out {
-        if path.exists() && !args.force {
-            return Err(DeactivateError::FileExists { path: path.clone() });
-        }
-        fs::write(path, content).map_err(|source| DeactivateError::WriteOutput {
-            path: path.clone(),
-            source,
-        })?;
-        return Ok(path.clone());
-    }
-    let source: PathBuf = source_path
-        .clone()
-        .ok_or(DeactivateError::OutRequiredForRemote)?;
-    write_atomic(Path::new(&source), content).map_err(|source_err| {
-        DeactivateError::WriteOutput {
-            path: source.clone(),
-            source: source_err,
-        }
-    })?;
-    Ok(source)
 }

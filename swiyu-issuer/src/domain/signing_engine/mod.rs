@@ -101,6 +101,9 @@ pub enum SigningEngineError {
     #[error("unsupported role/algorithm combination")]
     UnsupportedAlgorithm,
 
+    #[error("invalid input length: expected {expected} bytes, got {actual}")]
+    InvalidInputLength { expected: usize, actual: usize },
+
     #[error("backend error: {0}")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -125,16 +128,22 @@ pub trait SigningEngine: Send + Sync {
         role: KeyRole,
     ) -> impl Future<Output = Result<GeneratedKeyPair, SigningEngineError>> + Send;
 
-    /// Signs a 32-byte input with the private key identified by `id`.
+    /// Signs `input` with the private key identified by `id`.
     ///
-    /// The interpretation of `input` depends on the key's algorithm: for
-    /// ECDSA it is treated as a digest (no further hashing); for Ed25519
-    /// it is treated as the message and signed with plain Ed25519 — not
-    /// Ed25519ph. Returns `KeyNotFound` if `id` is unknown to the engine.
+    /// The interpretation of `input` depends on the key's algorithm:
+    ///
+    /// - **Ed25519** — `input` is the message. Any length is valid; the
+    ///   engine feeds the bytes directly into plain Ed25519 (not
+    ///   Ed25519ph). The `eddsa-jcs-2022` cryptosuite, for example,
+    ///   passes a 64-byte concatenation of two SHA-256 hashes here.
+    /// - **ECDSA P-256** — `input` is a pre-computed digest. It must be
+    ///   exactly 32 bytes; otherwise `InvalidInputLength` is returned.
+    ///
+    /// Returns `KeyNotFound` if `id` is unknown to the engine.
     fn sign(
         &self,
         id: &KeyPairId,
-        input: &[u8; 32],
+        input: &[u8],
     ) -> impl Future<Output = Result<Signature, SigningEngineError>> + Send;
 
     /// Deletes the key pair identified by `id`.
