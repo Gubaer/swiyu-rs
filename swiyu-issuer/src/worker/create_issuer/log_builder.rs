@@ -12,12 +12,10 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
-use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
-use swiyu_core::didlog::LogEntryFormat;
-use swiyu_core::didlog::build::{
-    append_proof, build_initial_entry, set_version_id, strip_proof_slot,
-};
+use swiyu_core::diddoc::public_keys::{P256PublicKey, ed25519_verifying_key_to_multikey};
+use swiyu_core::didlog::build::{append_proof, set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
+use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
 use crate::domain::{KeyAlgorithm, SigningEngine, SigningEngineError};
@@ -88,10 +86,10 @@ pub async fn build_log_entry<S: SigningEngine>(
     let authorized_multikey = ed25519_verifying_key_to_multikey(&authorized_bytes);
 
     let authentication_pk = engine.get_public_key(&key_ids.authentication).await?;
-    let authentication_xy = sec1_to_xy("authentication", &authentication_pk)?;
+    let authentication_key = sec1_to_p256("authentication", &authentication_pk)?;
 
     let assertion_pk = engine.get_public_key(&key_ids.assertion).await?;
-    let assertion_xy = sec1_to_xy("assertion", &assertion_pk)?;
+    let assertion_key = sec1_to_p256("assertion", &assertion_pk)?;
 
     let did_placeholder = match path.as_deref() {
         Some(p) => format!("did:tdw:{domain}:{p}:{{SCID}}"),
@@ -100,12 +98,12 @@ pub async fn build_log_entry<S: SigningEngine>(
 
     let now_iso = now.to_rfc3339_opts(SecondsFormat::Secs, true);
 
-    let entry_template = build_initial_entry(
+    let entry_template = DIDLogEntry::new_genesis(
         &FORMAT,
         &authorized_multikey,
         &did_placeholder,
-        &authentication_xy,
-        &assertion_xy,
+        &authentication_key,
+        &assertion_key,
         &now_iso,
     );
 
@@ -180,10 +178,10 @@ fn parse_url(url: &str) -> Result<(String, Option<String>), BuildError> {
     Ok((did_host, did_path))
 }
 
-fn sec1_to_xy(
+fn sec1_to_p256(
     role: &'static str,
     pk: &crate::domain::RawPublicKey,
-) -> Result<([u8; 32], [u8; 32]), BuildError> {
+) -> Result<P256PublicKey, BuildError> {
     if pk.algorithm != KeyAlgorithm::EcdsaP256 {
         return Err(BuildError::InvalidPublicKey {
             role,
@@ -201,7 +199,7 @@ fn sec1_to_xy(
     }
     let x: [u8; 32] = pk.bytes[1..33].try_into().expect("length 32");
     let y: [u8; 32] = pk.bytes[33..65].try_into().expect("length 32");
-    Ok((x, y))
+    Ok(P256PublicKey { x, y })
 }
 
 #[cfg(test)]
@@ -245,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn sec1_to_xy_extracts_coordinates() {
+    fn sec1_to_p256_extracts_coordinates() {
         let pk = crate::domain::RawPublicKey {
             algorithm: KeyAlgorithm::EcdsaP256,
             bytes: {
@@ -255,23 +253,23 @@ mod tests {
                 v
             },
         };
-        let (x, y) = sec1_to_xy("test", &pk).unwrap();
-        assert_eq!(x, [0xaa; 32]);
-        assert_eq!(y, [0xbb; 32]);
+        let p256 = sec1_to_p256("test", &pk).unwrap();
+        assert_eq!(p256.x, [0xaa; 32]);
+        assert_eq!(p256.y, [0xbb; 32]);
     }
 
     #[test]
-    fn sec1_to_xy_rejects_wrong_length() {
+    fn sec1_to_p256_rejects_wrong_length() {
         let pk = crate::domain::RawPublicKey {
             algorithm: KeyAlgorithm::EcdsaP256,
             bytes: vec![0x04; 64],
         };
-        let err = sec1_to_xy("test", &pk).unwrap_err();
+        let err = sec1_to_p256("test", &pk).unwrap_err();
         assert!(matches!(err, BuildError::InvalidPublicKey { .. }));
     }
 
     #[test]
-    fn sec1_to_xy_rejects_compressed_form() {
+    fn sec1_to_p256_rejects_compressed_form() {
         let pk = crate::domain::RawPublicKey {
             algorithm: KeyAlgorithm::EcdsaP256,
             bytes: {
@@ -280,17 +278,17 @@ mod tests {
                 v
             },
         };
-        let err = sec1_to_xy("test", &pk).unwrap_err();
+        let err = sec1_to_p256("test", &pk).unwrap_err();
         assert!(matches!(err, BuildError::InvalidPublicKey { .. }));
     }
 
     #[test]
-    fn sec1_to_xy_rejects_wrong_algorithm() {
+    fn sec1_to_p256_rejects_wrong_algorithm() {
         let pk = crate::domain::RawPublicKey {
             algorithm: KeyAlgorithm::Ed25519,
             bytes: vec![0; 65],
         };
-        let err = sec1_to_xy("test", &pk).unwrap_err();
+        let err = sec1_to_p256("test", &pk).unwrap_err();
         assert!(matches!(err, BuildError::InvalidPublicKey { .. }));
     }
 }
