@@ -27,10 +27,18 @@ pub enum AllocateCall {
     Decode(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublishCall {
+    Ok,
+    HttpStatus { status: u16, body: String },
+}
+
 #[derive(Default)]
 pub struct MockRegistry {
     allocate_queue: Mutex<Vec<AllocateCall>>,
+    publish_queue: Mutex<Vec<PublishCall>>,
     pub allocate_invocations: Mutex<Vec<String>>,
+    pub publish_invocations: Mutex<Vec<(String, String, String)>>,
 }
 
 impl MockRegistry {
@@ -40,6 +48,10 @@ impl MockRegistry {
 
     pub fn enqueue_allocate(&self, call: AllocateCall) {
         self.allocate_queue.lock().unwrap().push(call);
+    }
+
+    pub fn enqueue_publish(&self, call: PublishCall) {
+        self.publish_queue.lock().unwrap().push(call);
     }
 }
 
@@ -64,13 +76,26 @@ impl RegistryFacade for MockRegistry {
         }
     }
 
-    async fn publish_log_entry(
+    fn publish_log_entry(
         &self,
-        _partner_id: &str,
-        _identifier: &str,
-        _entry: &str,
-    ) -> Result<(), RegistryError> {
-        unreachable!("publish path not exercised in this test scope")
+        partner_id: &str,
+        identifier: &str,
+        entry: &str,
+    ) -> impl Future<Output = Result<(), RegistryError>> + Send {
+        self.publish_invocations.lock().unwrap().push((
+            partner_id.to_string(),
+            identifier.to_string(),
+            entry.to_string(),
+        ));
+        let next = self.publish_queue.lock().unwrap().remove(0);
+        async move {
+            match next {
+                PublishCall::Ok => Ok(()),
+                PublishCall::HttpStatus { status, body } => {
+                    Err(RegistryError::HttpStatus { status, body })
+                }
+            }
+        }
     }
 }
 
