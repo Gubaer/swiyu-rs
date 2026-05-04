@@ -2,6 +2,42 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Request body for `POST /api/v1/issuers`.
+///
+/// The BA-supplied portion of a `CreateIssuer` operation task. The
+/// rest (DID, key triple, lifecycle state) is produced server-side
+/// by the worker. Multi-tenant routing is resolved from the API
+/// token by `TenantContext`, never from the body.
+///
+/// Both fields are optional. The handler applies defaults when a
+/// field is missing or trims to an empty string: `description`
+/// becomes `""`; `display_name` becomes `Issuer <bare-issuer-id>`
+/// using the freshly generated `IssuerId`.
+///
+/// Distinct from `worker::create_issuer::CreateIssuerInput` (the
+/// internal worker DTO) so the wire shape can diverge — e.g. when
+/// `did_method` returns once `did:webvh` is testable end-to-end.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateIssuerSubmission {
+    pub description: Option<String>,
+    pub display_name: Option<String>,
+}
+
+/// Response body returned by `POST /api/v1/issuers` on success
+/// (HTTP 201).
+///
+/// `task_id` is for polling the saga status. `issuer_id` is
+/// generated server-side at submit time and pinned in
+/// `task.result_issuer_id`; the BA can hit `/api/v1/issuers/{id}`
+/// with it immediately and gets 404 until the task reaches
+/// `Completed`.
+#[derive(Debug, Serialize)]
+pub struct CreateIssuerResponse {
+    pub task_id: String,
+    pub issuer_id: String,
+}
+
 /// Request body for creating a credential offer.
 ///
 /// Submitted by a business application to

@@ -2,6 +2,7 @@ mod auth;
 mod credential_offers;
 mod dto;
 mod error;
+mod issuers;
 mod schemas;
 mod state;
 
@@ -17,6 +18,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/api/v1/issuers", post(issuers::create))
         .route(
             "/api/v1/issuers/{issuer_id}/credential-offers",
             post(credential_offers::create).get(credential_offers::list),
