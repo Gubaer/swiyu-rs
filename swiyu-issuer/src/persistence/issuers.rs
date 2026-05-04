@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use sqlx::Row;
 use sqlx::postgres::{PgConnection, PgRow};
 use uuid::Uuid;
@@ -48,7 +49,8 @@ pub async fn find_by_id(
                state, description,
                authorized_key_id, authentication_key_id, assertion_key_id,
                signing_key_id,
-               display_name, logo_uri, locale
+               display_name, logo_uri, locale,
+               created_at
         FROM issuers
         WHERE id = $1
         "#,
@@ -78,7 +80,8 @@ pub async fn find_by_id_for_tenant(
                state, description,
                authorized_key_id, authentication_key_id, assertion_key_id,
                signing_key_id,
-               display_name, logo_uri, locale
+               display_name, logo_uri, locale,
+               created_at
         FROM issuers
         WHERE id = $1 AND tenant_id = $2
         "#,
@@ -99,9 +102,10 @@ pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), Pers
             state, description,
             authorized_key_id, authentication_key_id, assertion_key_id,
             signing_key_id,
-            display_name, logo_uri, locale
+            display_name, logo_uri, locale,
+            created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         "#,
     )
     .bind(issuer.id.bare())
@@ -116,10 +120,85 @@ pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), Pers
     .bind(issuer.display_name.as_deref())
     .bind(issuer.logo_uri.as_deref())
     .bind(issuer.locale.as_deref())
+    .bind(issuer.created_at)
     .execute(conn)
     .await
     .map_err(map_database_error)?;
     Ok(())
+}
+
+/// One page of issuers plus a flag indicating whether more rows
+/// remain past the current page. Mirrors
+/// `credential_offers::ListPage`.
+#[derive(Debug)]
+pub struct ListPage {
+    pub items: Vec<Issuer>,
+    pub has_more: bool,
+}
+
+/// Inputs to a paginated list query against `issuers`.
+///
+/// `cursor` carries the `(created_at, id)` of the last item of the
+/// previous page; `None` requests the first page. Ordering is
+/// `(created_at DESC, id DESC)` so newest issuers come first, matching
+/// the credential-offers list.
+#[derive(Debug)]
+pub struct ListPageQuery {
+    pub cursor: Option<(DateTime<Utc>, String)>,
+    pub limit: u32,
+}
+
+/// Paginated list of issuers for a tenant.
+///
+/// The seeded dev row from migration 0001 is excluded server-side
+/// (`state IS NOT NULL`) so it never appears in BA-facing pages.
+/// That keeps the list endpoint's contract aligned with the
+/// single-fetch endpoint, which 404s the same row.
+pub async fn list(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    query: ListPageQuery,
+) -> Result<ListPage, PersistenceError> {
+    let (cursor_created_at, cursor_issuer_id) = match query.cursor {
+        Some((ts, id)) => (Some(ts), Some(id)),
+        None => (None, None),
+    };
+    let limit_plus_one = i64::from(query.limit) + 1;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT id, tenant_id, did,
+               state, description,
+               authorized_key_id, authentication_key_id, assertion_key_id,
+               signing_key_id,
+               display_name, logo_uri, locale,
+               created_at
+        FROM issuers
+        WHERE tenant_id = $1
+          AND state IS NOT NULL
+          AND ($2::TIMESTAMPTZ IS NULL OR (created_at, id) < ($2, $3))
+        ORDER BY created_at DESC, id DESC
+        LIMIT $4
+        "#,
+    )
+    .bind(tenant_id.bare())
+    .bind(cursor_created_at)
+    .bind(cursor_issuer_id.as_deref())
+    .bind(limit_plus_one)
+    .fetch_all(conn)
+    .await?;
+
+    let mut issuers: Vec<Issuer> = rows.iter().map(row_to_issuer).collect::<Result<_, _>>()?;
+
+    let has_more = issuers.len() as i64 > i64::from(query.limit);
+    if has_more {
+        issuers.pop();
+    }
+
+    Ok(ListPage {
+        items: issuers,
+        has_more,
+    })
 }
 
 fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
@@ -135,6 +214,7 @@ fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
     let display_name: Option<String> = row.try_get("display_name")?;
     let logo_uri: Option<String> = row.try_get("logo_uri")?;
     let locale: Option<String> = row.try_get("locale")?;
+    let created_at: DateTime<Utc> = row.try_get("created_at")?;
 
     Ok(Issuer {
         id: IssuerId::from_bare(id).map_err(integrity_from)?,
@@ -152,5 +232,6 @@ fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
         display_name,
         logo_uri,
         locale,
+        created_at,
     })
 }

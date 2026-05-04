@@ -1,17 +1,21 @@
 //! HTTP handlers for the issuer-management endpoints.
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::json;
 
 use crate::domain::{Issuer, IssuerId, OperationTask, TaskId, TaskState, TaskType};
 use crate::persistence;
+use crate::persistence::issuers::ListPageQuery;
 
 use super::AppState;
 use super::auth::TenantContext;
-use super::dto::{CreateIssuerResponse, CreateIssuerSubmission, GetIssuerResponse};
+use super::dto::{
+    CreateIssuerResponse, CreateIssuerSubmission, GetIssuerResponse, ListIssuersQuery,
+    ListIssuersResponse,
+};
 use super::error::ApiError;
 
 /// Maximum byte length applied to BA-supplied free-text fields after
@@ -19,6 +23,21 @@ use super::error::ApiError;
 /// hygiene only — long values would surface in operator UIs and
 /// search results unwieldily.
 const MAX_FIELD_LENGTH: usize = 255;
+
+/// Page size applied to `GET /api/v1/issuers` when the caller omits
+/// `limit`. Sized to fit a typical operator UI page without forcing a
+/// follow-up request for tenants with a handful of issuers.
+const DEFAULT_LIST_LIMIT: u32 = 25;
+
+/// Lower bound on `limit`. Zero would return an empty page with a
+/// `next_cursor` that never advances, so the smallest legal page is
+/// one row.
+const MIN_LIST_LIMIT: u32 = 1;
+
+/// Upper bound on `limit`. Caps per-request work against the
+/// database and the JSON response size; clients that need more rows
+/// must paginate.
+const MAX_LIST_LIMIT: u32 = 100;
 
 pub async fn create(
     State(state): State<AppState>,
@@ -113,6 +132,99 @@ pub async fn get(
     .ok_or(ApiError::NotFound)?;
 
     Ok(Json(issuer_to_response(issuer)?))
+}
+
+pub async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<ListIssuersQuery>,
+    tenant_context: TenantContext,
+) -> Result<Json<ListIssuersResponse>, ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        limit = ?query.limit,
+        cursor_present = query.cursor.is_some(),
+        "issuer list requested",
+    );
+
+    let limit = resolve_list_limit(query.limit)?;
+    let cursor = query.cursor.as_deref().map(decode_cursor).transpose()?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let page = persistence::issuers::list(
+        &mut conn,
+        &tenant_context.tenant_id,
+        ListPageQuery {
+            cursor: cursor.map(|c| (c.created_at, c.issuer_id)),
+            limit,
+        },
+    )
+    .await?;
+
+    let next_cursor = if page.has_more {
+        page.items
+            .last()
+            .map(|issuer| encode_cursor(issuer.created_at, issuer.id.bare()))
+    } else {
+        None
+    };
+
+    let items = page
+        .items
+        .into_iter()
+        .map(issuer_to_response)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(Json(ListIssuersResponse { items, next_cursor }))
+}
+
+fn resolve_list_limit(requested: Option<u32>) -> Result<u32, ApiError> {
+    let limit = requested.unwrap_or(DEFAULT_LIST_LIMIT);
+    if !(MIN_LIST_LIMIT..=MAX_LIST_LIMIT).contains(&limit) {
+        return Err(ApiError::InvalidInput {
+            details: format!(
+                "limit must be between {MIN_LIST_LIMIT} and {MAX_LIST_LIMIT}, got {limit}"
+            ),
+        });
+    }
+    Ok(limit)
+}
+
+#[derive(Debug)]
+struct DecodedCursor {
+    created_at: DateTime<Utc>,
+    issuer_id: String,
+}
+
+fn encode_cursor(created_at: DateTime<Utc>, issuer_id_bare: &str) -> String {
+    let raw = format!("{}|{}", created_at.to_rfc3339(), issuer_id_bare);
+    bs58::encode(raw.as_bytes()).into_string()
+}
+
+fn decode_cursor(raw: &str) -> Result<DecodedCursor, ApiError> {
+    let bytes = bs58::decode(raw).into_vec().map_err(|_| invalid_cursor())?;
+    let text = String::from_utf8(bytes).map_err(|_| invalid_cursor())?;
+    let (ts, id) = text.split_once('|').ok_or_else(invalid_cursor)?;
+    let created_at = DateTime::parse_from_rfc3339(ts)
+        .map_err(|_| invalid_cursor())?
+        .with_timezone(&Utc);
+    // Reject anything we did not emit ourselves; the bare id was generated
+    // by the same validator on the way out.
+    IssuerId::from_bare(id).map_err(|_| invalid_cursor())?;
+    Ok(DecodedCursor {
+        created_at,
+        issuer_id: id.to_string(),
+    })
+}
+
+fn invalid_cursor() -> ApiError {
+    ApiError::InvalidInput {
+        details: "cursor query parameter: malformed or not issued by this server".to_string(),
+    }
 }
 
 /// Projects an `Issuer` to its BA-facing wire DTO.
@@ -215,5 +327,81 @@ mod tests {
         let exact = "a".repeat(MAX_FIELD_LENGTH);
         let v = normalise_optional_field("description", Some(&exact)).unwrap();
         assert_eq!(v.unwrap().len(), MAX_FIELD_LENGTH);
+    }
+
+    #[test]
+    fn resolve_list_limit_uses_default_when_unset() {
+        assert_eq!(resolve_list_limit(None).unwrap(), DEFAULT_LIST_LIMIT);
+    }
+
+    #[test]
+    fn resolve_list_limit_accepts_value_in_range() {
+        assert_eq!(resolve_list_limit(Some(50)).unwrap(), 50);
+        assert_eq!(
+            resolve_list_limit(Some(MIN_LIST_LIMIT)).unwrap(),
+            MIN_LIST_LIMIT
+        );
+        assert_eq!(
+            resolve_list_limit(Some(MAX_LIST_LIMIT)).unwrap(),
+            MAX_LIST_LIMIT
+        );
+    }
+
+    #[test]
+    fn resolve_list_limit_rejects_zero() {
+        assert!(resolve_list_limit(Some(0)).is_err());
+    }
+
+    #[test]
+    fn resolve_list_limit_rejects_above_max() {
+        assert!(resolve_list_limit(Some(MAX_LIST_LIMIT + 1)).is_err());
+    }
+
+    #[test]
+    fn cursor_round_trips() {
+        let created_at = DateTime::parse_from_rfc3339("2026-05-01T12:34:56.789Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let bare_id = "9hXq2vRtL8pK7f";
+        let encoded = encode_cursor(created_at, bare_id);
+        let decoded = decode_cursor(&encoded).unwrap();
+        assert_eq!(decoded.created_at, created_at);
+        assert_eq!(decoded.issuer_id, bare_id);
+    }
+
+    #[test]
+    fn decode_cursor_rejects_garbage_base58() {
+        // '0' is outside the bs58 alphabet.
+        let err = decode_cursor("0000").unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn decode_cursor_rejects_non_utf8_payload() {
+        let encoded = bs58::encode([0xff, 0xfe, 0xfd]).into_string();
+        let err = decode_cursor(&encoded).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn decode_cursor_rejects_missing_separator() {
+        let encoded = bs58::encode(b"no-separator-here").into_string();
+        let err = decode_cursor(&encoded).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn decode_cursor_rejects_bad_timestamp() {
+        let encoded = bs58::encode(b"not-a-timestamp|9hXq2vRtL8pK7f").into_string();
+        let err = decode_cursor(&encoded).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn decode_cursor_rejects_bad_issuer_id() {
+        // 'O' is excluded from the base58 alphabet, so the issuer id is invalid.
+        let encoded = bs58::encode(b"2026-05-01T12:34:56+00:00|notValOd").into_string();
+        let err = decode_cursor(&encoded).unwrap_err();
+        assert!(matches!(err, ApiError::InvalidInput { .. }));
     }
 }

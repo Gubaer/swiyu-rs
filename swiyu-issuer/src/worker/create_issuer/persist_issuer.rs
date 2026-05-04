@@ -89,6 +89,7 @@ pub async fn execute_persist_issuer<S: SigningEngine>(
         display_name: Some(input.display_name.clone()),
         logo_uri: None,
         locale: None,
+        created_at: now,
     };
 
     match persistence::issuers::insert(&mut conn, &issuer).await {

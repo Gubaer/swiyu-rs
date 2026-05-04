@@ -1,4 +1,4 @@
-//! Integration tests for `GET /api/v1/issuers/{issuer_id}`.
+//! Integration tests for `GET /api/v1/operation-tasks/{task_id}`.
 //!
 //! Drives requests through the full management router (auth +
 //! extractors + serde + handler + persistence) using
@@ -7,23 +7,17 @@
 use axum::body::{self, Body};
 use axum::http::{Request, StatusCode, header};
 use chrono::Utc;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::{AppState, Config, router};
 use swiyu_issuer::domain::{
-    ApiToken, ApiTokenSecret, Issuer, IssuerId, IssuerState, KeyPairId, TenantId,
+    ApiToken, ApiTokenSecret, IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence;
 
 const TEST_BASE_URL: &str = "http://localhost:8080";
-
-// IDs hard-coded by migration 0001 / 0004. Reproduced here so the tests
-// covering the seeded-legacy filter do not need to query the DB to learn
-// what they are.
-const SEEDED_TENANT_BARE: &str = "4Mk7yK5pQR7sN3";
-const SEEDED_ISSUER_BARE: &str = "9hXq2vRtL8pK7f";
 
 async fn build_state(pool: PgPool) -> AppState {
     AppState::new(
@@ -53,27 +47,30 @@ async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret 
     secret
 }
 
-fn target_shape_issuer(tenant_id: TenantId) -> Issuer {
-    Issuer {
-        id: IssuerId::generate(),
+fn pending_task(tenant_id: TenantId, result_issuer_id: Option<IssuerId>) -> OperationTask {
+    let now = Utc::now();
+    OperationTask {
+        id: TaskId::generate(),
         tenant_id,
-        did: "did:tdw:example.com:9hXq2vRtL8pK7f".into(),
-        state: Some(IssuerState::Active),
-        description: Some("Cantonal driver-licence issuer".into()),
-        authorized_key_id: Some(KeyPairId::generate()),
-        authentication_key_id: Some(KeyPairId::generate()),
-        assertion_key_id: Some(KeyPairId::generate()),
-        signing_key_id: None,
-        display_name: Some("Canton Bern Verkehrsamt".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        task_type: TaskType::CreateIssuer,
+        state: TaskState::Pending,
+        step: None,
+        attempts: 0,
+        next_attempt_at: None,
+        error_code: None,
+        error_message: None,
+        input: json!({"description": "x", "display_name": "y"}),
+        state_data: json!({}),
+        result_issuer_id,
+        created_at: now,
+        updated_at: now,
+        completed_at: None,
     }
 }
 
-async fn insert_issuer(pool: &PgPool, issuer: &Issuer) {
+async fn insert_task(pool: &PgPool, task: &OperationTask) {
     let mut conn = pool.acquire().await.unwrap();
-    persistence::issuers::insert(&mut conn, issuer)
+    persistence::operation_tasks::insert(&mut conn, task)
         .await
         .unwrap();
 }
@@ -94,17 +91,18 @@ async fn read_body(response: axum::response::Response) -> Value {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn happy_path_returns_target_shape_dto(pool: PgPool) {
+async fn happy_path_returns_target_shape(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = target_shape_issuer(tenant_id.clone());
-    insert_issuer(&pool, &issuer).await;
+    let issuer_id = IssuerId::generate();
+    let task = pending_task(tenant_id.clone(), Some(issuer_id.clone()));
+    insert_task(&pool, &task).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool).await);
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issuers/{}", issuer.id.bare()),
+            &format!("/api/v1/operation-tasks/{}", task.id.bare()),
             Some(&secret.as_wire()),
         ))
         .await
@@ -112,34 +110,74 @@ async fn happy_path_returns_target_shape_dto(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = read_body(response).await;
-    assert_eq!(body["id"], issuer.id.to_string());
-    assert_eq!(body["did"], "did:tdw:example.com:9hXq2vRtL8pK7f");
-    assert_eq!(body["state"], "active");
-    assert_eq!(body["description"], "Cantonal driver-licence issuer");
-    assert_eq!(body["display_name"], "Canton Bern Verkehrsamt");
-    // tenant_id and the three SigningEngine key-pair handles are
-    // deliberately not exposed on the wire.
+    assert_eq!(body["id"], task.id.to_string());
+    assert_eq!(body["task_type"], "create_issuer");
+    assert_eq!(body["state"], "pending");
+    assert!(body["step"].is_null());
+    assert_eq!(body["attempts"], 0);
+    assert!(body["next_attempt_at"].is_null());
+    assert!(body["error_code"].is_null());
+    assert!(body["error_message"].is_null());
+    assert!(body["created_at"].is_string());
+    assert!(body["updated_at"].is_string());
+    assert!(body["completed_at"].is_null());
+
+    // Internal-only fields must not leak. result_issuer_id is omitted
+    // because the BA already received the issuer_id in the response
+    // to POST /api/v1/issuers.
     assert!(body.get("tenant_id").is_none());
-    assert!(body.get("authorized_key_id").is_none());
-    assert!(body.get("authentication_key_id").is_none());
-    assert!(body.get("assertion_key_id").is_none());
-    // Legacy fields must not leak into the wire shape either.
-    assert!(body.get("signing_key_id").is_none());
-    assert!(body.get("logo_uri").is_none());
-    assert!(body.get("locale").is_none());
+    assert!(body.get("input").is_none());
+    assert!(body.get("state_data").is_none());
+    assert!(body.get("result_issuer_id").is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn returns_404_for_unknown_issuer(pool: PgPool) {
+async fn completed_task_surfaces_terminal_state_and_completed_at(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer_id = IssuerId::generate();
+    let task = pending_task(tenant_id.clone(), Some(issuer_id.clone()));
+    insert_task(&pool, &task).await;
+
+    // Drive the task to Completed via the persistence helper so the
+    // observable fields match what the worker would write.
+    let mut conn = pool.acquire().await.unwrap();
+    let now = Utc::now();
+    persistence::operation_tasks::mark_completed(&mut conn, &task.id, Some(&issuer_id), now)
+        .await
+        .unwrap();
+    drop(conn);
+
+    let app = router(build_state(pool).await);
+    let response = app
+        .oneshot(get_request(
+            &format!("/api/v1/operation-tasks/{}", task.id.bare()),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = read_body(response).await;
+    assert_eq!(body["state"], "completed");
+    assert!(body["completed_at"].is_string());
+    // result_issuer_id is intentionally not echoed; the BA already
+    // has the issuer_id from the POST /api/v1/issuers response.
+    assert!(body.get("result_issuer_id").is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn returns_404_for_unknown_task(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
 
     let app = router(build_state(pool).await);
-    let unknown = IssuerId::generate();
+    let unknown = TaskId::generate();
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issuers/{}", unknown.bare()),
+            &format!("/api/v1/operation-tasks/{}", unknown.bare()),
             Some(&secret.as_wire()),
         ))
         .await
@@ -150,20 +188,20 @@ async fn returns_404_for_unknown_issuer(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn returns_404_for_cross_tenant_issuer(pool: PgPool) {
+async fn returns_404_for_cross_tenant_task(pool: PgPool) {
     let tenant_a = TenantId::generate();
     let tenant_b = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
     insert_test_tenant(&pool, &tenant_b).await;
-    // Issuer belongs to tenant_a; the bearer token is tenant_b's.
-    let issuer = target_shape_issuer(tenant_a);
-    insert_issuer(&pool, &issuer).await;
+    // Task belongs to tenant_a; the bearer token is tenant_b's.
+    let task = pending_task(tenant_a, Some(IssuerId::generate()));
+    insert_task(&pool, &task).await;
     let secret = mint_test_token(&pool, &tenant_b).await;
 
     let app = router(build_state(pool).await);
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issuers/{}", issuer.id.bare()),
+            &format!("/api/v1/operation-tasks/{}", task.id.bare()),
             Some(&secret.as_wire()),
         ))
         .await
@@ -174,39 +212,16 @@ async fn returns_404_for_cross_tenant_issuer(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn returns_404_for_seeded_legacy_issuer(pool: PgPool) {
-    // The seeded dev issuer (migration 0001 + 0004) carries
-    // signing_key_id but no state / key triple. The handler hides
-    // such rows from the v1 surface.
-    let seeded_tenant = TenantId::from_bare(SEEDED_TENANT_BARE).unwrap();
-    let seeded_issuer = IssuerId::from_bare(SEEDED_ISSUER_BARE).unwrap();
-    let secret = mint_test_token(&pool, &seeded_tenant).await;
-
-    let app = router(build_state(pool).await);
-    let response = app
-        .oneshot(get_request(
-            &format!("/api/v1/issuers/{}", seeded_issuer.bare()),
-            Some(&secret.as_wire()),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    let body = read_body(response).await;
-    assert_eq!(body["error"], "not_found");
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn returns_400_for_malformed_issuer_id(pool: PgPool) {
+async fn returns_400_for_malformed_task_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
 
     let app = router(build_state(pool).await);
-    // 'O' (capital o) is outside the bs58 alphabet, so the bare
-    // id fails validation in the handler.
+    // 'O' (capital o) is outside the bs58 alphabet.
     let response = app
         .oneshot(get_request(
-            "/api/v1/issuers/notVal0d",
+            "/api/v1/operation-tasks/notVal0d",
             Some(&secret.as_wire()),
         ))
         .await
@@ -220,33 +235,14 @@ async fn returns_400_for_malformed_issuer_id(pool: PgPool) {
 async fn rejects_request_without_authorization(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = target_shape_issuer(tenant_id);
-    insert_issuer(&pool, &issuer).await;
+    let task = pending_task(tenant_id, Some(IssuerId::generate()));
+    insert_task(&pool, &task).await;
 
     let app = router(build_state(pool).await);
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issuers/{}", issuer.id.bare()),
+            &format!("/api/v1/operation-tasks/{}", task.id.bare()),
             None,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn rejects_unknown_bearer_token(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = target_shape_issuer(tenant_id);
-    insert_issuer(&pool, &issuer).await;
-
-    let app = router(build_state(pool).await);
-    let bogus = ApiTokenSecret::generate();
-    let response = app
-        .oneshot(get_request(
-            &format!("/api/v1/issuers/{}", issuer.id.bare()),
-            Some(&bogus.as_wire()),
         ))
         .await
         .unwrap();

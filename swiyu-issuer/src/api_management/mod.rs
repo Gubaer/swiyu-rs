@@ -3,6 +3,7 @@ mod credential_offers;
 mod dto;
 mod error;
 mod issuers;
+mod operation_tasks;
 mod schemas;
 mod state;
 
@@ -18,8 +19,12 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .route("/api/v1/issuers", post(issuers::create))
+        .route("/api/v1/issuers", post(issuers::create).get(issuers::list))
         .route("/api/v1/issuers/{issuer_id}", get(issuers::get))
+        .route(
+            "/api/v1/operation-tasks/{task_id}",
+            get(operation_tasks::get),
+        )
         .route(
             "/api/v1/issuers/{issuer_id}/credential-offers",
             post(credential_offers::create).get(credential_offers::list),

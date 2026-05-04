@@ -158,6 +158,7 @@ async fn skips_when_issuer_row_already_exists(pool: PgPool) {
         display_name: Some("pre-existing".into()),
         logo_uri: None,
         locale: None,
+        created_at: Utc::now(),
     };
     issuers::insert(&mut conn, &existing).await.unwrap();
 

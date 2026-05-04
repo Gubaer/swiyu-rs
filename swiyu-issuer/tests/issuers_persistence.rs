@@ -5,6 +5,7 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
+use chrono::Utc;
 use sqlx::PgPool;
 
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
@@ -32,6 +33,7 @@ fn legacy_shaped_issuer(tenant_id: TenantId) -> Issuer {
         display_name: Some("Legacy Issuer".into()),
         logo_uri: Some("https://example.com/legacy-logo.png".into()),
         locale: Some("en".into()),
+        created_at: Utc::now(),
     }
 }
 
@@ -49,6 +51,7 @@ fn signing_engine_shaped_issuer(tenant_id: TenantId) -> Issuer {
         display_name: Some("Gemeinde Buchs — Einwohnerverwaltung".into()),
         logo_uri: None,
         locale: None,
+        created_at: Utc::now(),
     }
 }
 

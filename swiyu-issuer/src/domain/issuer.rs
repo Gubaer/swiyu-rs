@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 use super::DomainError;
 use super::ids::{IssuerId, TenantId};
 use super::signing_engine::{KeyPairId, KeyRole};
@@ -95,6 +97,12 @@ pub struct Issuer {
     /// `signing_key_id`.
     pub logo_uri: Option<String>,
     pub locale: Option<String>,
+
+    /// Timestamp of the row insert. Drives stable ordering for the
+    /// cursor-paginated list endpoint. The seeded dev row from
+    /// migration 0001 backfills to migration time (per migration 0012);
+    /// real issuers carry the worker's `now` from the persist step.
+    pub created_at: DateTime<Utc>,
 }
 
 impl Issuer {
@@ -130,6 +138,7 @@ mod tests {
             display_name: None,
             logo_uri: None,
             locale: None,
+            created_at: Utc::now(),
         }
     }
 

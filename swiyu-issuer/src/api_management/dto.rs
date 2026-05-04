@@ -65,6 +65,62 @@ pub struct GetIssuerResponse {
     pub display_name: String,
 }
 
+/// Query parameters for `GET /api/v1/issuers`.
+///
+/// All fields are optional. `limit` is bounded at the handler;
+/// out-of-range values yield `invalid_input`. `cursor` is opaque to
+/// clients — the handler rejects anything it did not itself emit.
+#[derive(Debug, Deserialize)]
+pub struct ListIssuersQuery {
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+/// Response body returned by `GET /api/v1/issuers` on success
+/// (HTTP 200).
+///
+/// `next_cursor` is `None` when the current page exhausts the
+/// tenant's issuers; otherwise it carries the opaque token to pass
+/// back as the next request's `cursor`.
+#[derive(Debug, Serialize)]
+pub struct ListIssuersResponse {
+    pub items: Vec<GetIssuerResponse>,
+    pub next_cursor: Option<String>,
+}
+
+/// Response body returned by `GET /api/v1/operation-tasks/{task_id}`
+/// on success (HTTP 200).
+///
+/// BA-facing projection of an `OperationTask`. Surfaces the polling
+/// fields a business application needs to track a long-running
+/// operation: `state` and `step` for "where in the saga we are",
+/// `attempts` / `next_attempt_at` / `error_*` for visibility into
+/// retry behaviour, and the lifecycle timestamps.
+///
+/// Deliberately omits:
+///
+/// - `tenant_id` — bound to the API token, redundant on the wire.
+/// - `input` — the BA submitted it, no need to echo it back.
+/// - `state_data` — internal saga progress (DID, key handles), not
+///   part of the BA-facing contract.
+/// - `result_issuer_id` — the BA already received `issuer_id` in
+///   the response to `POST /api/v1/issuers`; echoing it here would
+///   add nothing.
+#[derive(Debug, Serialize)]
+pub struct GetOperationTaskResponse {
+    pub id: String,
+    pub task_type: String,
+    pub state: String,
+    pub step: Option<String>,
+    pub attempts: u32,
+    pub next_attempt_at: Option<DateTime<Utc>>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
 /// Request body for creating a credential offer.
 ///
 /// Submitted by a business application to
