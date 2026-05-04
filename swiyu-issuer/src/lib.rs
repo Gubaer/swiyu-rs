@@ -4,3 +4,4 @@ pub mod domain;
 pub mod issuance;
 pub mod persistence;
 pub mod web_admin;
+pub mod worker;
