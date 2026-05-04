@@ -1,0 +1,209 @@
+//! `generate_keys` step executor.
+//!
+//! Generates the issuer's three key pairs (Authorized, Authentication,
+//! Assertion) through the `SigningEngine` and records the resulting
+//! `KeyTriple` in `state_data`. Idempotent on resume: a second
+//! invocation observing `state_data.key_ids` set returns immediately
+//! with no patch and no further engine calls.
+//!
+//! The plan accepts orphan keys created by a crash mid-step: a
+//! partial run leaves earlier-generated private keys inside the
+//! engine; on retry the executor generates a fresh triple, the
+//! orphans are cleaned up by a future periodic job rather than at
+//! retry time.
+
+use serde_json::{Map, json};
+
+use crate::domain::{KeyRole, SigningEngine, SigningEngineError, StepOutcome, StepResult};
+
+use super::{CreateIssuerStateData, KeyTriple};
+
+pub async fn execute_generate_keys<S: SigningEngine>(
+    state: &CreateIssuerStateData,
+    engine: &S,
+) -> StepOutcome {
+    if state.key_ids.is_some() {
+        return StepOutcome::Done(StepResult::default());
+    }
+
+    let authorized = match engine.generate_keypair(KeyRole::Authorized).await {
+        Ok(kp) => kp.id,
+        Err(e) => return outcome_for_engine_error("generate_keypair_failed", e),
+    };
+    let authentication = match engine.generate_keypair(KeyRole::Authentication).await {
+        Ok(kp) => kp.id,
+        Err(e) => return outcome_for_engine_error("generate_keypair_failed", e),
+    };
+    let assertion = match engine.generate_keypair(KeyRole::Assertion).await {
+        Ok(kp) => kp.id,
+        Err(e) => return outcome_for_engine_error("generate_keypair_failed", e),
+    };
+
+    let triple = KeyTriple {
+        authorized,
+        authentication,
+        assertion,
+    };
+    let mut patch = Map::new();
+    patch.insert("key_ids".into(), json!(triple));
+    StepOutcome::Done(StepResult {
+        state_data_patch: patch,
+    })
+}
+
+fn outcome_for_engine_error(error_code: &str, e: SigningEngineError) -> StepOutcome {
+    let error_message = e.to_string();
+    match e {
+        // Backend errors are most often transient (DB blip, vault hiccup).
+        SigningEngineError::Backend(_) => StepOutcome::Retry {
+            error_code: error_code.into(),
+            error_message,
+        },
+        // The remaining variants signal a configuration or input bug;
+        // retrying will not help.
+        SigningEngineError::UnsupportedAlgorithm
+        | SigningEngineError::InvalidInputLength { .. }
+        | SigningEngineError::KeyNotFound(_) => StepOutcome::Terminal {
+            error_code: error_code.into(),
+            error_message,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use uuid::Uuid;
+
+    use crate::domain::{GeneratedKeyPair, KeyAlgorithm, KeyPairId, RawPublicKey};
+    use crate::worker::test_support::{GenerateKeypairCall, MockSigningEngine};
+
+    fn fixture_keypair(uuid_byte: u8, algorithm: KeyAlgorithm, pk_len: usize) -> GeneratedKeyPair {
+        let bytes = [uuid_byte; 16];
+        let mut uuid_bytes = bytes;
+        uuid_bytes[6] = (uuid_bytes[6] & 0x0F) | 0x40;
+        uuid_bytes[8] = (uuid_bytes[8] & 0x3F) | 0x80;
+        GeneratedKeyPair {
+            id: KeyPairId::from_uuid(Uuid::from_bytes(uuid_bytes)),
+            public_key: RawPublicKey {
+                algorithm,
+                bytes: vec![uuid_byte; pk_len],
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn happy_path_generates_three_keys_in_order() {
+        let engine = MockSigningEngine::new();
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
+            0x11,
+            KeyAlgorithm::Ed25519,
+            32,
+        )));
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
+            0x22,
+            KeyAlgorithm::EcdsaP256,
+            65,
+        )));
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
+            0x33,
+            KeyAlgorithm::EcdsaP256,
+            65,
+        )));
+
+        let outcome = execute_generate_keys(&CreateIssuerStateData::default(), &engine).await;
+
+        match outcome {
+            StepOutcome::Done(result) => {
+                let key_ids = &result.state_data_patch["key_ids"];
+                assert!(key_ids.is_object(), "key_ids should be an object");
+                assert!(key_ids["authorized"].is_string());
+                assert!(key_ids["authentication"].is_string());
+                assert!(key_ids["assertion"].is_string());
+            }
+            other => panic!("expected Done, got {other:?}"),
+        }
+        assert_eq!(
+            engine.generate_invocations.lock().unwrap().as_slice(),
+            &[
+                KeyRole::Authorized,
+                KeyRole::Authentication,
+                KeyRole::Assertion
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_when_key_ids_already_set() {
+        let engine = MockSigningEngine::new();
+        // Deliberately enqueue nothing — a call would panic.
+        let triple = KeyTriple {
+            authorized: KeyPairId::generate(),
+            authentication: KeyPairId::generate(),
+            assertion: KeyPairId::generate(),
+        };
+        let state = CreateIssuerStateData {
+            key_ids: Some(triple),
+            ..CreateIssuerStateData::default()
+        };
+
+        let outcome = execute_generate_keys(&state, &engine).await;
+
+        match outcome {
+            StepOutcome::Done(result) => assert!(result.state_data_patch.is_empty()),
+            other => panic!("expected Done, got {other:?}"),
+        }
+        assert!(engine.generate_invocations.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn backend_error_on_first_call_is_retryable() {
+        let engine = MockSigningEngine::new();
+        engine.enqueue_generate(GenerateKeypairCall::Backend("connection refused".into()));
+
+        let outcome = execute_generate_keys(&CreateIssuerStateData::default(), &engine).await;
+
+        match outcome {
+            StepOutcome::Retry { error_code, .. } => {
+                assert_eq!(error_code, "generate_keypair_failed");
+            }
+            other => panic!("expected Retry, got {other:?}"),
+        }
+        assert_eq!(engine.generate_invocations.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn backend_error_on_second_call_is_retryable() {
+        let engine = MockSigningEngine::new();
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
+            0x11,
+            KeyAlgorithm::Ed25519,
+            32,
+        )));
+        engine.enqueue_generate(GenerateKeypairCall::Backend("transient".into()));
+
+        let outcome = execute_generate_keys(&CreateIssuerStateData::default(), &engine).await;
+
+        match outcome {
+            StepOutcome::Retry { .. } => {}
+            other => panic!("expected Retry, got {other:?}"),
+        }
+        assert_eq!(engine.generate_invocations.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn unsupported_algorithm_is_terminal() {
+        let engine = MockSigningEngine::new();
+        engine.enqueue_generate(GenerateKeypairCall::Unsupported);
+
+        let outcome = execute_generate_keys(&CreateIssuerStateData::default(), &engine).await;
+
+        match outcome {
+            StepOutcome::Terminal { error_code, .. } => {
+                assert_eq!(error_code, "generate_keypair_failed");
+            }
+            other => panic!("expected Terminal, got {other:?}"),
+        }
+    }
+}

@@ -13,6 +13,11 @@ use std::sync::Mutex;
 use swiyu_registries::common::RegistryError;
 use swiyu_registries::identifier::Allocation;
 
+use crate::domain::{
+    GeneratedKeyPair, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine,
+    SigningEngineError,
+};
+
 use super::registry::RegistryFacade;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,5 +71,58 @@ impl RegistryFacade for MockRegistry {
         _entry: &str,
     ) -> Result<(), RegistryError> {
         unreachable!("publish path not exercised in this test scope")
+    }
+}
+
+pub enum GenerateKeypairCall {
+    Ok(GeneratedKeyPair),
+    Backend(String),
+    Unsupported,
+}
+
+#[derive(Default)]
+pub struct MockSigningEngine {
+    generate_queue: Mutex<Vec<GenerateKeypairCall>>,
+    pub generate_invocations: Mutex<Vec<KeyRole>>,
+}
+
+impl MockSigningEngine {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn enqueue_generate(&self, call: GenerateKeypairCall) {
+        self.generate_queue.lock().unwrap().push(call);
+    }
+}
+
+impl SigningEngine for MockSigningEngine {
+    fn generate_keypair(
+        &self,
+        role: KeyRole,
+    ) -> impl Future<Output = Result<GeneratedKeyPair, SigningEngineError>> + Send {
+        self.generate_invocations.lock().unwrap().push(role);
+        let next = self.generate_queue.lock().unwrap().remove(0);
+        async move {
+            match next {
+                GenerateKeypairCall::Ok(kp) => Ok(kp),
+                GenerateKeypairCall::Backend(message) => {
+                    Err(SigningEngineError::Backend(message.into()))
+                }
+                GenerateKeypairCall::Unsupported => Err(SigningEngineError::UnsupportedAlgorithm),
+            }
+        }
+    }
+
+    async fn get_public_key(&self, _id: &KeyPairId) -> Result<RawPublicKey, SigningEngineError> {
+        unreachable!("get_public_key not exercised in this test scope")
+    }
+
+    async fn sign(&self, _id: &KeyPairId, _input: &[u8]) -> Result<Signature, SigningEngineError> {
+        unreachable!("sign not exercised in this test scope")
+    }
+
+    async fn delete_keypair(&self, _id: &KeyPairId) -> Result<(), SigningEngineError> {
+        Ok(())
     }
 }
