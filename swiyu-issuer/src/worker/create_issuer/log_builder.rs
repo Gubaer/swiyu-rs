@@ -9,7 +9,7 @@
 //! instead of carrying it through `state_data`.
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use serde_json::{Value, json};
+use serde_json::Value;
 use thiserror::Error;
 
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
@@ -17,8 +17,8 @@ use swiyu_core::didlog::LogEntryFormat;
 use swiyu_core::didlog::build::{
     append_proof, build_initial_entry, set_version_id, strip_proof_slot,
 };
-use swiyu_core::didlog::eddsa_jcs_2022_hash;
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
+use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
 use crate::domain::{KeyAlgorithm, SigningEngine, SigningEngineError};
 
@@ -28,10 +28,6 @@ use super::CreateIssuerStateData;
 /// end-to-end against the SWIYU registry. `did:webvh:1.0` lives in
 /// swiyu-core for verifier-side reasons but is not produced here.
 const FORMAT: LogEntryFormat = LogEntryFormat::TDW03;
-
-/// `did:tdw:0.3` proofs are made for `authentication`; the
-/// cryptosuite spec ties verificationMethod role to proof purpose.
-const PROOF_PURPOSE: &str = "authentication";
 
 #[derive(Debug, Error)]
 pub enum BuildError {
@@ -134,25 +130,18 @@ pub async fn build_log_entry<S: SigningEngine>(
     let document_for_hash = entry_value[3]["value"].clone();
 
     let vm_id = format!("did:key:{authorized_multikey}#{authorized_multikey}");
-    let proof_config = json!({
-        "type": "DataIntegrityProof",
-        "cryptosuite": "eddsa-jcs-2022",
-        "verificationMethod": vm_id,
-        "proofPurpose": PROOF_PURPOSE,
-        "challenge": version_id,
-        "created": now_iso,
-    });
+    let proof_config = ProofConfig {
+        cryptosuite: Cryptosuite::EddsaJcs2022,
+        verification_method: vm_id,
+        proof_purpose: ProofPurpose::Authentication,
+        challenge: version_id,
+        created: now_iso,
+    };
 
-    let hash_data = eddsa_jcs_2022_hash(&document_for_hash, &proof_config);
+    let hash_data = proof_config.signing_input(&document_for_hash);
     let signature = engine.sign(&key_ids.authorized, &hash_data).await?;
-    let proof_value = format!("z{}", bs58::encode(&signature.bytes).into_string());
-
-    let mut proof = proof_config
-        .as_object()
-        .expect("proof_config is built as an object")
-        .clone();
-    proof.insert("proofValue".into(), json!(proof_value));
-    append_proof(&mut entry_value, Value::Object(proof), &FORMAT);
+    let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
+    append_proof(&mut entry_value, proof.to_value(), &FORMAT);
 
     Ok(entry_value)
 }
