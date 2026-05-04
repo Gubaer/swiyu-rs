@@ -1,31 +1,54 @@
 //! Async client for the SWIYU Identifier Registry.
-//!
-//! Currently a placeholder: the v1 issuer-management slice will fill
-//! in `allocate_did`, `publish_log_entry`, and `fetch_log` against
-//! the real registry endpoints. Until then this module exists so
-//! downstream crates can pin the dependency surface.
 
-use crate::common::RegistryError;
+// `access_token` and `http` are read by the per-operation request
+// builders that live alongside this module.
+#![allow(dead_code)]
 
-/// Async client for the SWIYU Identifier Registry.
+use std::time::Duration;
+
+use crate::common::{AccessToken, RegistryError};
+
+/// Async HTTP client for the SWIYU Identifier Registry.
+///
+/// `new` builds a hardened default `reqwest::Client` (30 s request
+/// timeout, 10 s connect timeout, HTTPS-only, identifying user
+/// agent). `with_http` injects a pre-configured client — used by
+/// tests against local mock servers and by callers that want to
+/// share a connection pool across multiple registries.
+///
+/// Methods take `&self`, and `reqwest::Client` is internally
+/// `Arc`-shared, so a single instance can serve a worker pool
+/// without further wrapping.
 pub struct IdentifierRegistryClient {
     base_url: String,
+    access_token: AccessToken,
     http: reqwest::Client,
 }
 
 impl IdentifierRegistryClient {
-    pub fn new(base_url: String) -> Result<Self, RegistryError> {
+    pub fn new(base_url: String, access_token: AccessToken) -> Result<Self, RegistryError> {
         let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .https_only(true)
+            .user_agent(concat!(
+                "swiyu-identifier-registry-client/",
+                env!("CARGO_PKG_VERSION")
+            ))
             .build()
             .map_err(RegistryError::Transport)?;
-        Ok(Self { base_url, http })
+        Ok(Self::with_http(base_url, access_token, http))
+    }
+
+    pub fn with_http(base_url: String, access_token: AccessToken, http: reqwest::Client) -> Self {
+        Self {
+            base_url,
+            access_token,
+            http,
+        }
     }
 
     pub fn base_url(&self) -> &str {
         &self.base_url
-    }
-
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http
     }
 }
