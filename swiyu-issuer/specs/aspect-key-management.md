@@ -33,9 +33,9 @@ The SigningEngine exposes three operations:
   - Returns the public key and an opaque key pair identifier.
 
 - `sign(id, input) -> signature`
-  - `input` is a 32-byte array.
-  - For ECDSA key pairs, the input is treated as a digest (typical ECDSA-over-hash usage).
-  - For EdDSA key pairs, the input is treated as the **message** to sign with plain Ed25519 — *not* Ed25519ph. The engine feeds exactly those 32 bytes into Ed25519 as the message.
+  - `input` is a byte slice; the required length depends on the key's algorithm.
+  - For ECDSA key pairs, the input is treated as a pre-computed digest and must be exactly 32 bytes (typical ECDSA-over-hash usage with SHA-256). Any other length is rejected.
+  - For EdDSA key pairs, the input is treated as the **message** to sign with plain Ed25519 — *not* Ed25519ph. Any length is valid; the engine feeds the bytes straight into Ed25519 as the message. The `eddsa-jcs-2022` cryptosuite, for example, signs the 64-byte concatenation of two SHA-256 hashes (proof config + document) and passes those 64 bytes here.
   - Returns an ECDSA or EdDSA signature accordingly. ECDSA signatures are returned as raw `r || s` (each integer padded to the curve's field size). Ed25519 signatures are returned in the standard 64-byte form. If a backend produces a different encoding (e.g. DER), the engine normalizes before returning.
 
 - `delete_keypair(id)`

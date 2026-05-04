@@ -85,6 +85,45 @@ async fn sign_with_ecdsa_id_produces_verifiable_signature(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn sign_with_ed25519_id_accepts_64_byte_message(pool: PgPool) {
+    // The eddsa-jcs-2022 cryptosuite hands Ed25519 a 64-byte concatenation
+    // of two SHA-256 hashes; the engine must accept variable-length input
+    // for Ed25519 keys and feed it straight into the signer.
+    let engine = DevSigningEngine::new(pool);
+
+    let kp = engine.generate_keypair(KeyRole::Authorized).await.unwrap();
+    let input = [0x3c_u8; 64];
+
+    let signature = engine.sign(&kp.id, &input).await.unwrap();
+    assert_eq!(signature.algorithm, KeyAlgorithm::Ed25519);
+    assert_eq!(signature.bytes.len(), 64);
+
+    let public_array: [u8; 32] = kp.public_key.bytes.as_slice().try_into().unwrap();
+    let verifying_key = Ed25519VerifyingKey::from_bytes(&public_array).unwrap();
+    let signature_array: [u8; 64] = signature.bytes.as_slice().try_into().unwrap();
+    let parsed = Ed25519Signature::from_bytes(&signature_array);
+    verifying_key.verify(&input, &parsed).unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn sign_with_ecdsa_id_rejects_non_32_byte_input(pool: PgPool) {
+    let engine = DevSigningEngine::new(pool);
+
+    let kp = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
+    let input = [0x5a_u8; 31];
+
+    let result = engine.sign(&kp.id, &input).await;
+
+    match result {
+        Err(SigningEngineError::InvalidInputLength { expected, actual }) => {
+            assert_eq!(expected, 32);
+            assert_eq!(actual, 31);
+        }
+        other => panic!("expected InvalidInputLength, got: {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn sign_with_unknown_id_returns_key_not_found(pool: PgPool) {
     let engine = DevSigningEngine::new(pool);
     let unknown = KeyPairId::generate();
