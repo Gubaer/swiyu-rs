@@ -11,6 +11,7 @@ use crate::cmd::log::{LogError, current_did, load_log};
 use crate::cmd::proof::build_proof;
 use crate::cmd::update::{build_updated_log, compute_version_time, extract_registry_identifier};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
+use swiyu_core::proof::ProofPurpose;
 
 pub struct DeactivateArgs {
     pub did: Option<String>,
@@ -142,7 +143,7 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
         &entry_value[3]["value"],
         &prev_authorized_multikey,
         &new_version_id,
-        "authentication",
+        ProofPurpose::Authentication,
         &new_version_time,
     );
     if let Value::Array(arr) = &mut entry_value {

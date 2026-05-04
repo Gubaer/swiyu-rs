@@ -6,6 +6,7 @@ use tracing::debug;
 use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 use swiyu_core::didlog::scid::derive_entry_hash;
+use swiyu_core::proof::ProofPurpose;
 
 use crate::cmd::log::{LoadedLog, LogError, current_did, load_log};
 use crate::crypto::{
@@ -173,7 +174,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
         &entry_value[3]["value"],
         &prev_authorized_multikey,
         &new_version_id,
-        "authentication",
+        ProofPurpose::Authentication,
         &new_version_time,
     );
     if let Value::Array(arr) = &mut entry_value {
