@@ -1,8 +1,8 @@
 //! Input and state-data shapes for `CreateIssuer` tasks.
 //!
 //! `CreateIssuerInput` is what the BA submits at `POST /api/v1/issuers`
-//! (step 8) and what the worker reads back from `task.input` after a
-//! crash. `CreateIssuerStateData` is the merged accumulation of step
+//! and what the worker reads back from `task.input` after a crash.
+//! `CreateIssuerStateData` is the merged accumulation of step
 //! outputs; the worker reads it on resume to skip steps whose side
 //! effects have already happened. Both round-trip through the
 //! `serde_json::Value` columns on `operation_tasks`.
