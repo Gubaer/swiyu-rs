@@ -10,6 +10,7 @@ use swiyu_core::didlog::build::{
     append_proof, build_initial_entry, set_version_id, strip_proof_slot,
 };
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
+use swiyu_core::proof::ProofPurpose;
 
 use crate::crypto::{CryptoError, generate_ecdsa_key_pair, generate_eddsa_key_pair};
 use crate::keystore::{KeyStore, KeyStoreError, StagedKeys};
@@ -153,8 +154,8 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         LogEntryFormat::WebVH10 => entry_value["state"]["value"].clone(),
     };
     let proof_purpose = match args.format {
-        LogEntryFormat::TDW03 => "authentication",
-        LogEntryFormat::WebVH10 => "assertionMethod",
+        LogEntryFormat::TDW03 => ProofPurpose::Authentication,
+        LogEntryFormat::WebVH10 => ProofPurpose::AssertionMethod,
     };
     let proof = super::proof::build_proof(
         staged.authorized_signing(),
