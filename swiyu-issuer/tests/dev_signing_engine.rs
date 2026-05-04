@@ -138,6 +138,34 @@ async fn sign_with_unknown_id_returns_key_not_found(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn get_public_key_returns_what_generate_keypair_returned(pool: PgPool) {
+    let engine = DevSigningEngine::new(pool);
+
+    for role in [
+        KeyRole::Authorized,
+        KeyRole::Authentication,
+        KeyRole::Assertion,
+    ] {
+        let kp = engine.generate_keypair(role).await.unwrap();
+        let fetched = engine.get_public_key(&kp.id).await.unwrap();
+        assert_eq!(fetched, kp.public_key, "role={role:?}");
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_public_key_with_unknown_id_returns_key_not_found(pool: PgPool) {
+    let engine = DevSigningEngine::new(pool);
+    let unknown = KeyPairId::generate();
+
+    let result = engine.get_public_key(&unknown).await;
+
+    match result {
+        Err(SigningEngineError::KeyNotFound(id)) => assert_eq!(id, unknown),
+        other => panic!("expected KeyNotFound, got: {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn delete_keypair_removes_row_and_is_idempotent(pool: PgPool) {
     let engine = DevSigningEngine::new(pool.clone());
 

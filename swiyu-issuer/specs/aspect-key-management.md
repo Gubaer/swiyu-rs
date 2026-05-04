@@ -23,7 +23,7 @@ All private-key operations are performed by a **SigningEngine**. The fundamental
 
 ### Capabilities
 
-The SigningEngine exposes three operations:
+The SigningEngine exposes four operations:
 
 - `generate_keypair(role) -> (id, public_key)`
   - Generates a key pair appropriate to the role:
@@ -31,6 +31,9 @@ The SigningEngine exposes three operations:
     - `assertion`, `authentication` → ECDSA
   - Persists the private key inside the engine.
   - Returns the public key and an opaque key pair identifier.
+
+- `get_public_key(id) -> public_key`
+  - Returns the public key for a previously generated key pair. Used by callers that hold a `KeyPairId` (typically read from persistence after a worker crash) and need to embed the public key in a DID document or verify a signature locally. Returns `KeyNotFound` if the id is unknown.
 
 - `sign(id, input) -> signature`
   - `input` is a byte slice; the required length depends on the key's algorithm.

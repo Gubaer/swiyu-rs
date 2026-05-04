@@ -84,6 +84,11 @@ pub trait SigningEngine: Send + Sync {
         role: KeyRole,
     ) -> Result<GeneratedKeyPair, SigningEngineError>;
 
+    async fn get_public_key(
+        &self,
+        id: &KeyPairId,
+    ) -> Result<RawPublicKey, SigningEngineError>;
+
     async fn sign(
         &self,
         id: &KeyPairId,

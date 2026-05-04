@@ -71,6 +71,32 @@ impl SigningEngine for DevSigningEngine {
         }
     }
 
+    fn get_public_key(
+        &self,
+        id: &KeyPairId,
+    ) -> impl Future<Output = Result<RawPublicKey, SigningEngineError>> + Send {
+        let pool = self.pool.clone();
+        let id = *id;
+        async move {
+            let row: Option<(String, Vec<u8>)> = sqlx::query_as(
+                "SELECT algorithm, public_key \
+                 FROM signing_engine_dev_keypairs \
+                 WHERE id = $1",
+            )
+            .bind(id.as_uuid())
+            .fetch_optional(&pool)
+            .await
+            .map_err(backend_error)?;
+
+            let (algorithm_str, public_bytes) = row.ok_or(SigningEngineError::KeyNotFound(id))?;
+            let algorithm = parse_algorithm_label(&algorithm_str)?;
+            Ok(RawPublicKey {
+                algorithm,
+                bytes: public_bytes,
+            })
+        }
+    }
+
     fn sign(
         &self,
         id: &KeyPairId,

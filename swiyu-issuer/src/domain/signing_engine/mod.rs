@@ -128,6 +128,17 @@ pub trait SigningEngine: Send + Sync {
         role: KeyRole,
     ) -> impl Future<Output = Result<GeneratedKeyPair, SigningEngineError>> + Send;
 
+    /// Returns the public key for `id`.
+    ///
+    /// Used by callers that hold a `KeyPairId` (typically read from
+    /// persistence after a worker crash) and need to embed the public
+    /// key in a DID document or verify a signature locally. Returns
+    /// `KeyNotFound` if `id` is unknown to the engine.
+    fn get_public_key(
+        &self,
+        id: &KeyPairId,
+    ) -> impl Future<Output = Result<RawPublicKey, SigningEngineError>> + Send;
+
     /// Signs `input` with the private key identified by `id`.
     ///
     /// The interpretation of `input` depends on the key's algorithm:
