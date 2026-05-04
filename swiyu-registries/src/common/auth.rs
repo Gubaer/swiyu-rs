@@ -1,7 +1,3 @@
-// `AccessToken`'s inner storage and `as_str` are reached only via
-// the per-operation modules in `crate::identifier::*`.
-#![allow(dead_code)]
-
 use zeroize::Zeroizing;
 
 /// Bearer token used to authenticate with a SWIYU registry.

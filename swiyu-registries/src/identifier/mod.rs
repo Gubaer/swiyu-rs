@@ -1,8 +1,8 @@
 //! Async client for the SWIYU Identifier Registry.
 
-// `access_token` and `http` are read by the per-operation request
-// builders that live alongside this module.
-#![allow(dead_code)]
+mod allocate;
+
+pub use allocate::Allocation;
 
 use std::time::Duration;
 
