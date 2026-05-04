@@ -8,6 +8,7 @@ pub mod nonce;
 pub mod operation_task;
 pub mod pre_auth_code;
 pub mod signing_engine;
+pub mod tenant;
 pub mod vct;
 
 pub use access_token::{AccessToken, AccessTokenHash, AccessTokenSecret};
@@ -23,3 +24,4 @@ pub use signing_engine::{
     DevSigningEngine, GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature,
     SigningEngine, SigningEngineError,
 };
+pub use tenant::Tenant;
