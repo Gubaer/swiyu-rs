@@ -33,15 +33,21 @@ pub struct CreateIssuerInput {
 ///
 /// Every field is optional. The worker reads this on resume and skips
 /// the step that produced the field if the field is already populated
-/// (`assigned_did` after `allocate_did`, `key_ids` after
+/// (`assigned_did_url` after `allocate_did`, `key_ids` after
 /// `generate_keys`, `log_published` after `publish_log`).
 /// `build_initial_log` and `persist_issuer` are idempotent without
 /// state-data records: the former is deterministic, the latter checks
 /// the `issuers` row directly.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CreateIssuerStateData {
+    /// Registry-published DIDLog URL (e.g.
+    /// `https://identifier-reg.swiyu.admin.ch/api/v1/did/<UUID>/did.jsonl`).
+    /// The host/path component of the DID is derived from this URL;
+    /// the final DID with SCID is computed during `build_initial_log`
+    /// and not stored separately, since it is deterministic from this
+    /// URL plus the key triple.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assigned_did: Option<String>,
+    pub assigned_did_url: Option<String>,
 
     /// Registry-assigned UUID extracted from the allocation URL.
     /// Required by `publish_log_entry`, which addresses the entry by
@@ -131,7 +137,7 @@ mod tests {
     #[test]
     fn state_data_default_is_all_none() {
         let state = CreateIssuerStateData::default();
-        assert!(state.assigned_did.is_none());
+        assert!(state.assigned_did_url.is_none());
         assert!(state.assigned_identifier.is_none());
         assert!(state.key_ids.is_none());
         assert!(!state.log_published);
@@ -146,13 +152,13 @@ mod tests {
     #[test]
     fn state_data_deserialises_partial_progress() {
         let value = json!({
-            "assigned_did": "did:tdw:reg.example:abc",
+            "assigned_did_url": "https://reg.example/api/v1/did/abc/did.jsonl",
             "assigned_identifier": "abc",
         });
         let state: CreateIssuerStateData = serde_json::from_value(value).unwrap();
         assert_eq!(
-            state.assigned_did.as_deref(),
-            Some("did:tdw:reg.example:abc")
+            state.assigned_did_url.as_deref(),
+            Some("https://reg.example/api/v1/did/abc/did.jsonl"),
         );
         assert_eq!(state.assigned_identifier.as_deref(), Some("abc"));
         assert!(state.key_ids.is_none());
@@ -162,7 +168,7 @@ mod tests {
     #[test]
     fn state_data_round_trips_full_state() {
         let original = CreateIssuerStateData {
-            assigned_did: Some("did:tdw:reg.example:abc".into()),
+            assigned_did_url: Some("https://reg.example/api/v1/did/abc/did.jsonl".into()),
             assigned_identifier: Some("abc".into()),
             key_ids: Some(fixture_key_triple()),
             log_published: true,

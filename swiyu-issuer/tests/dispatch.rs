@@ -89,7 +89,10 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
     insert_task(&pool, &task).await;
 
     let mut patch = Map::new();
-    patch.insert("assigned_did".into(), json!("did:tdw:reg.example:abc"));
+    patch.insert(
+        "assigned_did_url".into(),
+        json!("https://reg.example/api/v1/did/abc/did.jsonl"),
+    );
     patch.insert("assigned_identifier".into(), json!("abc"));
 
     let mut conn = pool.acquire().await.unwrap();
@@ -115,7 +118,10 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
     assert!(loaded.next_attempt_at.is_none());
     assert!(loaded.error_code.is_none());
     assert!(loaded.error_message.is_none());
-    assert_eq!(loaded.state_data["assigned_did"], "did:tdw:reg.example:abc");
+    assert_eq!(
+        loaded.state_data["assigned_did_url"],
+        "https://reg.example/api/v1/did/abc/did.jsonl",
+    );
     assert_eq!(loaded.state_data["assigned_identifier"], "abc");
 }
 

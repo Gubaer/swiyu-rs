@@ -8,3 +8,6 @@ pub mod backoff;
 pub mod create_issuer;
 pub mod dispatch;
 pub mod registry;
+
+#[cfg(test)]
+mod test_support;
