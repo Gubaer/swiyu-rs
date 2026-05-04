@@ -1,6 +1,7 @@
 //! Async client for the SWIYU Identifier Registry.
 
 mod allocate;
+mod fetch;
 mod publish;
 
 pub use allocate::Allocation;
