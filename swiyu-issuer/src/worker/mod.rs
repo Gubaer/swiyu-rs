@@ -5,3 +5,5 @@
 //! See `specs/impl-issuer.md` (Worker section).
 
 pub mod backoff;
+pub mod create_issuer;
+pub mod dispatch;

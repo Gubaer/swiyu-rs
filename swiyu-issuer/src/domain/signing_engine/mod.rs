@@ -36,8 +36,8 @@ impl KeyAlgorithm {
 /// Backed by UUID v4, not the project-wide bs58/prefix scheme used by
 /// `IssuerId` and friends. `KeyPairId` is never embedded in a URL or
 /// QR code, so the density constraints that motivated bs58 do not
-/// apply here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// apply here. Serialises as the standard hyphenated UUID string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct KeyPairId(Uuid);
 
 impl KeyPairId {
