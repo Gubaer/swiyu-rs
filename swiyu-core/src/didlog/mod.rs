@@ -6,6 +6,9 @@ use multihash_codetable::{Code, MultihashDigest};
 use serde_json::{Map, Value, json};
 use std::fmt;
 
+use crate::diddoc::builder::build_initial_did_doc;
+use crate::diddoc::public_keys::P256PublicKey;
+
 pub type DIDLogResult<T> = Result<T, DIDLogError>;
 
 #[derive(Debug)]
@@ -138,6 +141,23 @@ impl LogParameters {
         }
     }
 
+    /// Convenience constructor for the common did:tdw genesis-entry shape:
+    /// `method`, `scid`, and `update_keys` are explicit; every other
+    /// parameter is `None`.
+    pub fn new_tdw_minimal(method: String, scid: String, update_keys: Vec<String>) -> Self {
+        Self::new_tdw(
+            Some(method),
+            Some(scid),
+            Some(update_keys),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
     // The parameters object in the DID log spec has this many fields by design.
     #[allow(clippy::too_many_arguments)]
     pub fn new_webvh(
@@ -165,6 +185,24 @@ impl LogParameters {
             witness,
             watchers,
         }
+    }
+
+    /// Convenience constructor for the common did:webvh genesis-entry
+    /// shape: `method`, `scid`, and `update_keys` are explicit; every
+    /// other parameter is `None`.
+    pub fn new_webvh_minimal(method: String, scid: String, update_keys: Vec<String>) -> Self {
+        Self::new_webvh(
+            Some(method),
+            Some(scid),
+            Some(update_keys),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     fn try_from_json(v: &Value, format: LogEntryFormat) -> DIDLogResult<Self> {
@@ -219,8 +257,23 @@ impl LogParameters {
         if let Some(v) = &self.next_key_hashes {
             map.insert("nextKeyHashes".into(), json!(v));
         }
-        if let Some(v) = self.portable {
-            map.insert("portable".into(), json!(v));
+        // For did:tdw 0.3 genesis entries we emit `portable` explicitly to
+        // mirror the Java DID Toolbox — the field is part of the JCS-
+        // canonicalised input the SCID and proof are computed over, so
+        // omitting it would change those bytes and break interop with the
+        // Beta SWIYU registry. Subsequent did:tdw entries (no `scid`)
+        // inherit the genesis value and stay silent on round-trip.
+        // did:webvh 1.0 has no equivalent reference implementation to
+        // mirror; it omits when not set, regardless of position.
+        let is_tdw_genesis = self.format == LogEntryFormat::TDW03 && self.scid.is_some();
+        match (is_tdw_genesis, self.portable) {
+            (_, Some(v)) => {
+                map.insert("portable".into(), json!(v));
+            }
+            (true, None) => {
+                map.insert("portable".into(), json!(false));
+            }
+            (false, None) => {}
         }
         if let Some(v) = self.deactivated {
             map.insert("deactivated".into(), json!(v));
@@ -336,6 +389,58 @@ impl DIDLogEntry {
             parameters,
             did_doc_state,
             data_integrity_proofs,
+        }
+    }
+
+    /// Constructs the genesis DID-log entry, with `{SCID}` placeholders
+    /// in `versionId` and the embedded DID strings. Callers compute the
+    /// SCID over this preliminary entry, substitute the placeholders,
+    /// then compute the entryHash and append the proof.
+    ///
+    /// Takes the `authentication` and `assertion` P-256 public keys
+    /// (which appear in the DID document) and the `authorized`
+    /// public key as its multikey string (which goes into
+    /// `parameters.updateKeys`); the caller is responsible for
+    /// converting from whatever keystore shape they use.
+    pub fn new_genesis(
+        format: &LogEntryFormat,
+        authorized_multikey: &str,
+        did_placeholder: &str,
+        authentication: &P256PublicKey,
+        assertion: &P256PublicKey,
+        now: &str,
+    ) -> Self {
+        let method_str = match format {
+            LogEntryFormat::TDW03 => "did:tdw:0.3",
+            LogEntryFormat::WebVH10 => "did:webvh:1.0",
+        };
+
+        // Wire-format quirks (e.g. did:tdw emitting `portable: false`
+        // explicitly) are encoded inside `LogParameters::to_json`; the
+        // construction site here stays format-agnostic.
+        let parameters = match format {
+            LogEntryFormat::TDW03 => LogParameters::new_tdw_minimal(
+                method_str.into(),
+                "{SCID}".into(),
+                vec![authorized_multikey.into()],
+            ),
+            LogEntryFormat::WebVH10 => LogParameters::new_webvh_minimal(
+                method_str.into(),
+                "{SCID}".into(),
+                vec![authorized_multikey.into()],
+            ),
+        };
+
+        let genesis_doc = build_initial_did_doc(did_placeholder, authentication, assertion);
+        let state = DIDDocState::Value(genesis_doc);
+
+        match format {
+            LogEntryFormat::TDW03 => {
+                Self::new_tdw("{SCID}".into(), now.into(), parameters, state, vec![])
+            }
+            LogEntryFormat::WebVH10 => {
+                Self::new_webvh("{SCID}".into(), now.into(), parameters, state, vec![])
+            }
         }
     }
 
@@ -592,6 +697,103 @@ fn string_array_field(obj: &Map<String, Value>, key: &str) -> DIDLogResult<Optio
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn fixture_p256() -> P256PublicKey {
+        P256PublicKey {
+            x: [1u8; 32],
+            y: [2u8; 32],
+        }
+    }
+
+    #[test]
+    fn new_genesis_tdw_carries_scid_placeholder() {
+        let entry = DIDLogEntry::new_genesis(
+            &LogEntryFormat::TDW03,
+            "z6Mk-authorized",
+            "did:tdw:example.com:{SCID}",
+            &fixture_p256(),
+            &fixture_p256(),
+            "2026-05-03T12:00:00Z",
+        );
+        let value = entry.to_json();
+        assert_eq!(value[0], "{SCID}");
+        assert_eq!(value[1], "2026-05-03T12:00:00Z");
+    }
+
+    #[test]
+    fn new_genesis_webvh_carries_scid_placeholder() {
+        let entry = DIDLogEntry::new_genesis(
+            &LogEntryFormat::WebVH10,
+            "z6Mk-authorized",
+            "did:webvh:example.com:{SCID}",
+            &fixture_p256(),
+            &fixture_p256(),
+            "2026-05-03T12:00:00Z",
+        );
+        let value = entry.to_json();
+        assert_eq!(value["versionId"], "{SCID}");
+        assert_eq!(value["versionTime"], "2026-05-03T12:00:00Z");
+    }
+
+    fn tdw_genesis_with_portable(portable: Option<bool>) -> LogParameters {
+        let mut params = LogParameters::new_tdw(
+            Some("did:tdw:0.3".into()),
+            Some("Qm-scid".into()),
+            Some(vec!["z6Mk-auth".into()]),
+            None,
+            None,
+            portable,
+            None,
+            None,
+            None,
+        );
+        // scid being Some marks this as a genesis entry, which is what
+        // drives the to_json portable rule. Use a non-genesis fixture by
+        // clearing scid below in the relevant tests.
+        params.scid = Some("Qm-scid".into());
+        params
+    }
+
+    #[test]
+    fn tdw_genesis_to_json_emits_portable_false_when_unset() {
+        let params = tdw_genesis_with_portable(None);
+        let value = params.to_json();
+        assert_eq!(value["portable"], json!(false));
+    }
+
+    #[test]
+    fn tdw_genesis_to_json_preserves_explicit_portable() {
+        let params = tdw_genesis_with_portable(Some(true));
+        let value = params.to_json();
+        assert_eq!(value["portable"], json!(true));
+    }
+
+    #[test]
+    fn tdw_subsequent_to_json_omits_portable_when_unset() {
+        let mut params = tdw_genesis_with_portable(None);
+        params.scid = None;
+        params.method = None;
+        let value = params.to_json();
+        assert!(value.as_object().unwrap().get("portable").is_none());
+    }
+
+    #[test]
+    fn webvh_genesis_to_json_omits_portable_when_unset() {
+        let params = LogParameters::new_webvh(
+            Some("did:webvh:1.0".into()),
+            Some("Qm-scid".into()),
+            Some(vec!["z6Mk-auth".into()]),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let value = params.to_json();
+        assert!(value.as_object().unwrap().get("portable").is_none());
+    }
 
     fn tdw_entry_json() -> Value {
         json!([

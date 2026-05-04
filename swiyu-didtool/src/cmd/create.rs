@@ -5,11 +5,9 @@ use tracing::debug;
 
 use swiyu_core::did::DID;
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
-use swiyu_core::didlog::LogEntryFormat;
-use swiyu_core::didlog::build::{
-    append_proof, build_initial_entry, set_version_id, strip_proof_slot,
-};
+use swiyu_core::didlog::build::{append_proof, set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
+use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 use swiyu_core::proof::ProofPurpose;
 
 use crate::crypto::{CryptoError, generate_ecdsa_key_pair, generate_eddsa_key_pair};
@@ -109,7 +107,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
 
     // --- genesis log entry (with {SCID} placeholders, no proof slot yet) ---
     let now = now_iso8601();
-    let entry_template = build_initial_entry(
+    let entry_template = DIDLogEntry::new_genesis(
         &args.format,
         &authorized_multikey,
         &did_placeholder_str,
