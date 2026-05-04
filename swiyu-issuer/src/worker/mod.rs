@@ -8,6 +8,9 @@ pub mod backoff;
 pub mod create_issuer;
 pub mod dispatch;
 pub mod registry;
+pub mod runner;
+
+pub use runner::{Worker, WorkerError};
 
 // `test_support` is hand-rolled mocks for `RegistryFacade` and
 // `SigningEngine`, used by both inline executor tests and integration

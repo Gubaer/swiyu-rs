@@ -6,12 +6,16 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand_core::RngCore;
 
 const BASE_MS: u64 = 60_000;
 const MAX_MS: u64 = 3_600_000;
-const MAX_ELAPSED_HOURS: i64 = 24;
+
+/// Wall-clock budget per task: once the task has been alive for at
+/// least this many hours and the current step still asks for a retry,
+/// the dispatcher escalates to `Failed` instead of scheduling another
+/// attempt.
+pub const MAX_TASK_AGE_HOURS: i64 = 24;
 
 /// Returns the wait time before the next retry, drawn uniformly from
 /// `[0, base * 2^attempts]` per AWS "exponential backoff with full
@@ -21,7 +25,7 @@ const MAX_ELAPSED_HOURS: i64 = 24;
 /// `attempts` is the post-increment failure count for the current step
 /// (`attempts == 1` after the first failure), matching how the worker
 /// records the value before computing the delay.
-pub fn backoff_delay(attempts: u32, rng: &mut impl RngCore) -> Duration {
+pub fn backoff_delay(attempts: u32, rng: &mut (impl RngCore + ?Sized)) -> Duration {
     // attempts >= 6 already exceeds the 1h ceiling (60_000 << 6 = 3_840_000 ms);
     // clamp to keep the shift safely inside u64 for any future growth in attempts.
     let effective_attempts = attempts.min(6);
@@ -30,13 +34,6 @@ pub fn backoff_delay(attempts: u32, rng: &mut impl RngCore) -> Duration {
     // far below the jitter resolution we need.
     let jitter_ms = rng.next_u64() % (ceiling_ms + 1);
     Duration::from_millis(jitter_ms)
-}
-
-/// Returns true once the task has been alive for at least 24 hours,
-/// signalling the worker to escalate to `Failed` instead of scheduling
-/// another retry.
-pub fn is_past_cap(created_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    now - created_at >= ChronoDuration::hours(MAX_ELAPSED_HOURS)
 }
 
 #[cfg(test)]
@@ -110,26 +107,5 @@ mod tests {
             backoff_delay(0, &mut FixedRng(30_001)),
             Duration::from_millis(30_001),
         );
-    }
-
-    #[test]
-    fn is_past_cap_false_just_under_24h() {
-        let created = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
-        let now = created + ChronoDuration::hours(23) + ChronoDuration::minutes(59);
-        assert!(!is_past_cap(created, now));
-    }
-
-    #[test]
-    fn is_past_cap_true_at_exactly_24h() {
-        let created = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
-        let now = created + ChronoDuration::hours(24);
-        assert!(is_past_cap(created, now));
-    }
-
-    #[test]
-    fn is_past_cap_true_past_24h() {
-        let created = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
-        let now = created + ChronoDuration::hours(48);
-        assert!(is_past_cap(created, now));
     }
 }

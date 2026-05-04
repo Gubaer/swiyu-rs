@@ -9,13 +9,13 @@
 //! final-step `Done` (which calls `mark_completed`) is the dispatch
 //! loop's responsibility, not this function's.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand_core::RngCore;
 use sqlx::postgres::PgConnection;
 
 use crate::domain::{OperationTask, StepOutcome};
 use crate::persistence::{PersistenceError, operation_tasks};
-use crate::worker::backoff::{backoff_delay, is_past_cap};
+use crate::worker::backoff::{MAX_TASK_AGE_HOURS, backoff_delay};
 
 pub async fn apply_outcome(
     conn: &mut PgConnection,
@@ -23,7 +23,7 @@ pub async fn apply_outcome(
     next_step: Option<&str>,
     outcome: StepOutcome,
     now: DateTime<Utc>,
-    rng: &mut impl RngCore,
+    rng: &mut (impl RngCore + ?Sized),
 ) -> Result<(), PersistenceError> {
     match outcome {
         StepOutcome::Done(result) => {
@@ -34,7 +34,7 @@ pub async fn apply_outcome(
             error_code,
             error_message,
         } => {
-            if is_past_cap(task.created_at, now) {
+            if now - task.created_at >= ChronoDuration::hours(MAX_TASK_AGE_HOURS) {
                 operation_tasks::mark_failed(conn, &task.id, &error_code, &error_message, now).await
             } else {
                 let next_attempts = task.attempts.saturating_add(1);
