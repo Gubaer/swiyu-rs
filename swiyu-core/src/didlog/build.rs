@@ -1,77 +1,19 @@
-//! Builders that construct DID log entries from raw key material.
+//! Builders that mutate serialised DID log entries during the
+//! multi-step proof flow.
 //!
 //! These functions are pure: no I/O, no async, no dependence on any
-//! specific keystore. They produce the entry skeletons and the small
-//! mutators (set version id, append proof, strip proof slot) that
-//! callers — `swiyu-didtool` for CLI flows, `swiyu-issuer` for the
-//! issuer-management task flow — splice into during the multi-step
-//! process of deriving the SCID, the entry hash, and the proof.
+//! specific keystore. They produce the small mutators (set version
+//! id, append proof, strip proof slot) that callers — `swiyu-didtool`
+//! for CLI flows, `swiyu-issuer` for the issuer-management task flow
+//! — splice into during the multi-step process of deriving the SCID,
+//! the entry hash, and the proof.
+//!
+//! The genesis entry itself is constructed via the type-level
+//! constructor `DIDLogEntry::new_genesis`.
 
 use serde_json::{Value, json};
 
-use super::{DIDDocState, DIDLogEntry, LogEntryFormat, LogParameters};
-use crate::diddoc::builder::build_initial_did_doc;
-
-/// Constructs the genesis DID log entry, with `{SCID}` placeholders
-/// in `versionId` and any embedded DID strings. Callers compute the
-/// SCID from this preliminary entry, substitute the placeholders,
-/// then compute the entryHash and append the proof.
-///
-/// Takes the authentication and assertion public keys as P-256 (x, y)
-/// coordinates and the authorized public key as its multikey string;
-/// the caller is responsible for converting from whatever keystore
-/// shape they use.
-pub fn build_initial_entry(
-    format: &LogEntryFormat,
-    authorized_multikey: &str,
-    did_placeholder: &str,
-    authentication_xy: &([u8; 32], [u8; 32]),
-    assertion_xy: &([u8; 32], [u8; 32]),
-    now: &str,
-) -> DIDLogEntry {
-    let method_str = match format {
-        LogEntryFormat::TDW03 => "did:tdw:0.3",
-        LogEntryFormat::WebVH10 => "did:webvh:1.0",
-    };
-
-    let parameters = match format {
-        LogEntryFormat::TDW03 => LogParameters::new_tdw(
-            Some(method_str.into()),
-            Some("{SCID}".into()),
-            Some(vec![authorized_multikey.into()]),
-            None,        // prerotation
-            None,        // next_key_hashes
-            Some(false), // portable (DID Toolbox includes this explicitly)
-            None,        // deactivated
-            None,        // ttl
-            None,        // witness
-        ),
-        LogEntryFormat::WebVH10 => LogParameters::new_webvh(
-            Some(method_str.into()),
-            Some("{SCID}".into()),
-            Some(vec![authorized_multikey.into()]),
-            None, // prerotation
-            None, // next_key_hashes
-            None, // portable
-            None, // deactivated
-            None, // ttl
-            None, // witness
-            None, // watchers (did:webvh only)
-        ),
-    };
-
-    let genesis_doc = build_initial_did_doc(did_placeholder, authentication_xy, assertion_xy);
-    let state = DIDDocState::Value(genesis_doc);
-
-    match format {
-        LogEntryFormat::TDW03 => {
-            DIDLogEntry::new_tdw("{SCID}".into(), now.into(), parameters, state, vec![])
-        }
-        LogEntryFormat::WebVH10 => {
-            DIDLogEntry::new_webvh("{SCID}".into(), now.into(), parameters, state, vec![])
-        }
-    }
-}
+use super::LogEntryFormat;
 
 /// Removes the proof slot from a serialised entry so the SCID and
 /// entryHash can be computed over the four-element preliminary form.
@@ -135,40 +77,6 @@ pub fn append_proof(entry: &mut Value, proof: Value, format: &LogEntryFormat) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fixture_xy() -> ([u8; 32], [u8; 32]) {
-        ([1u8; 32], [2u8; 32])
-    }
-
-    #[test]
-    fn build_initial_entry_tdw_carries_scid_placeholder() {
-        let entry = build_initial_entry(
-            &LogEntryFormat::TDW03,
-            "z6Mk-authorized",
-            "did:tdw:example.com:{SCID}",
-            &fixture_xy(),
-            &fixture_xy(),
-            "2026-05-03T12:00:00Z",
-        );
-        let value = entry.to_json();
-        assert_eq!(value[0], "{SCID}");
-        assert_eq!(value[1], "2026-05-03T12:00:00Z");
-    }
-
-    #[test]
-    fn build_initial_entry_webvh_carries_scid_placeholder() {
-        let entry = build_initial_entry(
-            &LogEntryFormat::WebVH10,
-            "z6Mk-authorized",
-            "did:webvh:example.com:{SCID}",
-            &fixture_xy(),
-            &fixture_xy(),
-            "2026-05-03T12:00:00Z",
-        );
-        let value = entry.to_json();
-        assert_eq!(value["versionId"], "{SCID}");
-        assert_eq!(value["versionTime"], "2026-05-03T12:00:00Z");
-    }
 
     #[test]
     fn strip_proof_slot_drops_array_tail_for_tdw() {

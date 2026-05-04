@@ -8,11 +8,11 @@
 
 use serde_json::{Value, json};
 
-use super::public_keys::{ECKey, PublicKey, PublicKeyJWK};
+use super::public_keys::{ECKey, P256PublicKey, PublicKey, PublicKeyJWK};
 use super::{DIDDoc, VerificationMethod, VerificationMethodOrRef};
 
 /// Constructs the DID document for a freshly created DID, given the
-/// authentication and assertion key pairs as P-256 (x, y) coordinates.
+/// `authentication` and `assertion` P-256 public keys.
 ///
 /// The authorized (update) key is **not** embedded as a verification
 /// method — it lives only in `parameters.updateKeys` of the DID log
@@ -24,20 +24,19 @@ use super::{DIDDoc, VerificationMethod, VerificationMethodOrRef};
 /// for embedding as `state.value` of an initial DID log entry.
 pub fn build_initial_did_doc(
     did: &str,
-    authentication_xy: &([u8; 32], [u8; 32]),
-    assertion_xy: &([u8; 32], [u8; 32]),
+    authentication: &P256PublicKey,
+    assertion: &P256PublicKey,
 ) -> Value {
     let auth_vm_id = format!("{did}#authentication-key-01");
     let assert_vm_id = format!("{did}#assertion-key-01");
 
-    let (auth_x, auth_y) = authentication_xy;
-    let (assert_x, assert_y) = assertion_xy;
-
     let auth_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
-        ECKey::from_p256_coordinates(auth_x, auth_y).with_kid("authentication-key-01".into()),
+        ECKey::from_p256_coordinates(&authentication.x, &authentication.y)
+            .with_kid("authentication-key-01".into()),
     )));
     let assert_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
-        ECKey::from_p256_coordinates(assert_x, assert_y).with_kid("assertion-key-01".into()),
+        ECKey::from_p256_coordinates(&assertion.x, &assertion.y)
+            .with_kid("assertion-key-01".into()),
     )));
 
     DIDDoc::new(did.to_string())
@@ -66,21 +65,21 @@ pub fn build_initial_did_doc(
 mod tests {
     use super::*;
 
-    fn fixture_xy() -> ([u8; 32], [u8; 32]) {
+    fn fixture_p256() -> P256PublicKey {
         let mut x = [0u8; 32];
         let mut y = [0u8; 32];
         for i in 0..32 {
             x[i] = i as u8;
             y[i] = (i + 100) as u8;
         }
-        (x, y)
+        P256PublicKey { x, y }
     }
 
     #[test]
     fn build_initial_did_doc_embeds_did_and_two_verification_methods() {
         let did = "did:tdw:example.com:abc";
-        let auth = fixture_xy();
-        let assertion = fixture_xy();
+        let auth = fixture_p256();
+        let assertion = fixture_p256();
 
         let doc = build_initial_did_doc(did, &auth, &assertion);
 
@@ -100,8 +99,8 @@ mod tests {
     #[test]
     fn build_initial_did_doc_does_not_embed_authorized_key() {
         let did = "did:tdw:example.com:abc";
-        let auth = fixture_xy();
-        let assertion = fixture_xy();
+        let auth = fixture_p256();
+        let assertion = fixture_p256();
 
         let doc = build_initial_did_doc(did, &auth, &assertion);
 
@@ -115,8 +114,8 @@ mod tests {
     #[test]
     fn build_initial_did_doc_uses_p256_jwk_for_both_keys() {
         let did = "did:tdw:example.com:abc";
-        let auth = fixture_xy();
-        let assertion = fixture_xy();
+        let auth = fixture_p256();
+        let assertion = fixture_p256();
 
         let doc = build_initial_did_doc(did, &auth, &assertion);
 

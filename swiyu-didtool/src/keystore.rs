@@ -19,6 +19,7 @@
 use std::path::{Path, PathBuf};
 
 use swiyu_core::did::DID;
+use swiyu_core::diddoc::public_keys::P256PublicKey;
 use thiserror::Error;
 use tracing::debug;
 
@@ -116,14 +117,14 @@ impl StagedKeys {
         self.authorized_verifying.as_bytes()
     }
 
-    /// Uncompressed P-256 (x, y) coordinates of the `authentication` public key.
-    pub fn authentication_key_coords(&self) -> ([u8; 32], [u8; 32]) {
+    /// `authentication` public key in P-256 (x, y) form.
+    pub fn authentication_key_coords(&self) -> P256PublicKey {
         p256_coords(&self.authentication_verifying)
     }
 
-    /// Uncompressed P-256 (x, y) coordinates of the `assertion` public key
-    /// (signs verifiable credentials).
-    pub fn assertion_key_coords(&self) -> ([u8; 32], [u8; 32]) {
+    /// `assertion` public key in P-256 (x, y) form (signs verifiable
+    /// credentials).
+    pub fn assertion_key_coords(&self) -> P256PublicKey {
         p256_coords(&self.assertion_verifying)
     }
 }
@@ -542,11 +543,11 @@ fn home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
-fn p256_coords(key: &EcdsaVerifyingKey) -> ([u8; 32], [u8; 32]) {
+fn p256_coords(key: &EcdsaVerifyingKey) -> P256PublicKey {
     let point = key.to_encoded_point(false);
     let x: [u8; 32] = (*point.x().expect("uncompressed point has x")).into();
     let y: [u8; 32] = (*point.y().expect("uncompressed point has y")).into();
-    (x, y)
+    P256PublicKey { x, y }
 }
 
 #[cfg(test)]

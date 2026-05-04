@@ -538,6 +538,20 @@ impl fmt::Display for PublicKeyMultibase {
     }
 }
 
+/// Affine coordinates of an uncompressed P-256 public key.
+///
+/// Each component is 32 bytes, the field size of the curve. This is
+/// the raw form used by the JWK `x` and `y` parameters (after
+/// base64url encoding) for the `Authentication` and `Assertion`
+/// keys embedded in DID documents. The `Authorized` key uses
+/// Ed25519 and is encoded as a multikey string instead — see
+/// [`ed25519_verifying_key_to_multikey`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct P256PublicKey {
+    pub x: [u8; 32],
+    pub y: [u8; 32],
+}
+
 /// Encodes a raw Ed25519 public key as a multikey string using base58btc encoding,
 /// as specified in the [Multikey data integrity cryptosuite][multikey].
 ///
