@@ -3,12 +3,17 @@ use std::net::SocketAddr;
 
 use chrono::Duration;
 use clap::{Parser, Subcommand};
+use rand_core::OsRng;
 use sqlx::PgPool;
 use swiyu_issuer::api_management::{AppState, Config, router};
-use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, TenantId};
+use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, DevSigningEngine, TenantId};
 use swiyu_issuer::persistence;
+use swiyu_issuer::worker::Worker;
+use swiyu_registries::common::AccessToken;
+use swiyu_registries::identifier::IdentifierRegistryClient;
 use tokio::net::TcpListener;
 use tokio::signal;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -67,18 +72,51 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
     let issuer_base_url =
         env::var("ISSUER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let registry_url =
+        env::var("SWIYU_REGISTRY_URL").map_err(|_| "SWIYU_REGISTRY_URL must be set")?;
+    let registry_token = env::var("SWIYU_REGISTRY_ACCESS_TOKEN")
+        .map_err(|_| "SWIYU_REGISTRY_ACCESS_TOKEN must be set")?;
 
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
 
-    let state = AppState::new(pool, Config { issuer_base_url })?;
+    let state = AppState::new(pool.clone(), Config { issuer_base_url })?;
     let app = router(state);
+
+    let registry_client =
+        IdentifierRegistryClient::new(registry_url, AccessToken::new(registry_token))?;
+    let signing_engine = DevSigningEngine::new(pool.clone());
+    let worker = Worker::new(
+        pool.clone(),
+        registry_client,
+        signing_engine,
+        Box::new(OsRng),
+    );
+
+    // Single CancellationToken drives both axum's graceful shutdown and
+    // the worker's exit. ctrl_c / SIGTERM trips it once; both consumers
+    // observe the cancellation and drain in parallel.
+    let token = CancellationToken::new();
+
+    let signal_token = token.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        signal_token.cancel();
+    });
+
+    let worker_token = token.clone();
+    let worker_handle = tokio::spawn(worker.run(worker_token));
 
     let listener = TcpListener::bind(bind_addr).await?;
     tracing::info!(%bind_addr, "issuer-mgmt listening");
+    let axum_token = token.clone();
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move { axum_token.cancelled().await })
         .await?;
+
+    if let Err(e) = worker_handle.await {
+        tracing::error!(error = ?e, "worker task ended with error");
+    }
 
     Ok(())
 }
