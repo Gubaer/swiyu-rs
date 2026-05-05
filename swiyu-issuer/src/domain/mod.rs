@@ -22,6 +22,6 @@ pub use operation_task::{OperationTask, StepOutcome, StepResult, TaskState, Task
 pub use pre_auth_code::PreAuthCode;
 pub use signing_engine::{
     DevSigningEngine, GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature,
-    SigningEngine, SigningEngineError,
+    SigningEngine, SigningEngineError, VaultSigningEngine, VaultSigningEngineConfig,
 };
 pub use tenant::Tenant;
