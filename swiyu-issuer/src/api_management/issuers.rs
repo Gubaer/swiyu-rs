@@ -9,12 +9,13 @@ use serde_json::json;
 use crate::domain::{Issuer, IssuerId, IssuerState, OperationTask, TaskId, TaskState, TaskType};
 use crate::persistence;
 use crate::persistence::issuers::ListPageQuery;
+use crate::worker::rotate_keys::RotateKeysInput;
 
 use super::AppState;
 use super::auth::TenantContext;
 use super::dto::{
     CreateIssuerResponse, CreateIssuerSubmission, DeactivateIssuerResponse, GetIssuerResponse,
-    ListIssuersQuery, ListIssuersResponse,
+    ListIssuersQuery, ListIssuersResponse, RotateKeysResponse,
 };
 use super::error::ApiError;
 
@@ -243,6 +244,109 @@ pub async fn deactivate(
             ))
         }
     }
+}
+
+pub async fn rotate_keys(
+    State(state): State<AppState>,
+    Path(issuer_id_str): Path<String>,
+    tenant_context: TenantContext,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<RotateKeysResponse>), ApiError> {
+    // Parse the body into the typed input here (rather than via the
+    // Json<RotateKeysInput> extractor) so a malformed body or an
+    // invalid `roles` array surfaces as 400 invalid_input rather
+    // than axum's default 422 for typed-extractor failures.
+    let input: RotateKeysInput =
+        serde_json::from_value(body).map_err(|err| ApiError::InvalidInput {
+            details: err.to_string(),
+        })?;
+
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
+        roles = ?input.roles,
+        "rotate-keys task submission",
+    );
+
+    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
+        details: format!("issuer_id path parameter: {err}"),
+    })?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let issuer = persistence::issuers::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    let issuer_state = issuer.state.ok_or(ApiError::NotFound)?;
+    if issuer_state == IssuerState::Deactivated {
+        return Err(ApiError::Conflict {
+            details: "rotation is not permitted on a deactivated issuer".into(),
+        });
+    }
+
+    // Saga-resume / poll-handle behaviour: if a rotate-keys task is
+    // already in flight for this issuer, return its task_id with
+    // 200 instead of inserting a duplicate. Terminal prior tasks
+    // (Failed / Completed) fall through to a fresh insert —
+    // rotation is repeatable.
+    if let Some(existing) = persistence::operation_tasks::find_latest_by_type_and_issuer(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+        TaskType::RotateKeys,
+    )
+    .await?
+        && matches!(existing.state, TaskState::Pending | TaskState::InProgress)
+    {
+        return Ok((
+            StatusCode::OK,
+            Json(RotateKeysResponse {
+                task_id: existing.id.to_string(),
+                issuer_id: issuer_id.to_string(),
+            }),
+        ));
+    }
+
+    let task_id = TaskId::generate();
+    let now = Utc::now();
+    let task = OperationTask {
+        id: task_id.clone(),
+        tenant_id: tenant_context.tenant_id.clone(),
+        task_type: TaskType::RotateKeys,
+        state: TaskState::Pending,
+        step: None,
+        attempts: 0,
+        next_attempt_at: None,
+        error_code: None,
+        error_message: None,
+        // Re-emit the deserialised input — `"all"` has already been
+        // expanded to the concrete role set, so the persisted task
+        // never carries the sentinel.
+        input: serde_json::to_value(&input).map_err(|err| ApiError::Internal(Box::new(err)))?,
+        state_data: json!({}),
+        result_issuer_id: Some(issuer_id.clone()),
+        created_at: now,
+        updated_at: now,
+        completed_at: None,
+    };
+    persistence::operation_tasks::insert(&mut conn, &task).await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(RotateKeysResponse {
+            task_id: task_id.to_string(),
+            issuer_id: issuer_id.to_string(),
+        }),
+    ))
 }
 
 pub async fn list(

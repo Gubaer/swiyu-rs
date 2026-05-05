@@ -39,6 +39,21 @@ pub struct CreateIssuerResponse {
 }
 
 /// Response body returned by
+/// `POST /api/v1/issuers/{issuer_id}/rotate-keys`.
+///
+/// `task_id` is always present — rotate-keys submissions either
+/// insert a fresh task (HTTP 201) or surface an existing in-flight
+/// one (HTTP 200) for poll-handle continuity. Unlike deactivate,
+/// rotate-keys has no "already in desired state" idempotent shape;
+/// rotation is repeatable and a deactivated issuer is rejected with
+/// 409 rather than treated as already-rotated.
+#[derive(Debug, Serialize)]
+pub struct RotateKeysResponse {
+    pub task_id: String,
+    pub issuer_id: String,
+}
+
+/// Response body returned by
 /// `POST /api/v1/issuers/{issuer_id}/deactivate`.
 ///
 /// `task_id` is `Some` for fresh deactivations (HTTP 201, the new
