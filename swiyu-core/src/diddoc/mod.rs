@@ -4,6 +4,7 @@ pub use public_keys::{KeyUse, PublicKey, PublicKeyJWK, PublicKeyMultibase};
 use public_keys::{ECKey, P256PublicKey};
 use serde_json::{Map, Value, json};
 use std::fmt;
+use std::str::FromStr;
 
 pub type DIDDocResult<T> = Result<T, DIDDocError>;
 
@@ -528,7 +529,7 @@ fn vm_from_json(v: &Value) -> DIDDocResult<VerificationMethod> {
     let public_key = if let Some(jwk) = obj.get("publicKeyJwk") {
         PublicKey::Jwk(Box::new(PublicKeyJWK::try_from(jwk)?))
     } else if let Some(mb) = obj.get("publicKeyMultibase").and_then(|v| v.as_str()) {
-        PublicKey::Multibase(PublicKeyMultibase::try_from_string(mb)?)
+        PublicKey::Multibase(PublicKeyMultibase::from_str(mb)?)
     } else {
         return Err(DIDDocError::MissingField(
             "verification method must have 'publicKeyJwk' or 'publicKeyMultibase'".into(),

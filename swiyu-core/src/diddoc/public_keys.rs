@@ -6,6 +6,7 @@
 
 use serde_json::{Map, Value, json};
 use std::fmt;
+use std::str::FromStr;
 
 use super::{DIDDocError, DIDDocResult};
 
@@ -583,8 +584,16 @@ impl PublicKeyMultibase {
         Self { key: bytes }
     }
 
-    /// Parses a multibase-encoded public key string. Only the `z` prefix (base58btc) is supported.
-    pub fn try_from_string(s: &str) -> DIDDocResult<Self> {
+    pub fn raw_key(&self) -> &[u8] {
+        &self.key
+    }
+}
+
+/// Parses a multibase-encoded public key string. Only the `z` prefix (base58btc) is supported.
+impl FromStr for PublicKeyMultibase {
+    type Err = DIDDocError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut chars = s.chars();
         match chars.next() {
             Some('z') => {}
@@ -599,10 +608,6 @@ impl PublicKeyMultibase {
             .into_vec()
             .map_err(|e| DIDDocError::InvalidFormat(format!("invalid base58btc encoding: {e}")))?;
         Ok(Self { key })
-    }
-
-    pub fn raw_key(&self) -> &[u8] {
-        &self.key
     }
 }
 
@@ -768,7 +773,7 @@ mod tests {
     #[test]
     fn multibase_unsupported_prefix() {
         assert!(matches!(
-            PublicKeyMultibase::try_from_string("mSomeBase64"),
+            PublicKeyMultibase::from_str("mSomeBase64"),
             Err(DIDDocError::InvalidFormat(_))
         ));
     }

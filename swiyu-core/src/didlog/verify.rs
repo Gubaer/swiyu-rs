@@ -14,6 +14,7 @@
 //! soft skip if they wish.
 
 use std::fmt;
+use std::str::FromStr;
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde_json::Value;
@@ -398,7 +399,7 @@ fn parse_did_key_vm(vm: &str) -> Option<&str> {
 }
 
 fn decode_ed25519_multikey(s: &str) -> Result<[u8; 32], String> {
-    let mb = PublicKeyMultibase::try_from_string(s).map_err(|e| e.to_string())?;
+    let mb = PublicKeyMultibase::from_str(s).map_err(|e| e.to_string())?;
     let bytes = mb.raw_key();
     if bytes.len() != 34 {
         return Err(format!(

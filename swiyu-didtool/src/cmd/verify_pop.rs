@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
@@ -354,8 +355,8 @@ fn resolve_context(
 }
 
 fn decode_multikey(s: &str) -> Result<VerifyingKey, VerifyPopError> {
-    let mb = PublicKeyMultibase::try_from_string(s)
-        .map_err(|e| VerifyPopError::Multikey(e.to_string()))?;
+    let mb =
+        PublicKeyMultibase::from_str(s).map_err(|e| VerifyPopError::Multikey(e.to_string()))?;
     let bytes = mb.raw_key();
     if bytes.len() < 2 {
         return Err(VerifyPopError::Multikey("payload too short".into()));

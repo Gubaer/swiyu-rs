@@ -10,6 +10,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Map, Value, json};
 use std::fmt;
+use std::str::FromStr;
 
 use crate::didlog::eddsa_jcs_2022_hash;
 
@@ -59,8 +60,12 @@ impl Cryptosuite {
             Self::EddsaJcs2022 => "eddsa-jcs-2022",
         }
     }
+}
 
-    pub fn parse(s: &str) -> Result<Self, ProofError> {
+impl FromStr for Cryptosuite {
+    type Err = ProofError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "eddsa-jcs-2022" => Ok(Self::EddsaJcs2022),
             other => Err(ProofError::UnknownCryptosuite(other.into())),
@@ -88,8 +93,12 @@ impl ProofPurpose {
             Self::AssertionMethod => "assertionMethod",
         }
     }
+}
 
-    pub fn parse(s: &str) -> Result<Self, ProofError> {
+impl FromStr for ProofPurpose {
+    type Err = ProofError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "authentication" => Ok(Self::Authentication),
             "assertionMethod" => Ok(Self::AssertionMethod),
@@ -213,9 +222,9 @@ impl TryFrom<&Value> for DataIntegrityProof {
             });
         }
 
-        let cryptosuite = Cryptosuite::parse(&string_field(obj, "cryptosuite")?)?;
+        let cryptosuite = Cryptosuite::from_str(&string_field(obj, "cryptosuite")?)?;
         let verification_method = string_field(obj, "verificationMethod")?;
-        let proof_purpose = ProofPurpose::parse(&string_field(obj, "proofPurpose")?)?;
+        let proof_purpose = ProofPurpose::from_str(&string_field(obj, "proofPurpose")?)?;
         let challenge = string_field(obj, "challenge")?;
         let created = string_field(obj, "created")?;
         let proof_value = string_field(obj, "proofValue")?;
@@ -261,7 +270,7 @@ mod tests {
     #[test]
     fn cryptosuite_round_trips() {
         assert_eq!(
-            Cryptosuite::parse("eddsa-jcs-2022").unwrap(),
+            Cryptosuite::from_str("eddsa-jcs-2022").unwrap(),
             Cryptosuite::EddsaJcs2022
         );
         assert_eq!(Cryptosuite::EddsaJcs2022.as_str(), "eddsa-jcs-2022");
@@ -269,19 +278,19 @@ mod tests {
 
     #[test]
     fn cryptosuite_parse_rejects_unknown() {
-        assert!(Cryptosuite::parse("eddsa-rdfc-2022").is_err());
+        assert!(Cryptosuite::from_str("eddsa-rdfc-2022").is_err());
     }
 
     #[test]
     fn proof_purpose_round_trips() {
         for purpose in [ProofPurpose::Authentication, ProofPurpose::AssertionMethod] {
-            assert_eq!(ProofPurpose::parse(purpose.as_str()).unwrap(), purpose);
+            assert_eq!(ProofPurpose::from_str(purpose.as_str()).unwrap(), purpose);
         }
     }
 
     #[test]
     fn proof_purpose_parse_rejects_unknown() {
-        assert!(ProofPurpose::parse("capabilityInvocation").is_err());
+        assert!(ProofPurpose::from_str("capabilityInvocation").is_err());
     }
 
     #[test]
