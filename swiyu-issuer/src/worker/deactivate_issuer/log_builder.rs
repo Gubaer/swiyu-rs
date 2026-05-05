@@ -1,8 +1,8 @@
 //! Constructs the finalised deactivation DIDLog entry for a
 //! `DeactivateIssuer` task.
 //!
-//! Used by `execute_build_deactivation_log` (validation) and (in
-//! step 9.4) `execute_publish_log` (regenerate-and-PUT). Mirrors
+//! Used by `execute_build_deactivation_log` (validation) and
+//! `execute_publish_log` (regenerate-and-PUT). Mirrors
 //! `create_issuer::log_builder::build_log_entry` in shape and
 //! determinism guarantees: given the same `issuer`, the same fetched
 //! tail of log entries, the same key material, and the same `now`,

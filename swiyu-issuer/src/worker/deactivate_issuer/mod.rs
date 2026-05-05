@@ -1,11 +1,8 @@
 //! `DeactivateIssuer` task-type executor and supporting types.
-//!
-//! Step 9.1 introduced the input and state-data shapes; step 9.3
-//! added `build_deactivation_log` and the shared `log_builder`;
-//! step 9.4 adds `publish_log`. `mark_deactivated` lands in 9.5.
 
 pub mod build_deactivation_log;
 pub mod log_builder;
+pub mod mark_deactivated;
 pub mod publish_log;
 pub mod state;
 
