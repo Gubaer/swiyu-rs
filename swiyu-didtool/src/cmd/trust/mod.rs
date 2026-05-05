@@ -1,19 +1,21 @@
 pub mod lookup;
 pub mod verify;
 
-use std::collections::{BTreeMap, HashSet};
-
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde_json::Value;
-use sha2::{Digest, Sha256};
-
 use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::DIDDocError;
-use swiyu_core::statuslist::{StatusListError, StatusListPointer};
+use swiyu_core::statuslist::StatusListError;
+use swiyu_core::truststatement::TrustStatementError;
 
 use crate::cmd::ResolveError;
 use crate::cmd::http::FetchError;
 use crate::keystore::KeyStoreError;
+
+#[cfg(test)]
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+#[cfg(test)]
+use serde_json::Value;
+#[cfg(test)]
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TrustError {
@@ -23,8 +25,12 @@ pub enum TrustError {
     TrustIssuerMissing,
     #[error("trust registry response is not a JSON array of JWT strings")]
     ResponseShape,
-    #[error("trust statement #{n} is malformed: {reason}")]
-    Statement { n: usize, reason: String },
+    #[error("trust statement #{n} is malformed: {source}")]
+    Statement {
+        n: usize,
+        #[source]
+        source: TrustStatementError,
+    },
     #[error("cannot resolve issuer DID log for '{iss}': {reason}")]
     IssuerResolution { iss: String, reason: String },
     #[error("status list at '{url}' is malformed: {reason}")]
@@ -45,199 +51,12 @@ pub enum TrustError {
     KeyStore(#[from] KeyStoreError),
 }
 
-/// A SWIYU trust statement, decoded from its SD-JWT VC wire form.
-///
-/// Holds both the high-level claims used by `lookup` (for display) and the lower-level
-/// JWS bits used by `verify` (for signature verification). Constructed by
-/// [`decode_statement`]; consumed read-only by both subcommands.
-///
-/// Disclosure-hash-vs-`_sd` integrity is enforced during decoding: any disclosure whose
-/// SHA-256 doesn't appear in the JWT's `_sd` array is silently dropped. The fields below
-/// only ever reflect *authorised* disclosures.
-#[derive(Debug)]
-pub(crate) struct DecodedStatement {
-    /// Verifiable Credential Type from `payload.vct` — for example `TrustStatementIdentityV1`.
-    /// Identifies which schema the disclosed claims conform to.
-    pub vct: String,
-    /// Issuer DID from `payload.iss`. For SWIYU trust statements this is the trust
-    /// authority's `did:tdw`. `verify` cross-checks this against `--trust-issuer`.
-    pub iss: String,
-    /// Issued-at, Unix seconds (`payload.iat`). Used by `lookup` to sort statements
-    /// newest-first; `verify` reports it for context but does not enforce it.
-    pub iat: u64,
-    /// Optional not-before timestamp, Unix seconds (`payload.nbf`). When present,
-    /// `verify` requires `now >= nbf` for the statement to be fresh.
-    pub nbf: Option<u64>,
-    /// Optional expiration, Unix seconds (`payload.exp`). When present, `verify`
-    /// requires `now < exp` for the statement to be fresh.
-    pub exp: Option<u64>,
-    /// Language-keyed legal names from the disclosed `entityName` claim, e.g.
-    /// `{"de-CH": "kacon GmbH", "fr-CH": "kacon Sàrl"}`. A `BTreeMap` so iteration is
-    /// in stable, alphabetical order — display formatting depends on this.
-    pub entity_name: BTreeMap<String, String>,
-    /// Disclosed `isStateActor` claim. `None` if the issuer chose not to disclose it.
-    pub is_state_actor: Option<bool>,
-    /// Status-list pointer from `payload.status.status_list`. `None` if the statement
-    /// has no revocation mechanism (uncommon, but allowed by the SD-JWT VC spec).
-    pub status: Option<StatusListPointer>,
-    /// JWT header `kid` — the verification method id used to sign the statement.
-    /// SWIYU's trust authority signs with the `#assert-key-02` fragment of its DID.
-    pub kid: String,
-    /// JWT header `alg`. SWIYU uses `ES256` exclusively; `verify` rejects
-    /// anything else.
-    pub alg: String,
-    /// `<header_b64>.<payload_b64>` as ASCII bytes — the exact byte sequence the issuer
-    /// signed. Stored verbatim so re-encoding can't drift the signature input.
-    pub signing_input: String,
-    /// Raw signature bytes from the third JWT segment. For `ES256` this is the JOSE
-    /// 64-byte `r || s` form (not DER); decoded directly into `p256::ecdsa::Signature`.
-    pub signature: Vec<u8>,
-}
-
 pub(crate) fn build_endpoint(base_url: &str, did: &DID) -> String {
     let trimmed = base_url.trim_end_matches('/');
     format!(
         "{trimmed}/api/v1/truststatements/identity/{}",
         did.url_path_segment()
     )
-}
-
-pub(crate) fn decode_statement(jwt_text: &str) -> Result<DecodedStatement, String> {
-    let trimmed = jwt_text.trim_end_matches('~');
-    let parts: Vec<&str> = trimmed.split('~').collect();
-    let jwt = parts.first().ok_or("empty JWT")?;
-    let disclosure_strs = &parts[1..];
-
-    let segs: Vec<&str> = jwt.split('.').collect();
-    if segs.len() != 3 {
-        return Err(format!(
-            "expected 3 dot-separated parts, got {}",
-            segs.len()
-        ));
-    }
-    let header_bytes = URL_SAFE_NO_PAD
-        .decode(segs[0])
-        .map_err(|e| format!("header not base64url: {e}"))?;
-    let header: Value =
-        serde_json::from_slice(&header_bytes).map_err(|e| format!("header not JSON: {e}"))?;
-    let payload_bytes = URL_SAFE_NO_PAD
-        .decode(segs[1])
-        .map_err(|e| format!("payload not base64url: {e}"))?;
-    let payload: Value =
-        serde_json::from_slice(&payload_bytes).map_err(|e| format!("payload not JSON: {e}"))?;
-    let signature = URL_SAFE_NO_PAD
-        .decode(segs[2])
-        .map_err(|e| format!("signature not base64url: {e}"))?;
-
-    let kid = header
-        .get("kid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "missing 'kid' in header".to_string())?
-        .to_string();
-    let alg = header
-        .get("alg")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "missing 'alg' in header".to_string())?
-        .to_string();
-
-    let sd_set: HashSet<String> = payload
-        .get("_sd")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let mut entity_name: BTreeMap<String, String> = BTreeMap::new();
-    let mut is_state_actor: Option<bool> = None;
-
-    for d in disclosure_strs {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(d)
-            .map_err(|e| format!("disclosure not base64url: {e}"))?;
-        let value: Value =
-            serde_json::from_slice(&bytes).map_err(|e| format!("disclosure not JSON: {e}"))?;
-        let arr = value
-            .as_array()
-            .ok_or_else(|| "disclosure is not a JSON array".to_string())?;
-
-        let hash_b64 = URL_SAFE_NO_PAD.encode(Sha256::digest(d.as_bytes()));
-        if !sd_set.contains(&hash_b64) {
-            continue;
-        }
-
-        // Object-property disclosure: [salt, name, value]. Array-element disclosures
-        // ([salt, value], length 2) are intentionally ignored — TrustStatementIdentityV1
-        // doesn't use them.
-        if arr.len() != 3 {
-            continue;
-        }
-        let name = match arr[1].as_str() {
-            Some(s) => s,
-            None => continue,
-        };
-        match name {
-            "entityName" => {
-                if let Some(map) = arr[2].as_object() {
-                    for (lang, val) in map {
-                        if let Some(s) = val.as_str() {
-                            entity_name.insert(lang.clone(), s.to_string());
-                        }
-                    }
-                }
-            }
-            "isStateActor" => {
-                if let Some(b) = arr[2].as_bool() {
-                    is_state_actor = Some(b);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let vct = payload
-        .get("vct")
-        .and_then(Value::as_str)
-        .unwrap_or("(unknown)")
-        .to_string();
-    let iss = payload
-        .get("iss")
-        .and_then(Value::as_str)
-        .unwrap_or("(unknown)")
-        .to_string();
-    let iat = payload
-        .get("iat")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "missing or non-numeric 'iat'".to_string())?;
-    let nbf = payload.get("nbf").and_then(Value::as_u64);
-    let exp = payload.get("exp").and_then(Value::as_u64);
-
-    let status = payload
-        .get("status")
-        .and_then(|s| s.get("status_list"))
-        .map(StatusListPointer::try_from_json)
-        .transpose()
-        .map_err(|e| e.to_string())?;
-
-    let signing_input = format!("{}.{}", segs[0], segs[1]);
-
-    Ok(DecodedStatement {
-        vct,
-        iss,
-        iat,
-        nbf,
-        exp,
-        entity_name,
-        is_state_actor,
-        status,
-        kid,
-        alg,
-        signing_input,
-        signature,
-    })
 }
 
 // ── Test fixtures (cfg(test) only, shared across submodules) ─────────────────
@@ -296,11 +115,6 @@ pub(crate) fn build_jwt(payload_extra: Value, disclosures: Vec<serde_json::Value
 }
 
 #[cfg(test)]
-pub(crate) fn entity_name_disclosure(map: serde_json::Value) -> serde_json::Value {
-    serde_json::json!(["UmcUADYUuaTR5Icmlod4hw", "entityName", map])
-}
-
-#[cfg(test)]
 pub(crate) fn is_state_actor_disclosure(b: bool) -> serde_json::Value {
     serde_json::json!(["rIPBffSxmopF09SQ2-gjaQ", "isStateActor", b])
 }
@@ -308,62 +122,6 @@ pub(crate) fn is_state_actor_disclosure(b: bool) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn decode_extracts_entity_name_and_state_actor() {
-        let jwt = build_jwt(
-            json!({}),
-            vec![
-                entity_name_disclosure(json!({ "de-CH": "kacon GmbH" })),
-                is_state_actor_disclosure(false),
-            ],
-        );
-        let s = decode_statement(&jwt).unwrap();
-        assert_eq!(s.vct, "TrustStatementIdentityV1");
-        assert_eq!(s.iat, 1776683538);
-        assert_eq!(s.entity_name.get("de-CH"), Some(&"kacon GmbH".to_string()));
-        assert_eq!(s.is_state_actor, Some(false));
-        assert_eq!(s.status.as_ref().unwrap().idx(), 643);
-        assert_eq!(s.alg, "ES256");
-        assert!(s.kid.starts_with("did:tdw:"));
-        assert!(!s.signing_input.is_empty());
-        assert!(!s.signature.is_empty());
-    }
-
-    #[test]
-    fn decode_accepts_multiple_locales() {
-        let jwt = build_jwt(
-            json!({}),
-            vec![entity_name_disclosure(json!({
-                "de-CH": "kacon GmbH",
-                "fr-CH": "kacon Sàrl",
-                "it-CH": "kacon Sagl",
-            }))],
-        );
-        let s = decode_statement(&jwt).unwrap();
-        assert_eq!(s.entity_name.len(), 3);
-        assert_eq!(s.entity_name.get("fr-CH"), Some(&"kacon Sàrl".to_string()));
-        let keys: Vec<&String> = s.entity_name.keys().collect();
-        assert_eq!(keys, vec!["de-CH", "fr-CH", "it-CH"]);
-    }
-
-    #[test]
-    fn decode_drops_disclosures_with_mismatched_hash() {
-        let mut jwt = build_jwt(json!({}), vec![is_state_actor_disclosure(false)]);
-        let bogus = json!(["salt", "secretClaim", "should-be-ignored"]);
-        let bogus_enc = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&bogus).unwrap());
-        jwt = format!("{jwt}{bogus_enc}~");
-        let s = decode_statement(&jwt).unwrap();
-        assert!(s.entity_name.is_empty());
-        assert_eq!(s.is_state_actor, Some(false));
-    }
-
-    #[test]
-    fn decode_rejects_malformed_jwt() {
-        let err = decode_statement("only.two").unwrap_err();
-        assert!(err.contains("3 dot-separated parts"));
-    }
 
     #[test]
     fn build_endpoint_percent_encodes_did() {

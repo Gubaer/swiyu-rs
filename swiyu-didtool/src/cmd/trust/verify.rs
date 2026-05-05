@@ -9,12 +9,13 @@ use swiyu_core::did::DID;
 use swiyu_core::diddoc::{DIDDoc, PublicKey, PublicKeyJWK};
 use swiyu_core::didlog::{DIDDocState, DIDLog};
 use swiyu_core::statuslist::{StatusList, StatusValue};
+use swiyu_core::truststatement::TrustStatement;
 
 use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
 use crate::keystore::KeyStore;
 
-use super::{DecodedStatement, TrustError, build_endpoint, decode_statement};
+use super::{TrustError, build_endpoint};
 
 pub use super::TrustError as VerifyError;
 
@@ -56,8 +57,8 @@ pub fn cmd_verify(store: &KeyStore, args: VerifyArgs) -> Result<VerifyOutcome, V
 
     let mut decoded = Vec::with_capacity(array.len());
     for (i, jwt) in array.iter().enumerate() {
-        let s =
-            decode_statement(jwt).map_err(|reason| TrustError::Statement { n: i + 1, reason })?;
+        let s = TrustStatement::try_from_jwt(jwt)
+            .map_err(|source| TrustError::Statement { n: i + 1, source })?;
         decoded.push(s);
     }
     decoded.sort_by(|a, b| b.iat.cmp(&a.iat));
@@ -127,7 +128,7 @@ impl VerifyContext {
 
 #[derive(Debug)]
 struct Report<'s> {
-    statement: &'s DecodedStatement,
+    statement: &'s TrustStatement,
     iss_check: Check,
     signature_check: Check,
     freshness_check: Check,
@@ -163,7 +164,7 @@ impl Check {
 }
 
 fn verify_one<'s>(
-    stmt: &'s DecodedStatement,
+    stmt: &'s TrustStatement,
     now: u64,
     ctx: &mut VerifyContext,
 ) -> Result<Report<'s>, VerifyError> {
@@ -206,10 +207,7 @@ fn verify_one<'s>(
     })
 }
 
-fn verify_signature(
-    stmt: &DecodedStatement,
-    ctx: &mut VerifyContext,
-) -> Result<Check, VerifyError> {
+fn verify_signature(stmt: &TrustStatement, ctx: &mut VerifyContext) -> Result<Check, VerifyError> {
     if stmt.alg != "ES256" {
         return Ok(Check::Fail(format!(
             "unsupported alg '{}' (expected ES256)",
@@ -242,7 +240,7 @@ fn verify_signature(
     }
 }
 
-fn check_freshness(stmt: &DecodedStatement, now: u64) -> Check {
+fn check_freshness(stmt: &TrustStatement, now: u64) -> Check {
     if let Some(nbf) = stmt.nbf
         && now < nbf
     {
@@ -258,7 +256,7 @@ fn check_freshness(stmt: &DecodedStatement, now: u64) -> Check {
     Check::Ok(format!("now within nbf..exp ({nbf}..{exp})"))
 }
 
-fn check_status(stmt: &DecodedStatement, ctx: &mut VerifyContext) -> Result<Check, VerifyError> {
+fn check_status(stmt: &TrustStatement, ctx: &mut VerifyContext) -> Result<Check, VerifyError> {
     let info = match &stmt.status {
         Some(s) => s,
         None => return Ok(Check::Fail("no status_list claim in payload".into())),
@@ -490,24 +488,24 @@ fn print_header(did: &str, expected_issuer: &str) {
 fn print_report(n: usize, r: &Report<'_>) {
     let s = r.statement;
     println!("#{n}  {}", s.vct);
-    println!("  iat:          {}", iso8601(s.iat));
+    println!("  iat (issued at):    {}", iso8601(s.iat));
     println!(
-        "  iss:          {} {}",
+        "  iss (issuer):       {} {}",
         r.iss_check.marker(),
         r.iss_check.message()
     );
     println!(
-        "  signature:    {} {}",
+        "  signature:          {} {}",
         r.signature_check.marker(),
         r.signature_check.message()
     );
     println!(
-        "  freshness:    {} {}",
+        "  freshness:          {} {}",
         r.freshness_check.marker(),
         r.freshness_check.message()
     );
     println!(
-        "  status:       {} {}",
+        "  status:             {} {}",
         r.status_check.marker(),
         r.status_check.message()
     );
@@ -515,18 +513,18 @@ fn print_report(n: usize, r: &Report<'_>) {
         let mut first = true;
         for (lang, name) in &s.entity_name {
             if first {
-                println!("  entity name:  {lang}: {name}");
+                println!("  entity name:        {lang}: {name}");
                 first = false;
             } else {
-                println!("                {lang}: {name}");
+                println!("                      {lang}: {name}");
             }
         }
     }
     if let Some(b) = s.is_state_actor {
-        println!("  state actor:  {}", if b { "yes" } else { "no" });
+        println!("  state actor:        {}", if b { "yes" } else { "no" });
     }
     println!(
-        "  verdict:      {}  {}",
+        "  verdict:            {}  {}",
         if r.verdict { "[ok]  " } else { "[fail]" },
         if r.verdict { "trusted" } else { "untrusted" }
     );
@@ -560,8 +558,8 @@ mod tests {
         assert!(matches!(c, Check::Fail(_)));
     }
 
-    fn stub_statement(nbf: Option<u64>, exp: Option<u64>) -> DecodedStatement {
-        DecodedStatement {
+    fn stub_statement(nbf: Option<u64>, exp: Option<u64>) -> TrustStatement {
+        TrustStatement {
             vct: "TrustStatementIdentityV1".into(),
             iss: "did:tdw:abc".into(),
             iat: 1000,

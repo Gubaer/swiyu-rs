@@ -1,10 +1,12 @@
 use tracing::debug;
 
+use swiyu_core::truststatement::TrustStatement;
+
 use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
 use crate::keystore::KeyStore;
 
-use super::{DecodedStatement, TrustError, build_endpoint, decode_statement};
+use super::{TrustError, build_endpoint};
 
 // Re-export the shared error type as `LookupError` for clarity at call sites.
 pub use super::TrustError as LookupError;
@@ -59,8 +61,8 @@ fn process_body(did: &str, body: &str, raw: bool) -> Result<LookupOutcome, Looku
 
     let mut statements = Vec::with_capacity(array.len());
     for (i, jwt) in array.iter().enumerate() {
-        let s =
-            decode_statement(jwt).map_err(|reason| TrustError::Statement { n: i + 1, reason })?;
+        let s = TrustStatement::try_from_jwt(jwt)
+            .map_err(|source| TrustError::Statement { n: i + 1, source })?;
         statements.push(s);
     }
     statements.sort_by(|a, b| b.iat.cmp(&a.iat));
@@ -74,31 +76,31 @@ fn process_body(did: &str, body: &str, raw: bool) -> Result<LookupOutcome, Looku
     Ok(LookupOutcome::Found)
 }
 
-fn print_statement(n: usize, s: &DecodedStatement) {
+fn print_statement(n: usize, s: &TrustStatement) {
     println!("#{n}  {}", s.vct);
-    println!("  issuer:       {}", s.iss);
-    println!("  iat:          {}", iso8601(s.iat));
+    println!("  issuer:            {}", s.iss);
+    println!("  iat (issued at):   {}", iso8601(s.iat));
     if let Some(t) = s.nbf {
-        println!("  nbf:          {}", iso8601(t));
+        println!("  nbf (not before):  {}", iso8601(t));
     }
     if let Some(t) = s.exp {
-        println!("  exp:          {}", iso8601(t));
+        println!("  exp (expires):     {}", iso8601(t));
     }
     if s.entity_name.is_empty() {
-        println!("  entity name:  (none)");
+        println!("  entity name:       (none)");
     } else {
         let mut first = true;
         for (lang, name) in &s.entity_name {
             if first {
-                println!("  entity name:  {lang}: {name}");
+                println!("  entity name:       {lang}: {name}");
                 first = false;
             } else {
-                println!("                {lang}: {name}");
+                println!("                     {lang}: {name}");
             }
         }
     }
     println!(
-        "  state actor:  {}",
+        "  state actor:       {}",
         match s.is_state_actor {
             Some(true) => "yes",
             Some(false) => "no",
@@ -106,8 +108,8 @@ fn print_statement(n: usize, s: &DecodedStatement) {
         }
     );
     if let Some(st) = &s.status {
-        println!("  status:       {} idx={}", st.type_(), st.idx());
-        println!("                {}", st.uri());
+        println!("  status:            {} idx={}", st.type_(), st.idx());
+        println!("                     {}", st.uri());
     }
 }
 

@@ -492,25 +492,25 @@ fn print_summary(s: &Summary<'_>) {
         use std::io::Write;
         let mut out = std::io::stdout().lock();
         writeln!(out, "PoP is valid")?;
-        writeln!(out, "  alg:    {}", s.alg)?;
-        writeln!(out, "  kid:    {}", s.kid)?;
-        writeln!(out, "  iss:    {}", s.iss)?;
-        writeln!(out, "  iat:    {}", iso8601(s.iat))?;
+        writeln!(out, "  alg:              {}", s.alg)?;
+        writeln!(out, "  kid:              {}", s.kid)?;
+        writeln!(out, "  iss (issuer):     {}", s.iss)?;
+        writeln!(out, "  iat (issued at):  {}", iso8601(s.iat))?;
         let exp_iso = iso8601(s.exp);
         if s.expired {
             writeln!(
                 out,
-                "  exp:    {exp_iso} (expired {} ago)",
+                "  exp (expires):    {exp_iso} (expired {} ago)",
                 human_duration(s.now - s.exp)
             )?;
         } else {
             writeln!(
                 out,
-                "  exp:    {exp_iso} (in {})",
+                "  exp (expires):    {exp_iso} (in {})",
                 human_duration(s.exp - s.now)
             )?;
         }
-        writeln!(out, "  nonce:  {}", s.nonce)?;
+        writeln!(out, "  nonce:            {}", s.nonce)?;
         Ok(())
     })();
 }

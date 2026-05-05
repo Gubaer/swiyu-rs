@@ -13,3 +13,4 @@ serde_json = "1"
 multihash = "0.19.4"
 multihash-codetable = { version = "0.2", features = ["sha2"] }
 serde_jcs = "0.2"
+sha2 = "0.10"

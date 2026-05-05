@@ -680,12 +680,12 @@ A multi-line summary on **stdout**, exit code 0:
 
 ```
 PoP is valid
-  alg:    EdDSA
-  kid:    did:key:z6MktdAr3iUReU7HsCf7JnoCjQ5urpKTxZSC49KnjEVsA5CA
-  iss:    did:tdw:Qmb7…:example.com
-  iat:    2026-04-29T18:23:00Z
-  exp:    2026-04-29T19:23:00Z (in 59m 30s)
-  nonce:  bqjNtL55MStkosme9a4kMg
+  alg:              EdDSA
+  kid:              did:key:z6MktdAr3iUReU7HsCf7JnoCjQ5urpKTxZSC49KnjEVsA5CA
+  iss (issuer):     did:tdw:Qmb7…:example.com
+  iat (issued at):  2026-04-29T18:23:00Z
+  exp (expires):    2026-04-29T19:23:00Z (in 59m 30s)
+  nonce:            bqjNtL55MStkosme9a4kMg
 ```
 
 When `--allow-expired` is in effect and the JWT is past `exp`, the `exp` line reads
@@ -784,16 +784,16 @@ For one or more statements, sorted newest-first by `iat`:
 Trust statements for did:tdw:QmPAaz…:fce949f2-…
 
 #1  TrustStatementIdentityV1
-  issuer:       did:tdw:QmWrXW…:2e246676-…
-  iat:          2026-04-19T12:32:18Z
-  nbf:          2026-01-01T00:00:00Z
-  exp:          2026-12-31T20:00:00Z
-  entity name:  de-CH: kacon GmbH
-                fr-CH: kacon Sàrl
-                it-CH: kacon Sagl
-  state actor:  no
-  status:       SwissTokenStatusList-1.0 idx=643
-                https://status-reg.trust-infra.swiyu-int.admin.ch/api/v1/statuslist/ad94b60b-….jwt
+  issuer:            did:tdw:QmWrXW…:2e246676-…
+  iat (issued at):   2026-04-19T12:32:18Z
+  nbf (not before):  2026-01-01T00:00:00Z
+  exp (expires):     2026-12-31T20:00:00Z
+  entity name:       de-CH: kacon GmbH
+                     fr-CH: kacon Sàrl
+                     it-CH: kacon Sagl
+  state actor:       no
+  status:            SwissTokenStatusList-1.0 idx=643
+                     https://status-reg.trust-infra.swiyu-int.admin.ch/api/v1/statuslist/ad94b60b-….jwt
 ```
 
 - `entity name` shows **all** locales present in the disclosed `entityName` map, sorted
@@ -934,14 +934,14 @@ Trust statements for did:tdw:QmPAaz…:fce949f2-…
 Expected issuer:    did:tdw:QmWrXW…:2e246676-…
 
 #1  TrustStatementIdentityV1
-  iat:          2026-04-20T11:12:18Z
-  iss:          [ok]    matches expected issuer
-  signature:    [ok]    valid (kid: did:tdw:…#assert-key-02)
-  freshness:    [ok]    now within nbf..exp (2026-01-01..2027-01-01)
-  status:       [ok]    valid (idx=643, bits=2)
-  entity name:  de-CH: kacon GmbH
-  state actor:  no
-  verdict:      [ok]    trusted
+  iat (issued at):    2026-04-20T11:12:18Z
+  iss (issuer):       [ok]    matches expected issuer
+  signature:          [ok]    valid (kid: did:tdw:…#assert-key-02)
+  freshness:          [ok]    now within nbf..exp (2026-01-01..2027-01-01)
+  status:             [ok]    valid (idx=643, bits=2)
+  entity name:        de-CH: kacon GmbH
+  state actor:        no
+  verdict:            [ok]    trusted
 
 Verdict: 1 trusted statement out of 1 — entity is trusted.
 ```
@@ -950,12 +950,12 @@ Failure example (issuer mismatch):
 
 ```
 #1  TrustStatementIdentityV1
-  iat:          2026-04-20T11:12:18Z
-  iss:          [fail]  did:tdw:OTHER… (does not match expected issuer)
-  signature:    [skip]  (issuer mismatch)
-  freshness:    [ok]    now within nbf..exp
-  status:       [skip]  (would only matter if signature were trusted)
-  verdict:      [fail]  untrusted
+  iat (issued at):    2026-04-20T11:12:18Z
+  iss (issuer):       [fail]  did:tdw:OTHER… (does not match expected issuer)
+  signature:          [skip]  (issuer mismatch)
+  freshness:          [ok]    now within nbf..exp
+  status:             [skip]  (would only matter if signature were trusted)
+  verdict:            [fail]  untrusted
 
 Verdict: 0 trusted statements out of 1 — entity is untrusted.
 ```
