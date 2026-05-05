@@ -10,6 +10,7 @@
 use std::future::Future;
 use std::sync::Mutex;
 
+use swiyu_core::didlog::DIDLogEntry;
 use swiyu_registries::common::RegistryError;
 use swiyu_registries::identifier::Allocation;
 
@@ -33,12 +34,30 @@ pub enum PublishCall {
     HttpStatus { status: u16, body: String },
 }
 
+/// One queued `fetch_log` outcome. `Ok` carries pre-parsed entries —
+/// the trait already does the JSONL parse, so unit tests build entry
+/// fixtures (e.g. via `DIDLogEntry::new_genesis`) rather than feeding
+/// in raw text.
+///
+/// `Transport`-style errors are not exposed because
+/// [`RegistryError::Transport`] wraps a real `reqwest::Error` that
+/// cannot be constructed by hand. Tests that need retryable failure
+/// use `HttpStatus { status: 5xx, .. }` instead, which
+/// [`RegistryError::is_retryable`] reports the same way.
+pub enum FetchLogCall {
+    Ok(Vec<DIDLogEntry>),
+    HttpStatus { status: u16, body: String },
+    Decode(String),
+}
+
 #[derive(Default)]
 pub struct MockRegistry {
     allocate_queue: Mutex<Vec<AllocateCall>>,
     publish_queue: Mutex<Vec<PublishCall>>,
+    fetch_log_queue: Mutex<Vec<FetchLogCall>>,
     pub allocate_invocations: Mutex<Vec<String>>,
     pub publish_invocations: Mutex<Vec<(String, String, String)>>,
+    pub fetch_log_invocations: Mutex<Vec<String>>,
 }
 
 impl MockRegistry {
@@ -52,6 +71,10 @@ impl MockRegistry {
 
     pub fn enqueue_publish(&self, call: PublishCall) {
         self.publish_queue.lock().unwrap().push(call);
+    }
+
+    pub fn enqueue_fetch_log(&self, call: FetchLogCall) {
+        self.fetch_log_queue.lock().unwrap().push(call);
     }
 }
 
@@ -94,6 +117,26 @@ impl RegistryFacade for MockRegistry {
                 PublishCall::HttpStatus { status, body } => {
                     Err(RegistryError::HttpStatus { status, body })
                 }
+            }
+        }
+    }
+
+    fn fetch_log(
+        &self,
+        identifier: &str,
+    ) -> impl Future<Output = Result<Vec<DIDLogEntry>, RegistryError>> + Send {
+        self.fetch_log_invocations
+            .lock()
+            .unwrap()
+            .push(identifier.to_string());
+        let next = self.fetch_log_queue.lock().unwrap().remove(0);
+        async move {
+            match next {
+                FetchLogCall::Ok(entries) => Ok(entries),
+                FetchLogCall::HttpStatus { status, body } => {
+                    Err(RegistryError::HttpStatus { status, body })
+                }
+                FetchLogCall::Decode(message) => Err(RegistryError::Decode(message)),
             }
         }
     }
