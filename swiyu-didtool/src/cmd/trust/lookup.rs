@@ -65,7 +65,7 @@ fn process_body(did: &str, body: &str, raw: bool) -> Result<LookupOutcome, Looku
             .map_err(|source| TrustError::Statement { n: i + 1, source })?;
         statements.push(s);
     }
-    statements.sort_by(|a, b| b.iat.cmp(&a.iat));
+    statements.sort_by_key(|s| std::cmp::Reverse(s.iat));
 
     println!("Trust statements for {did}");
     for (i, s) in statements.iter().enumerate() {

@@ -62,7 +62,7 @@ pub fn cmd_verify(store: &KeyStore, args: VerifyArgs) -> Result<VerifyOutcome, V
             .map_err(|source| TrustError::Statement { n: i + 1, source })?;
         decoded.push(s);
     }
-    decoded.sort_by(|a, b| b.iat.cmp(&a.iat));
+    decoded.sort_by_key(|d| std::cmp::Reverse(d.iat));
 
     let mut ctx = VerifyContext::new(expected_issuer);
     let now = Utc::now().timestamp().max(0) as u64;
