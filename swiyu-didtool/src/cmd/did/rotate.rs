@@ -41,9 +41,9 @@ pub struct RotateArgs {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RotateError {
-    #[error("nothing to update — pass at least one --rotate <role> or --<role>-key flag")]
+    #[error("nothing to update — pass at least one --role <role> or --<role>-key flag")]
     NoChange,
-    #[error("--rotate {role} and --{role}-key are mutually exclusive")]
+    #[error("--role {role} and --{role}-key are mutually exclusive")]
     ConflictingRotation { role: &'static str },
     #[error(transparent)]
     WriteLog(#[from] crate::cmd::file::WriteLogError),

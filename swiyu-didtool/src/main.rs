@@ -32,6 +32,35 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Manage DID lifecycle: create, rotate, deactivate.
+    Did {
+        #[command(subcommand)]
+        command: DidCommand,
+    },
+    /// Read a DID's log file (list, show, entry).
+    Didlog {
+        #[command(subcommand)]
+        command: DidlogCommand,
+    },
+    /// Manage the key store.
+    Key {
+        #[command(subcommand)]
+        command: KeyCommand,
+    },
+    /// Generate or verify Proof-of-Possession (PoP) JWTs.
+    Pop {
+        #[command(subcommand)]
+        command: PopCommand,
+    },
+    /// Inspect or verify the SWIYU trust granted to a DID.
+    Trust {
+        #[command(subcommand)]
+        command: TrustCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum DidCommand {
     /// Create a new DID via the SWIYU identifier registry, generate key pairs, write the initial DID log, and (unless --no-publish) publish the log to the registry.
     Create {
         #[command(flatten)]
@@ -52,23 +81,13 @@ enum Command {
         #[arg(long)]
         assertion_key: Option<PathBuf>,
     },
-    /// Manage the key store.
-    Keystore {
-        #[command(subcommand)]
-        command: KeystoreCommand,
-    },
-    /// Read a DID's log file (list, show, entry).
-    Log {
-        #[command(subcommand)]
-        command: LogCommand,
-    },
     /// Append a new entry to an existing DID log, rotating one or more keys.
-    Update {
+    Rotate {
         #[command(flatten)]
         source: DidOrInputArgs,
-        /// Generate fresh keys for the named role(s). Repeatable.
+        /// Generate fresh keys for the named role(s). Repeatable. Values: authorized, authentication, assertion, all.
         #[arg(long, value_enum)]
-        rotate: Vec<RotateRole>,
+        role: Vec<RotateRole>,
         /// Existing Ed25519 private key to install as the new authorized key (PEM).
         #[arg(long)]
         authorized_key: Option<PathBuf>,
@@ -87,8 +106,25 @@ enum Command {
         #[command(flatten)]
         registry: SwiyuRegistryArgs,
     },
+    /// Mark a DID as deactivated by appending a final entry to its log.
+    Deactivate {
+        #[command(flatten)]
+        source: DidOrInputArgs,
+        /// Write the full updated log to this file. With --input or the default `did.jsonl`, the source file is updated in place if --out is omitted; with --did the new log is not written locally unless --out is given (persistence is via registry publish).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Allow `--out` to overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+        #[command(flatten)]
+        registry: SwiyuRegistryArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum PopCommand {
     /// Create a Proof of Possession (PoP) JWT signed with one of the DID's keys.
-    CreatePop {
+    Create {
         /// Full DID string or 12-character BLAKE3 hash.
         #[arg(long, required = true)]
         did: String,
@@ -111,13 +147,8 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Inspect or verify the SWIYU trust granted to a DID.
-    Trust {
-        #[command(subcommand)]
-        command: TrustCommand,
-    },
     /// Verify a Proof of Possession (PoP) JWT against a DID's keys.
-    VerifyPop {
+    Verify {
         /// The JWT to verify, passed inline.
         #[arg(long, conflicts_with = "jwt_file")]
         jwt: Option<String>,
@@ -132,19 +163,6 @@ enum Command {
         /// Skip the `exp` freshness check.
         #[arg(long)]
         allow_expired: bool,
-    },
-    /// Mark a DID as deactivated by appending a final entry to its log.
-    Deactivate {
-        #[command(flatten)]
-        source: DidOrInputArgs,
-        /// Write the full updated log to this file. With --input or the default `did.jsonl`, the source file is updated in place if --out is omitted; with --did the new log is not written locally unless --out is given (persistence is via registry publish).
-        #[arg(long)]
-        out: Option<PathBuf>,
-        /// Allow `--out` to overwrite an existing file.
-        #[arg(long)]
-        force: bool,
-        #[command(flatten)]
-        registry: SwiyuRegistryArgs,
     },
 }
 
@@ -175,7 +193,7 @@ struct DidOrInputArgs {
     input: Option<PathBuf>,
 }
 
-/// Role names for `didtool update --rotate`.
+/// Role names for `didtool did rotate --role`.
 #[derive(Clone, ValueEnum)]
 enum RotateRole {
     /// EdDSA signing key for log-entry signatures.
@@ -200,7 +218,7 @@ impl From<RotateRole> for cmd::did::RotateRole {
 }
 
 #[derive(Subcommand)]
-enum LogCommand {
+enum DidlogCommand {
     /// List every entry in the DID log, one row per entry.
     List {
         #[command(flatten)]
@@ -274,7 +292,7 @@ enum TrustCommand {
 }
 
 #[derive(Subcommand)]
-enum KeystoreCommand {
+enum KeyCommand {
     /// List all entries in the key store.
     List,
     /// List the snapshot versions stored for one DID.
@@ -371,54 +389,96 @@ fn main() {
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let store = open_store(cli.keystore)?;
     match cli.command {
-        Command::Create {
-            registry:
-                SwiyuRegistryArgs {
-                    no_publish,
-                    partner_id,
-                    registry_url,
-                },
-            format,
-            out,
-            authorized_key,
-            authentication_key,
-            assertion_key,
-        } => cmd::did::cmd_create(
-            &store,
-            cmd::did::CreateArgs {
-                url: None,
-                swiyu: true,
-                partner_id,
-                registry_url,
-                no_publish,
-                format: format.into(),
+        Command::Did { command } => match command {
+            DidCommand::Create {
+                registry:
+                    SwiyuRegistryArgs {
+                        no_publish,
+                        partner_id,
+                        registry_url,
+                    },
+                format,
                 out,
                 authorized_key,
                 authentication_key,
                 assertion_key,
-            },
-        )
-        .map_err(|e| e.into()),
-        Command::Keystore { command } => match command {
-            KeystoreCommand::List => cmd::key::cmd_list(&store),
-            KeystoreCommand::Versions { did } => cmd::key::cmd_versions(&store, &did),
-            KeystoreCommand::Show { did, role, version } => {
-                cmd::key::cmd_show(&store, &did, role.map(Into::into), version)
-            }
-            KeystoreCommand::Export {
-                did,
+            } => cmd::did::cmd_create(
+                &store,
+                cmd::did::CreateArgs {
+                    url: None,
+                    swiyu: true,
+                    partner_id,
+                    registry_url,
+                    no_publish,
+                    format: format.into(),
+                    out,
+                    authorized_key,
+                    authentication_key,
+                    assertion_key,
+                },
+            )
+            .map_err(|e| e.into()),
+            DidCommand::Rotate {
+                source: DidOrInputArgs { did, input },
                 role,
+                authorized_key,
+                authentication_key,
+                assertion_key,
                 out,
-                private,
-                version,
-            } => cmd::key::cmd_export(&store, &did, role.into(), out, private, version),
+                force,
+                registry:
+                    SwiyuRegistryArgs {
+                        no_publish,
+                        partner_id,
+                        registry_url,
+                    },
+            } => cmd::did::cmd_rotate(
+                &store,
+                cmd::did::RotateArgs {
+                    did,
+                    input,
+                    rotate: role.into_iter().map(Into::into).collect(),
+                    authorized_key,
+                    authentication_key,
+                    assertion_key,
+                    out,
+                    force,
+                    no_publish,
+                    partner_id,
+                    registry_url,
+                },
+            )
+            .map_err(|e| e.into()),
+            DidCommand::Deactivate {
+                source: DidOrInputArgs { did, input },
+                out,
+                force,
+                registry:
+                    SwiyuRegistryArgs {
+                        no_publish,
+                        partner_id,
+                        registry_url,
+                    },
+            } => cmd::did::cmd_deactivate(
+                &store,
+                cmd::did::DeactivateArgs {
+                    did,
+                    input,
+                    out,
+                    force,
+                    no_publish,
+                    partner_id,
+                    registry_url,
+                },
+            )
+            .map_err(|e| e.into()),
         },
-        Command::Log { command } => match command {
-            LogCommand::List {
+        Command::Didlog { command } => match command {
+            DidlogCommand::List {
                 source: DidOrInputArgs { did, input },
             } => cmd::didlog::cmd_list(&store, cmd::didlog::ListArgs { did, input })
                 .map_err(|e| e.into()),
-            LogCommand::Show {
+            DidlogCommand::Show {
                 source: DidOrInputArgs { did, input },
                 out,
                 force,
@@ -436,7 +496,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 },
             )
             .map_err(|e| e.into()),
-            LogCommand::Entry {
+            DidlogCommand::Entry {
                 source: DidOrInputArgs { did, input },
                 at,
                 out,
@@ -457,58 +517,61 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             )
             .map_err(|e| e.into()),
         },
-        Command::Update {
-            source: DidOrInputArgs { did, input },
-            rotate,
-            authorized_key,
-            authentication_key,
-            assertion_key,
-            out,
-            force,
-            registry:
-                SwiyuRegistryArgs {
-                    no_publish,
-                    partner_id,
-                    registry_url,
-                },
-        } => cmd::did::cmd_rotate(
-            &store,
-            cmd::did::RotateArgs {
+        Command::Key { command } => match command {
+            KeyCommand::List => cmd::key::cmd_list(&store),
+            KeyCommand::Versions { did } => cmd::key::cmd_versions(&store, &did),
+            KeyCommand::Show { did, role, version } => {
+                cmd::key::cmd_show(&store, &did, role.map(Into::into), version)
+            }
+            KeyCommand::Export {
                 did,
-                input,
-                rotate: rotate.into_iter().map(Into::into).collect(),
-                authorized_key,
-                authentication_key,
-                assertion_key,
+                role,
                 out,
-                force,
-                no_publish,
-                partner_id,
-                registry_url,
-            },
-        )
-        .map_err(|e| e.into()),
-        Command::CreatePop {
-            did,
-            role,
-            nonce,
-            ttl,
-            version,
-            out,
-            force,
-        } => cmd::pop::cmd_create_pop(
-            &store,
-            cmd::pop::CreatePopArgs {
+                private,
+                version,
+            } => cmd::key::cmd_export(&store, &did, role.into(), out, private, version),
+        },
+        Command::Pop { command } => match command {
+            PopCommand::Create {
                 did,
-                role: role.into(),
+                role,
                 nonce,
                 ttl,
                 version,
                 out,
                 force,
-            },
-        )
-        .map_err(|e| e.into()),
+            } => cmd::pop::cmd_create_pop(
+                &store,
+                cmd::pop::CreatePopArgs {
+                    did,
+                    role: role.into(),
+                    nonce,
+                    ttl,
+                    version,
+                    out,
+                    force,
+                },
+            )
+            .map_err(|e| e.into()),
+            PopCommand::Verify {
+                jwt,
+                jwt_file,
+                source: DidOrInputArgs { did, input },
+                nonce,
+                allow_expired,
+            } => cmd::pop::cmd_verify_pop(
+                &store,
+                cmd::pop::VerifyPopArgs {
+                    jwt,
+                    jwt_file,
+                    did,
+                    input,
+                    nonce,
+                    allow_expired,
+                },
+            )
+            .map_err(|e| e.into()),
+        },
         Command::Trust { command } => match command {
             TrustCommand::Lookup {
                 did,
@@ -549,47 +612,6 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             },
         },
-        Command::VerifyPop {
-            jwt,
-            jwt_file,
-            source: DidOrInputArgs { did, input },
-            nonce,
-            allow_expired,
-        } => cmd::pop::cmd_verify_pop(
-            &store,
-            cmd::pop::VerifyPopArgs {
-                jwt,
-                jwt_file,
-                did,
-                input,
-                nonce,
-                allow_expired,
-            },
-        )
-        .map_err(|e| e.into()),
-        Command::Deactivate {
-            source: DidOrInputArgs { did, input },
-            out,
-            force,
-            registry:
-                SwiyuRegistryArgs {
-                    no_publish,
-                    partner_id,
-                    registry_url,
-                },
-        } => cmd::did::cmd_deactivate(
-            &store,
-            cmd::did::DeactivateArgs {
-                did,
-                input,
-                out,
-                force,
-                no_publish,
-                partner_id,
-                registry_url,
-            },
-        )
-        .map_err(|e| e.into()),
     }
 }
 
