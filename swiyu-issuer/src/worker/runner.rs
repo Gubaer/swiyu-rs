@@ -4,9 +4,7 @@
 //! A single `tokio::spawn`-ed task that polls the `operation_tasks`
 //! table for runnable rows, dispatches each to the per-task-type
 //! per-step executor, and applies the resulting outcome through the
-//! persistence layer. v1 supports only the `CreateIssuer` task type;
-//! `RotateKeys` and `DeactivateIssuer` follow the same shape and
-//! land in subsequent slices.
+//! persistence layer.
 
 use std::time::Duration;
 
@@ -33,6 +31,11 @@ use super::deactivate_issuer::{
 };
 use super::dispatch::apply_outcome;
 use super::registry::RegistryFacade;
+use super::rotate_keys::{
+    RotateKeysInput, RotateKeysStateData, build_rotation_log::execute_build_rotation_log,
+    generate_new_keys::execute_generate_new_keys,
+    publish_log::execute_publish_log as execute_rotate_publish_log, swap_keys::execute_swap_keys,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
@@ -144,12 +147,7 @@ where
         match task.task_type {
             TaskType::CreateIssuer => self.execute_create_issuer(task).await,
             TaskType::DeactivateIssuer => self.execute_deactivate_issuer(task).await,
-            // The RotateKeys task type exists in the domain but no
-            // endpoint can create one yet, so this arm is unreachable
-            // in practice until the dispatcher is wired up.
-            TaskType::RotateKeys => Err(WorkerError::Decode(
-                "RotateKeys task type not yet implemented".into(),
-            )),
+            TaskType::RotateKeys => self.execute_rotate_keys(task).await,
         }
     }
 
@@ -332,6 +330,129 @@ where
             ),
             "mark_deactivated" => (
                 execute_mark_deactivated(&self.pool, &task.tenant_id, issuer_id, entry_now).await,
+                None,
+            ),
+            other => {
+                return Err(WorkerError::Decode(format!("unknown step: {other}")));
+            }
+        };
+
+        match &outcome {
+            StepOutcome::Done(_) => {
+                debug!(task_id = %task.id, step = step_name, "step done");
+            }
+            StepOutcome::Retry {
+                error_code,
+                error_message,
+            } => {
+                warn!(
+                    task_id = %task.id,
+                    step = step_name,
+                    error_code = error_code.as_str(),
+                    error_message = error_message.as_str(),
+                    "step requested retry",
+                );
+            }
+            StepOutcome::Terminal {
+                error_code,
+                error_message,
+            } => {
+                error!(
+                    task_id = %task.id,
+                    step = step_name,
+                    error_code = error_code.as_str(),
+                    error_message = error_message.as_str(),
+                    "step terminal failure",
+                );
+            }
+        }
+
+        let now = Utc::now();
+        let mut conn = self.pool.acquire().await.map_err(PersistenceError::Db)?;
+        match (outcome, next_step) {
+            (StepOutcome::Done(_), None) => {
+                persistence::operation_tasks::mark_completed(
+                    &mut conn,
+                    &task.id,
+                    task.result_issuer_id.as_ref(),
+                    now,
+                )
+                .await?;
+                info!(
+                    task_id = %task.id,
+                    issuer_id = ?task.result_issuer_id,
+                    "task completed",
+                );
+            }
+            (outcome, next_step) => {
+                apply_outcome(&mut conn, task, next_step, outcome, now, &mut *self.rng).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn execute_rotate_keys(&mut self, task: &OperationTask) -> Result<(), WorkerError> {
+        let input: RotateKeysInput = serde_json::from_value(task.input.clone())
+            .map_err(|e| WorkerError::Decode(format!("input: {e}")))?;
+        let state: RotateKeysStateData = serde_json::from_value(task.state_data.clone())
+            .map_err(|e| WorkerError::Decode(format!("state_data: {e}")))?;
+
+        let issuer_id = task.result_issuer_id.as_ref().ok_or_else(|| {
+            WorkerError::Decode("task.result_issuer_id is None for RotateKeys".into())
+        })?;
+
+        let mut conn = self.pool.acquire().await.map_err(PersistenceError::Db)?;
+        let tenant = persistence::tenants::find_by_id(&mut conn, &task.tenant_id)
+            .await?
+            .ok_or_else(|| WorkerError::Decode(format!("tenant {} not found", task.tenant_id)))?;
+        let issuer =
+            persistence::issuers::find_by_id_for_tenant(&mut conn, &task.tenant_id, issuer_id)
+                .await?
+                .ok_or_else(|| {
+                    WorkerError::Decode(format!(
+                        "issuer {issuer_id} not found for tenant {}",
+                        task.tenant_id
+                    ))
+                })?;
+        drop(conn);
+
+        // Pin `now` to task.created_at so a re-run after a crash
+        // produces a byte-identical signed entry — same discipline
+        // the create_issuer and deactivate_issuer sagas use.
+        let entry_now = task.created_at;
+
+        let step_name: &str = task.step.as_deref().unwrap_or("generate_new_keys");
+        let (outcome, next_step) = match step_name {
+            "generate_new_keys" => (
+                execute_generate_new_keys(&issuer, &input, &state, &self.engine).await,
+                Some("build_rotation_log"),
+            ),
+            "build_rotation_log" => (
+                execute_build_rotation_log(
+                    &issuer,
+                    &state,
+                    &self.registry,
+                    &self.engine,
+                    entry_now,
+                )
+                .await,
+                Some("publish_log"),
+            ),
+            "publish_log" => (
+                execute_rotate_publish_log(
+                    &tenant,
+                    &issuer,
+                    &state,
+                    &self.registry,
+                    &self.engine,
+                    entry_now,
+                )
+                .await,
+                Some("swap_keys"),
+            ),
+            "swap_keys" => (
+                execute_swap_keys(&self.pool, &task.tenant_id, issuer_id, &state).await,
                 None,
             ),
             other => {
