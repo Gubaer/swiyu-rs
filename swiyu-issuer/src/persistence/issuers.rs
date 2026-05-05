@@ -167,6 +167,104 @@ pub async fn mark_deactivated(
     }
 }
 
+/// Outcome of [`swap_key_triple`].
+///
+/// `NowSwapped` is the first-write case: at least one of the row's
+/// three key columns differed from the requested triple and the
+/// UPDATE installed the new values. `Already` is the idempotent
+/// re-run case: all three columns already matched the requested
+/// triple, so the UPDATE matched no rows. Callers treat both as
+/// success; the variant lets the worker log the distinction and
+/// lets future code gate side effects on first-write transitions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwapOutcome {
+    Already,
+    NowSwapped,
+}
+
+/// Atomically swaps the three key-id columns of an `Active`
+/// issuer, idempotent on re-run.
+///
+/// The state guard `state = 'active'` rejects swaps against a
+/// `Deactivated` issuer or the seeded legacy row (`state IS NULL`):
+/// rotation is only meaningful while the issuer is active. The
+/// "did anything change" guard in the WHERE clause makes a re-run
+/// against a row that already carries the requested triple a 0-row
+/// UPDATE; the function then re-reads the row to decide between
+/// `Already` and `NotFound`:
+///
+/// - row exists, state is `active`, all three keys match the
+///   requested triple → `SwapOutcome::Already`
+/// - row exists in any other state, or is missing, or belongs to
+///   a different tenant → `PersistenceError::NotFound`
+///
+/// Mirrors the lookup discipline of [`find_by_id_for_tenant`]:
+/// "wrong tenant" collapses to "not found" so callers cannot probe
+/// across tenants.
+pub async fn swap_key_triple(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+    authorized: &KeyPairId,
+    authentication: &KeyPairId,
+    assertion: &KeyPairId,
+) -> Result<SwapOutcome, PersistenceError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE issuers
+        SET authorized_key_id = $1,
+            authentication_key_id = $2,
+            assertion_key_id = $3
+        WHERE id = $4 AND tenant_id = $5 AND state = 'active'
+          AND (authorized_key_id IS DISTINCT FROM $1
+               OR authentication_key_id IS DISTINCT FROM $2
+               OR assertion_key_id IS DISTINCT FROM $3)
+        "#,
+    )
+    .bind(authorized.as_uuid())
+    .bind(authentication.as_uuid())
+    .bind(assertion.as_uuid())
+    .bind(issuer_id.bare())
+    .bind(tenant_id.bare())
+    .execute(&mut *conn)
+    .await?;
+
+    if result.rows_affected() == 1 {
+        return Ok(SwapOutcome::NowSwapped);
+    }
+
+    let row = sqlx::query(
+        r#"
+        SELECT state, authorized_key_id, authentication_key_id, assertion_key_id
+        FROM issuers
+        WHERE id = $1 AND tenant_id = $2
+        "#,
+    )
+    .bind(issuer_id.bare())
+    .bind(tenant_id.bare())
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let Some(row) = row else {
+        return Err(PersistenceError::NotFound);
+    };
+    let state: Option<String> = row.try_get("state")?;
+    let row_authorized: Option<Uuid> = row.try_get("authorized_key_id")?;
+    let row_authentication: Option<Uuid> = row.try_get("authentication_key_id")?;
+    let row_assertion: Option<Uuid> = row.try_get("assertion_key_id")?;
+
+    let already_matches = state.as_deref() == Some("active")
+        && row_authorized.as_ref() == Some(authorized.as_uuid())
+        && row_authentication.as_ref() == Some(authentication.as_uuid())
+        && row_assertion.as_ref() == Some(assertion.as_uuid());
+
+    if already_matches {
+        Ok(SwapOutcome::Already)
+    } else {
+        Err(PersistenceError::NotFound)
+    }
+}
+
 pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), PersistenceError> {
     sqlx::query(
         r#"

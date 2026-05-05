@@ -10,7 +10,7 @@ use sqlx::PgPool;
 
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
 use swiyu_issuer::persistence::PersistenceError;
-use swiyu_issuer::persistence::issuers::{self, MarkOutcome};
+use swiyu_issuer::persistence::issuers::{self, MarkOutcome, SwapOutcome};
 
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
     sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
@@ -238,4 +238,196 @@ async fn exists_for_tenant_is_tenant_scoped(pool: PgPool) {
             .await
             .unwrap()
     );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn swap_key_triple_swaps_active_issuer(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+
+    let new_authorized = KeyPairId::generate();
+    let new_authentication = KeyPairId::generate();
+    let new_assertion = KeyPairId::generate();
+
+    let outcome = issuers::swap_key_triple(
+        &mut conn,
+        &tenant_id,
+        &issuer.id,
+        &new_authorized,
+        &new_authentication,
+        &new_assertion,
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome, SwapOutcome::NowSwapped);
+
+    let loaded = issuers::find_by_id(&mut conn, &issuer.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.authorized_key_id, Some(new_authorized));
+    assert_eq!(loaded.authentication_key_id, Some(new_authentication));
+    assert_eq!(loaded.assertion_key_id, Some(new_assertion));
+    assert_eq!(loaded.state, Some(IssuerState::Active));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn swap_key_triple_is_idempotent_when_already_installed(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+
+    // Re-installing the row's existing triple is a no-op that
+    // reports `Already`.
+    let outcome = issuers::swap_key_triple(
+        &mut conn,
+        &tenant_id,
+        &issuer.id,
+        issuer.authorized_key_id.as_ref().unwrap(),
+        issuer.authentication_key_id.as_ref().unwrap(),
+        issuer.assertion_key_id.as_ref().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome, SwapOutcome::Already);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn swap_key_triple_rejects_cross_tenant_caller(pool: PgPool) {
+    let tenant_owner = TenantId::generate();
+    let tenant_other = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_owner).await;
+    insert_test_tenant(&pool, &tenant_other).await;
+    let issuer = signing_engine_shaped_issuer(tenant_owner.clone());
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+
+    let result = issuers::swap_key_triple(
+        &mut conn,
+        &tenant_other,
+        &issuer.id,
+        &KeyPairId::generate(),
+        &KeyPairId::generate(),
+        &KeyPairId::generate(),
+    )
+    .await;
+    assert!(matches!(result, Err(PersistenceError::NotFound)));
+
+    // Owner-tenant view is unaffected: keys did not change.
+    let loaded = issuers::find_by_id(&mut conn, &issuer.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.authorized_key_id, issuer.authorized_key_id);
+    assert_eq!(loaded.authentication_key_id, issuer.authentication_key_id);
+    assert_eq!(loaded.assertion_key_id, issuer.assertion_key_id);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn swap_key_triple_rejects_deactivated_issuer(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+    issuers::mark_deactivated(&mut conn, &tenant_id, &issuer.id)
+        .await
+        .unwrap();
+
+    let result = issuers::swap_key_triple(
+        &mut conn,
+        &tenant_id,
+        &issuer.id,
+        &KeyPairId::generate(),
+        &KeyPairId::generate(),
+        &KeyPairId::generate(),
+    )
+    .await;
+    assert!(matches!(result, Err(PersistenceError::NotFound)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn swap_key_triple_rejects_legacy_state_null_row(pool: PgPool) {
+    // The seeded dev row from migration 0004 has state = NULL. The
+    // rotate-keys saga must refuse to swap that row's keys, since it
+    // never started in `Active` and has no Authorized key for the
+    // signing step that precedes this UPDATE.
+    let tenant_id = TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap();
+    let legacy_id = IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let result = issuers::swap_key_triple(
+        &mut conn,
+        &tenant_id,
+        &legacy_id,
+        &KeyPairId::generate(),
+        &KeyPairId::generate(),
+        &KeyPairId::generate(),
+    )
+    .await;
+    assert!(matches!(result, Err(PersistenceError::NotFound)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn swap_key_triple_returns_not_found_for_unknown_issuer(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let unknown = IssuerId::generate();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let result = issuers::swap_key_triple(
+        &mut conn,
+        &tenant_id,
+        &unknown,
+        &KeyPairId::generate(),
+        &KeyPairId::generate(),
+        &KeyPairId::generate(),
+    )
+    .await;
+    assert!(matches!(result, Err(PersistenceError::NotFound)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn swap_key_triple_swaps_only_one_role(pool: PgPool) {
+    // The helper takes a complete triple (caller assembles it), but
+    // a single-role rotation passes the unchanged ids through for
+    // the other two roles. Verify the row ends up exactly as
+    // requested even when only one column actually changes.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+
+    let new_authentication = KeyPairId::generate();
+
+    let outcome = issuers::swap_key_triple(
+        &mut conn,
+        &tenant_id,
+        &issuer.id,
+        issuer.authorized_key_id.as_ref().unwrap(),
+        &new_authentication,
+        issuer.assertion_key_id.as_ref().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome, SwapOutcome::NowSwapped);
+
+    let loaded = issuers::find_by_id(&mut conn, &issuer.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.authorized_key_id, issuer.authorized_key_id);
+    assert_eq!(loaded.authentication_key_id, Some(new_authentication));
+    assert_eq!(loaded.assertion_key_id, issuer.assertion_key_id);
 }
