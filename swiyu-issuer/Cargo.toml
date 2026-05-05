@@ -16,7 +16,7 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 getrandom = "0.4"
 humantime = "2"
 jsonschema = "0.46"
-p256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 # Pinned to 0.6 because the stable ed25519-dalek 2.x and p256 0.13.x lines both depend on
 # rand_core 0.6 transitively; their generate/sign APIs take an `&mut impl rand_core_0_6::RngCore`.
 # Newer rand_core (0.9, 0.10) is only adopted by ed25519-dalek 3.0-pre and p256 0.14-rc, which we
