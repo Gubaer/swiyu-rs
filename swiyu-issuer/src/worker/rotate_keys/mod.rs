@@ -3,6 +3,7 @@
 pub mod build_rotation_log;
 pub mod generate_new_keys;
 pub mod log_builder;
+pub mod publish_log;
 pub mod state;
 
 pub use state::{RotateKeysInput, RotateKeysStateData};
