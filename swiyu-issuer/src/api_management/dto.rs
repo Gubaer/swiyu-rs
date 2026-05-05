@@ -38,6 +38,22 @@ pub struct CreateIssuerResponse {
     pub issuer_id: String,
 }
 
+/// Response body returned by
+/// `POST /api/v1/issuers/{issuer_id}/deactivate`.
+///
+/// `task_id` is `Some` for fresh deactivations (HTTP 201, the new
+/// task) and for already-pending or already-completed deactivations
+/// where the originating task row is still findable (HTTP 200,
+/// returned for poll-handle continuity). It is `None` only when the
+/// issuer is `Deactivated` but no `DeactivateIssuer` task row drove
+/// the transition — typically a directly-mutated fixture row.
+/// `issuer_id` always echoes the path parameter.
+#[derive(Debug, Serialize)]
+pub struct DeactivateIssuerResponse {
+    pub task_id: Option<String>,
+    pub issuer_id: String,
+}
+
 /// Response body returned by `GET /api/v1/issuers/{issuer_id}` on
 /// success (HTTP 200).
 ///

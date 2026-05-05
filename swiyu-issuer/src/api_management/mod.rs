@@ -22,6 +22,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/issuers", post(issuers::create).get(issuers::list))
         .route("/api/v1/issuers/{issuer_id}", get(issuers::get))
         .route(
+            "/api/v1/issuers/{issuer_id}/deactivate",
+            post(issuers::deactivate),
+        )
+        .route(
             "/api/v1/operation-tasks/{task_id}",
             get(operation_tasks::get),
         )

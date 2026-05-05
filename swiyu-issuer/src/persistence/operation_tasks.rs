@@ -69,6 +69,47 @@ pub async fn find_by_id(
     row_to_task(&row)
 }
 
+/// Returns the most-recently-created task matching the
+/// (tenant, issuer, task_type) triple, regardless of state.
+///
+/// Powers the idempotency lookup behind
+/// `POST /api/v1/issuers/{id}/deactivate`: a duplicate submission
+/// for the same issuer should return the existing task rather than
+/// inserting a second one. The query orders by `created_at DESC`
+/// and takes a single row, so an issuer that has been recreated
+/// (theoretically — current rules do not allow that) and
+/// re-deactivated would surface its newest deactivation task.
+pub async fn find_latest_by_type_and_issuer(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+    task_type: TaskType,
+) -> Result<Option<OperationTask>, PersistenceError> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, tenant_id, task_type, state, step,
+               attempts, next_attempt_at,
+               error_code, error_message,
+               input, state_data,
+               result_issuer_id,
+               created_at, updated_at, completed_at
+        FROM operation_tasks
+        WHERE tenant_id = $1
+          AND result_issuer_id = $2
+          AND task_type = $3
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(tenant_id.bare())
+    .bind(issuer_id.bare())
+    .bind(task_type.as_str())
+    .fetch_optional(conn)
+    .await?;
+
+    row.as_ref().map(row_to_task).transpose()
+}
+
 /// Atomically picks the oldest runnable task and stamps it `in_progress`.
 ///
 /// "Runnable" means state is `pending` or `in_progress` (the latter

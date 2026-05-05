@@ -6,15 +6,15 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 
-use crate::domain::{Issuer, IssuerId, OperationTask, TaskId, TaskState, TaskType};
+use crate::domain::{Issuer, IssuerId, IssuerState, OperationTask, TaskId, TaskState, TaskType};
 use crate::persistence;
 use crate::persistence::issuers::ListPageQuery;
 
 use super::AppState;
 use super::auth::TenantContext;
 use super::dto::{
-    CreateIssuerResponse, CreateIssuerSubmission, GetIssuerResponse, ListIssuersQuery,
-    ListIssuersResponse,
+    CreateIssuerResponse, CreateIssuerSubmission, DeactivateIssuerResponse, GetIssuerResponse,
+    ListIssuersQuery, ListIssuersResponse,
 };
 use super::error::ApiError;
 
@@ -132,6 +132,117 @@ pub async fn get(
     .ok_or(ApiError::NotFound)?;
 
     Ok(Json(issuer_to_response(issuer)?))
+}
+
+pub async fn deactivate(
+    State(state): State<AppState>,
+    Path(issuer_id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<(StatusCode, Json<DeactivateIssuerResponse>), ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
+        "deactivate-issuer task submission",
+    );
+
+    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
+        details: format!("issuer_id path parameter: {err}"),
+    })?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let issuer = persistence::issuers::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    // Hide the seeded legacy row (state == None) the same way GET
+    // and DELETE do — it predates the issuer-management flow and
+    // has no Authorized key the saga could sign with.
+    let issuer_state = issuer.state.ok_or(ApiError::NotFound)?;
+
+    let existing = persistence::operation_tasks::find_latest_by_type_and_issuer(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+        TaskType::DeactivateIssuer,
+    )
+    .await?;
+
+    match (issuer_state, existing) {
+        // Already deactivated, with a task row to attribute it to.
+        (IssuerState::Deactivated, Some(task)) => Ok((
+            StatusCode::OK,
+            Json(DeactivateIssuerResponse {
+                task_id: Some(task.id.to_string()),
+                issuer_id: issuer_id.to_string(),
+            }),
+        )),
+        // Already deactivated, no task row (directly-mutated fixture).
+        (IssuerState::Deactivated, None) => Ok((
+            StatusCode::OK,
+            Json(DeactivateIssuerResponse {
+                task_id: None,
+                issuer_id: issuer_id.to_string(),
+            }),
+        )),
+        // Active and a deactivation task is already in flight — return
+        // the existing task_id so the caller can keep polling. Treat a
+        // duplicate submission as a poll-handle request, not a new
+        // task.
+        (IssuerState::Active, Some(task))
+            if matches!(task.state, TaskState::Pending | TaskState::InProgress) =>
+        {
+            Ok((
+                StatusCode::OK,
+                Json(DeactivateIssuerResponse {
+                    task_id: Some(task.id.to_string()),
+                    issuer_id: issuer_id.to_string(),
+                }),
+            ))
+        }
+        // Active and either no prior task, or only a Failed/Completed
+        // one (Completed against an Active issuer is anomalous and
+        // shouldn't happen under normal saga semantics, but we treat
+        // it the same as "no relevant task" — the BA wants the issuer
+        // deactivated, so submit a fresh attempt). Insert a new task.
+        (IssuerState::Active, _) => {
+            let task_id = TaskId::generate();
+            let now = Utc::now();
+            let task = OperationTask {
+                id: task_id.clone(),
+                tenant_id: tenant_context.tenant_id.clone(),
+                task_type: TaskType::DeactivateIssuer,
+                state: TaskState::Pending,
+                step: None,
+                attempts: 0,
+                next_attempt_at: None,
+                error_code: None,
+                error_message: None,
+                input: json!({}),
+                state_data: json!({}),
+                result_issuer_id: Some(issuer_id.clone()),
+                created_at: now,
+                updated_at: now,
+                completed_at: None,
+            };
+            persistence::operation_tasks::insert(&mut conn, &task).await?;
+            Ok((
+                StatusCode::CREATED,
+                Json(DeactivateIssuerResponse {
+                    task_id: Some(task_id.to_string()),
+                    issuer_id: issuer_id.to_string(),
+                }),
+            ))
+        }
+    }
 }
 
 pub async fn list(
