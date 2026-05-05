@@ -15,12 +15,13 @@ Trait, supporting types, and backend implementations live together under one mod
 ```
 swiyu-issuer/src/domain/signing_engine/
     mod.rs       — trait, KeyRole, KeyPairId, errors, re-exports
+    any.rs       — AnySigningEngine (runtime dispatch enum)
     dev.rs       — DevSigningEngine
-    vault.rs     — VaultSigningEngine (if/when implemented)
+    vault.rs     — VaultSigningEngine
     hsm.rs       — HsmSigningEngine
 ```
 
-Backend selection is made at startup based on configuration.
+Backend selection is made at startup based on the `SIGNING_ENGINE` environment variable (`dev` or `vault`; `hsm` lands when that backend ships) and exposed to the rest of the binary as `AnySigningEngine`. See *Dispatch* below.
 
 ### Supporting types
 
@@ -109,6 +110,11 @@ Notes on the trait shape:
 - **`Send + Sync`.** swiyu-issuer holds the SigningEngine inside an `Arc` and shares it across request handlers.
 - **Variable-length input.** `input: &[u8]` keeps the trait honest about the per-algorithm contract spelled out in `aspect-key-management.md`: ECDSA P-256 expects exactly 32 bytes (a SHA-256 digest); Ed25519 accepts any length and treats the bytes as the message. The earlier `&[u8; 32]` shape was wrong for `eddsa-jcs-2022`, which signs a 64-byte concatenation of two SHA-256 hashes; pre-hashing to fit a 32-byte slot would change the cryptosuite and break verifiers. ECDSA length mismatches surface as `InvalidInputLength`.
 - **`delete_keypair` is idempotent.** Deleting an id that does not exist returns `Ok(())`. The trait postcondition is "the key is gone", which is met either way. `KeyNotFound` is therefore reserved for `sign` and never returned from `delete_keypair`.
+- **Public-key byte shape is single per algorithm** so DIDLog construction (and any cross-engine equivalence test) can rely on a stable representation regardless of backend:
+  - **Ed25519** — raw 32-byte point (the `ed25519-dalek` `to_bytes()` form).
+  - **ECDSA P-256** — SEC1 uncompressed (`0x04 ‖ x ‖ y`, 65 bytes), the form `p256::EncodedPoint::to_encoded_point(false).as_bytes()` produces.
+
+  Backends normalise to this shape internally — `VaultSigningEngine` decodes Vault's PEM-encoded SubjectPublicKeyInfo; `DevSigningEngine` produces it natively.
 
 ### Errors
 
@@ -130,6 +136,21 @@ pub enum SigningEngineError {
 ```
 
 The variant set is intentionally minimal for the first cut. As concrete backends surface specific failure modes, we will add typed variants rather than letting everything fall through `Backend`.
+
+### Dispatch
+
+Backend selection happens once at startup. The set of backends is closed (dev / vault / future hsm) and never changes mid-process, so swiyu-issuer wraps the chosen backend in a single enum:
+
+```rust
+pub enum AnySigningEngine {
+    Dev(DevSigningEngine),
+    Vault(VaultSigningEngine),
+}
+```
+
+`AnySigningEngine` itself impls `SigningEngine` and dispatches each method via `match`. The `Hsm(HsmSigningEngine)` variant slots in later under the same enum.
+
+`Box<dyn SigningEngine>` is not an option: the trait's methods return `impl Future<Output = …> + Send` (RPITIT), which makes it not dyn-compatible. Restoring dyn-compatibility would require pulling in `async-trait` (and the heap allocation per call it forces). Enum dispatch avoids that dependency, gives exhaustiveness checks when a backend is added, and reads more directly than a macro-generated trait object.
 
 ## Backend implementations
 
@@ -165,25 +186,45 @@ The migration file follows the existing `YYYYMMDD_NNNNNN_<name>.sql` pattern (ne
 
 **Deletion.** Removes the row by primary key; idempotent per the trait contract.
 
-### `VaultSigningEngine` — Middle maturity (open whether we ship)
+### `VaultSigningEngine` — Middle maturity
 
-**Status.** Per the aspect spec, it is an open decision whether we implement a Vault-backed engine. This subsection records what we have established about the mapping so the decision can be made on substance, not uncertainty.
+**Status.** Shipped. Selected at startup with `SIGNING_ENGINE=vault`; configured via `VAULT_ADDR`, `VAULT_TOKEN`, optional `VAULT_TRANSIT_PATH` (default `transit`), and optional `VAULT_REQUEST_TIMEOUT_SECS` (default 5). Used for staging and small-scale production where a dedicated HSM is not yet available.
 
 **Backend.** HashiCorp Vault, Transit Secrets Engine. Both `ed25519` and `ecdsa-p256` are first-class native key types — no extra wrapping or external crypto needed.
 
 **Identifier mapping.** The UUID v4 string (e.g. `550e8400-e29b-41d4-a716-446655440000`) is used directly as the Vault key name. UUIDs are valid Vault key names. No mapping table.
 
 **API operations.**
-- Generate: `POST /transit/keys/{uuid}` with `type=ed25519` or `type=ecdsa-p256`, then `GET /transit/keys/{uuid}` to read the public key.
-- Sign (ECDSA): `POST /transit/sign/{uuid}` with `prehashed=true`, `hash_algorithm=sha2-256`, `marshaling_algorithm=jws`. This combination forces "treat input as digest, return raw `r || s`".
-- Sign (Ed25519): `POST /transit/sign/{uuid}` with default parameters; Vault signs the input as a message with plain Ed25519.
-- Delete: `POST /transit/keys/{uuid}/config` with `deletion_allowed=true`, then `DELETE /transit/keys/{uuid}`.
+- Generate: `POST /v1/{transit_path}/keys/{uuid}` with `type=ed25519` or `type=ecdsa-p256`, then `GET /v1/{transit_path}/keys/{uuid}` to read the public key.
+- Sign (ECDSA): `POST /v1/{transit_path}/sign/{uuid}` with `prehashed=true`, `hash_algorithm=sha2-256`, `marshaling_algorithm=jws`. This combination forces "treat input as digest, return raw `r || s`".
+- Sign (Ed25519): `POST /v1/{transit_path}/sign/{uuid}` with default parameters; Vault signs the input as a message with plain Ed25519.
+- Delete: `POST /v1/{transit_path}/keys/{uuid}/config` with `deletion_allowed=true`, then `DELETE /v1/{transit_path}/keys/{uuid}`. Both calls are issued unconditionally on every `delete_keypair` so the engine works for keys it just created (Vault marks new keys as non-deletable by default).
 
-**Vault's built-in key versioning is not used.** Each `generate_keypair` creates a fresh Vault key. Every Vault key in our usage stays at version 1. Rotation creates new keys with new UUIDs; old keys remain (or are deleted). This keeps the structural model identical to the HSM backend.
+**Vault's built-in key versioning is not used.** Each `generate_keypair` creates a fresh Vault key. Every Vault key in our usage stays at version 1. Rotation creates new keys with new UUIDs; old keys remain (or are deleted). This keeps the structural model identical to the HSM backend, and lets the engine read `data.keys["1"].public_key` directly without chasing `latest_version`.
+
+**Algorithm cache.** `sign` needs to know each key's algorithm to craft the correct request body shape. The engine keeps an in-memory `RwLock<HashMap<KeyPairId, KeyAlgorithm>>` populated as a side effect of every successful key read (`generate_keypair` and `get_public_key` both write to it). On a cache miss `sign` falls through to a `GET` and populates the cache before signing. `delete_keypair` evicts.
+
+**Signature envelope decoding.** Vault returns signatures as `data.signature` strings prefixed `vault:v1:`; the body encoding differs by algorithm and is non-obvious:
+
+| Algorithm | Body encoding | Decoded length |
+|---|---|---|
+| Ed25519 (default) | standard base64 (`+`, `/`, `=` padding) | 64 raw bytes |
+| ECDSA P-256 (`marshaling_algorithm=jws`) | base64url-no-padding (`-`, `_`, no `=`) | 64 raw bytes (`r ‖ s`) |
+
+The `r ‖ s` ordering is implicit in the JWS marshalling — the layout matches what the rest of swiyu-issuer expects from `DevSigningEngine`, so no further normalisation is needed.
+
+**"Key missing" mapping.** Vault is inconsistent about how it reports a missing key, so the engine discriminates per-operation:
+
+- `GET /v1/{transit_path}/keys/{id}` returns a clean **404** → `KeyNotFound`.
+- `POST /v1/{transit_path}/sign/{id}` returns **400** with body containing `signing key not found` → `KeyNotFound`. Other 400s → `Backend`.
+- `POST /v1/{transit_path}/keys/{id}/config` returns **400** with body containing `no existing key named` → swallow (`delete_keypair` proceeds; the trait's idempotency contract is met by either of the two delete-path calls succeeding).
+- `DELETE /v1/{transit_path}/keys/{id}` returns **400** with body containing `could not delete key; not found` → swallow.
+
+The body-substring match is fragile by nature; the integration tests (`#[ignore]` by default, run against the dev container) guard against silent wording changes.
 
 **Authentication.** The engine carries a Vault client configured with a token (typically obtained via AppRole or a Kubernetes service-account auth method). Token lifecycle, renewal, and Vault policy are internal concerns of the engine and do not surface in the trait.
 
-**Network failures.** Unlike the dev engine (local DB) and the HSM engine (locally attached), Vault is reached over the network. Behaviour for transient failures and Vault unavailability (retry/backoff strategy, error mapping) is to be specified when implementation begins.
+**Network failures.** Vault is reached over the network. v1 behaviour: a single attempt per operation with the configured `request_timeout` (default 5 seconds), no retry, no backoff. Transport errors, JSON parse failures, and 5xx responses all map to `SigningEngineError::Backend`. A retry/backoff layer can be added later as an interceptor at the `reqwest::Client` layer or a wrapper inside the engine without changing the trait surface.
 
 ### `HsmSigningEngine` — High maturity (production)
 
@@ -230,8 +271,5 @@ For `sign` and `delete_keypair`, the engine looks up the current session handle 
 
 ## Open implementation questions
 
-1. **Dyn dispatch vs. enum dispatch.**
-   swiyu-issuer chooses a backend at startup based on configuration. To hold the engine behind `Box<dyn SigningEngine>` we cannot rely on native Rust 2024 `async fn` in trait alone — we would need either the `async-trait` macro or `trait_variant::make`, each adding a small dependency. The alternative is an `enum AnySigningEngine` that wraps each backend variant and dispatches with a `match`. The enum-dispatch approach avoids a macro dependency and tends to read more directly, at the cost of a few lines of boilerplate per method. Decision pending.
-
-2. **`RawPublicKey` representation.**
+1. **`RawPublicKey` representation.**
    The current sketch (`KeyAlgorithm` + `Vec<u8>`) is the simplest. The DIDLog code may want a typed enum (`Ed25519PublicKey` / `EcdsaP256PublicKey`) or a JWK-/multibase-friendly form. To be decided when we wire DIDLog construction to this trait.

@@ -5,8 +5,12 @@ use uuid::Uuid;
 
 pub use swiyu_core::KeyRole;
 
+pub mod any;
 pub mod dev;
+pub mod vault;
+pub use any::AnySigningEngine;
 pub use dev::DevSigningEngine;
+pub use vault::{VaultSigningEngine, VaultSigningEngineConfig};
 
 /// The signing algorithm of a key pair.
 ///
