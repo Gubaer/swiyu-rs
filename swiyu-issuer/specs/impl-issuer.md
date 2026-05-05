@@ -263,7 +263,8 @@ A `fetch_log` operation will be added when read-side flows (verifier, rotation, 
 
 The client is constructed in the `issuer-mgmt` startup path from environment variables:
 
-- `SWIYU_REGISTRY_URL` — base URL of the SWIYU Identifier Registry.
+- `SWIYU_IDENTIFIER_REGISTRY_URL` — base URL of the SWIYU Identifier Registry.
+- `SWIYU_ACCESS_TOKEN` — bearer token for the registry API.
 - `SWIYU_PARTNER_ID` — the issuer's partner-id at the registry.
 
 These mirror the variables already used by `swiyu-didtool` and stay in swiyu-issuer's binary configuration; the swiyu-registries crate exposes a constructor that accepts them as arguments and is itself env-agnostic.

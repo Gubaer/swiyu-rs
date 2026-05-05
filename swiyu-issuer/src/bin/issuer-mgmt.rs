@@ -78,10 +78,10 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
     let issuer_base_url =
         env::var("ISSUER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
-    let registry_url =
-        env::var("SWIYU_REGISTRY_URL").map_err(|_| "SWIYU_REGISTRY_URL must be set")?;
-    let registry_token = env::var("SWIYU_REGISTRY_ACCESS_TOKEN")
-        .map_err(|_| "SWIYU_REGISTRY_ACCESS_TOKEN must be set")?;
+    let registry_url = env::var("SWIYU_IDENTIFIER_REGISTRY_URL")
+        .map_err(|_| "SWIYU_IDENTIFIER_REGISTRY_URL must be set")?;
+    let registry_token =
+        env::var("SWIYU_ACCESS_TOKEN").map_err(|_| "SWIYU_ACCESS_TOKEN must be set")?;
 
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
