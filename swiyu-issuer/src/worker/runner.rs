@@ -22,7 +22,14 @@ use crate::persistence::{self, PersistenceError};
 
 use super::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, execute_allocate_did, execute_build_initial_log,
-    execute_generate_keys, execute_persist_issuer, execute_publish_log,
+    execute_generate_keys, execute_persist_issuer,
+    execute_publish_log as execute_create_publish_log,
+};
+use super::deactivate_issuer::{
+    DeactivateIssuerInput, DeactivateIssuerStateData,
+    build_deactivation_log::execute_build_deactivation_log,
+    mark_deactivated::execute_mark_deactivated,
+    publish_log::execute_publish_log as execute_deactivate_publish_log,
 };
 use super::dispatch::apply_outcome;
 use super::registry::RegistryFacade;
@@ -136,13 +143,7 @@ where
     async fn execute_task(&mut self, task: &OperationTask) -> Result<(), WorkerError> {
         match task.task_type {
             TaskType::CreateIssuer => self.execute_create_issuer(task).await,
-            // The DeactivateIssuer task type exists in the domain
-            // but no endpoint can create one yet, so this arm is
-            // unreachable in practice until the dispatcher is wired
-            // up.
-            TaskType::DeactivateIssuer => Err(WorkerError::Decode(
-                "DeactivateIssuer task type not yet implemented".into(),
-            )),
+            TaskType::DeactivateIssuer => self.execute_deactivate_issuer(task).await,
         }
     }
 
@@ -178,7 +179,14 @@ where
                 Some("publish_log"),
             ),
             "publish_log" => (
-                execute_publish_log(&tenant, &state, &self.registry, &self.engine, entry_now).await,
+                execute_create_publish_log(
+                    &tenant,
+                    &state,
+                    &self.registry,
+                    &self.engine,
+                    entry_now,
+                )
+                .await,
                 Some("persist_issuer"),
             ),
             "persist_issuer" => {
@@ -242,6 +250,123 @@ where
                 // step's StepResult patch is empty by convention
                 // (`persist_issuer` returns `StepResult::default()`),
                 // so nothing to merge into state_data here.
+                persistence::operation_tasks::mark_completed(
+                    &mut conn,
+                    &task.id,
+                    task.result_issuer_id.as_ref(),
+                    now,
+                )
+                .await?;
+                info!(
+                    task_id = %task.id,
+                    issuer_id = ?task.result_issuer_id,
+                    "task completed",
+                );
+            }
+            (outcome, next_step) => {
+                apply_outcome(&mut conn, task, next_step, outcome, now, &mut *self.rng).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn execute_deactivate_issuer(&mut self, task: &OperationTask) -> Result<(), WorkerError> {
+        // Validate input + state-data shapes; both are empty by
+        // convention but going through `serde_json::from_value`
+        // catches malformed rows early.
+        let _input: DeactivateIssuerInput = serde_json::from_value(task.input.clone())
+            .map_err(|e| WorkerError::Decode(format!("input: {e}")))?;
+        let state: DeactivateIssuerStateData = serde_json::from_value(task.state_data.clone())
+            .map_err(|e| WorkerError::Decode(format!("state_data: {e}")))?;
+
+        let issuer_id = task.result_issuer_id.as_ref().ok_or_else(|| {
+            WorkerError::Decode("task.result_issuer_id is None for DeactivateIssuer".into())
+        })?;
+
+        // Load tenant + issuer once; pass references to each step.
+        let mut conn = self.pool.acquire().await.map_err(PersistenceError::Db)?;
+        let tenant = persistence::tenants::find_by_id(&mut conn, &task.tenant_id)
+            .await?
+            .ok_or_else(|| WorkerError::Decode(format!("tenant {} not found", task.tenant_id)))?;
+        let issuer =
+            persistence::issuers::find_by_id_for_tenant(&mut conn, &task.tenant_id, issuer_id)
+                .await?
+                .ok_or_else(|| {
+                    WorkerError::Decode(format!(
+                        "issuer {issuer_id} not found for tenant {}",
+                        task.tenant_id
+                    ))
+                })?;
+        drop(conn);
+
+        // Pin `now` to task.created_at so a re-run after a crash
+        // produces a byte-identical signed entry — same discipline
+        // the create_issuer saga uses.
+        let entry_now = task.created_at;
+
+        let step_name: &str = task.step.as_deref().unwrap_or("build_deactivation_log");
+        let (outcome, next_step) = match step_name {
+            "build_deactivation_log" => (
+                execute_build_deactivation_log(&issuer, &self.registry, &self.engine, entry_now)
+                    .await,
+                Some("publish_log"),
+            ),
+            "publish_log" => (
+                execute_deactivate_publish_log(
+                    &tenant,
+                    &issuer,
+                    &state,
+                    &self.registry,
+                    &self.engine,
+                    entry_now,
+                )
+                .await,
+                Some("mark_deactivated"),
+            ),
+            "mark_deactivated" => (
+                execute_mark_deactivated(&self.pool, &task.tenant_id, issuer_id, entry_now).await,
+                None,
+            ),
+            other => {
+                return Err(WorkerError::Decode(format!("unknown step: {other}")));
+            }
+        };
+
+        match &outcome {
+            StepOutcome::Done(_) => {
+                debug!(task_id = %task.id, step = step_name, "step done");
+            }
+            StepOutcome::Retry {
+                error_code,
+                error_message,
+            } => {
+                warn!(
+                    task_id = %task.id,
+                    step = step_name,
+                    error_code = error_code.as_str(),
+                    error_message = error_message.as_str(),
+                    "step requested retry",
+                );
+            }
+            StepOutcome::Terminal {
+                error_code,
+                error_message,
+            } => {
+                error!(
+                    task_id = %task.id,
+                    step = step_name,
+                    error_code = error_code.as_str(),
+                    error_message = error_message.as_str(),
+                    "step terminal failure",
+                );
+            }
+        }
+
+        let now = Utc::now();
+        let mut conn = self.pool.acquire().await.map_err(PersistenceError::Db)?;
+        match (outcome, next_step) {
+            (StepOutcome::Done(_), None) => {
                 persistence::operation_tasks::mark_completed(
                     &mut conn,
                     &task.id,

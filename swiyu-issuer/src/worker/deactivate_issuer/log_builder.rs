@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use swiyu_core::diddoc::DIDDoc;
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
-use swiyu_core::didlog::entry_edits::{append_proof, set_version_id};
+use swiyu_core::didlog::entry_edits::{append_proof, set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::didlog::{DIDDocState, DIDLogEntry, LogEntryFormat};
 use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
@@ -99,7 +99,14 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
     let entry_template =
         DIDLogEntry::new_deactivation(&FORMAT, &prev_version_id, &prev_doc, &now_iso);
 
+    // `to_json` emits the 5-element TDW form including an empty
+    // proof slot at index 4. The entryHash must be computed over
+    // the 4-element preliminary form (no proof slot), per the
+    // did:tdw 0.3 spec — same discipline as create_issuer's
+    // log_builder. Strip first, then append the real proof at the
+    // end.
     let mut entry_value = entry_template.to_json();
+    strip_proof_slot(&mut entry_value, &FORMAT);
 
     let next_seq = log.len() as u32 + 1;
     let entry_hash = derive_entry_hash(&entry_value);
