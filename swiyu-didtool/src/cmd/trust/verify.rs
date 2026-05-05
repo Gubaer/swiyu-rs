@@ -334,32 +334,11 @@ fn find_verifying_key(doc: &DIDDoc, kid: &str) -> Result<p256::ecdsa::VerifyingK
             return Err("verification method publicKey is not a JWK".into());
         }
     };
-    jwk_to_p256_verifying_key(jwk)
-}
-
-fn jwk_to_p256_verifying_key(jwk: &PublicKeyJWK) -> Result<p256::ecdsa::VerifyingKey, String> {
-    let ec = match jwk {
-        PublicKeyJWK::EC(k) if k.crv() == "P-256" => k,
-        other => {
-            return Err(format!(
-                "expected EC/P-256 JWK, got {}/{}",
-                other.kty(),
-                other.crv().unwrap_or("?")
-            ));
-        }
+    let ec = match jwk.as_ref() {
+        PublicKeyJWK::EC(k) => k,
+        other => return Err(format!("expected EC JWK, got {}", other.kty())),
     };
-    let x_bytes = URL_SAFE_NO_PAD
-        .decode(ec.x())
-        .map_err(|e| format!("JWK 'x' not base64url: {e}"))?;
-    let y_bytes = URL_SAFE_NO_PAD
-        .decode(ec.y())
-        .map_err(|e| format!("JWK 'y' not base64url: {e}"))?;
-    let mut sec1 = Vec::with_capacity(1 + x_bytes.len() + y_bytes.len());
-    sec1.push(0x04); // uncompressed-point prefix
-    sec1.extend_from_slice(&x_bytes);
-    sec1.extend_from_slice(&y_bytes);
-    p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1)
-        .map_err(|e| format!("invalid P-256 public key: {e}"))
+    p256::ecdsa::VerifyingKey::try_from(ec).map_err(|e| e.to_string())
 }
 
 fn load_status_list<'a>(

@@ -447,19 +447,8 @@ fn jwk_to_verifying_key(jwk: &PublicKeyJWK) -> Result<VerifyingKey, VerifyPopErr
             Ok(VerifyingKey::Eddsa(vk))
         }
         PublicKeyJWK::EC(k) if k.crv() == "P-256" => {
-            let x_bytes = URL_SAFE_NO_PAD
-                .decode(k.x())
-                .map_err(|e| VerifyPopError::JwtMalformed(format!("JWK 'x' not base64url: {e}")))?;
-            let y_bytes = URL_SAFE_NO_PAD
-                .decode(k.y())
-                .map_err(|e| VerifyPopError::JwtMalformed(format!("JWK 'y' not base64url: {e}")))?;
-            let mut sec1 = Vec::with_capacity(1 + x_bytes.len() + y_bytes.len());
-            sec1.push(0x04); // uncompressed point prefix
-            sec1.extend_from_slice(&x_bytes);
-            sec1.extend_from_slice(&y_bytes);
-            let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1).map_err(|e| {
-                VerifyPopError::JwtMalformed(format!("invalid P-256 public key: {e}"))
-            })?;
+            let vk = p256::ecdsa::VerifyingKey::try_from(k)
+                .map_err(|e| VerifyPopError::JwtMalformed(e.to_string()))?;
             Ok(VerifyingKey::Ecdsa(vk))
         }
         other => Err(VerifyPopError::UnsupportedAlg(format!(

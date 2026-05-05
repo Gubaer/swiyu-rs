@@ -39,6 +39,35 @@ impl fmt::Display for KeyUse {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum ECKeyError {
+    /// The key's curve is not P-256.
+    UnsupportedCurve(String),
+    /// `x` or `y` is not valid base64url.
+    InvalidCoordinate {
+        component: &'static str,
+        reason: String,
+    },
+    /// SEC1 decoding rejected the public point (wrong length, point not on curve, etc.).
+    InvalidPublicKey(String),
+}
+
+impl fmt::Display for ECKeyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedCurve(crv) => {
+                write!(f, "unsupported curve '{crv}' (expected 'P-256')")
+            }
+            Self::InvalidCoordinate { component, reason } => {
+                write!(f, "JWK '{component}' not base64url: {reason}")
+            }
+            Self::InvalidPublicKey(reason) => write!(f, "invalid P-256 public key: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ECKeyError {}
+
 /// Elliptic Curve public key (`kty = "EC"`). Curves: "P-256", "P-384", "P-521".
 #[derive(Debug, Clone, PartialEq)]
 pub struct ECKey {
@@ -149,6 +178,44 @@ impl ECKey {
     pub fn with_kid(mut self, kid: String) -> Self {
         self.kid = Some(kid);
         self
+    }
+}
+
+/// Decodes a JWK EC key as a `p256::ecdsa::VerifyingKey`.
+///
+/// Returns [`ECKeyError::UnsupportedCurve`] if `crv` is not `"P-256"`,
+/// [`ECKeyError::InvalidCoordinate`] if `x` or `y` is not valid base64url,
+/// and [`ECKeyError::InvalidPublicKey`] if the SEC1 uncompressed point is
+/// rejected by the `p256` crate (wrong length, point not on curve, etc.).
+impl TryFrom<&ECKey> for p256::ecdsa::VerifyingKey {
+    type Error = ECKeyError;
+
+    fn try_from(key: &ECKey) -> Result<Self, Self::Error> {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        if key.crv != "P-256" {
+            return Err(ECKeyError::UnsupportedCurve(key.crv.clone()));
+        }
+        let x_bytes =
+            URL_SAFE_NO_PAD
+                .decode(&key.x)
+                .map_err(|e| ECKeyError::InvalidCoordinate {
+                    component: "x",
+                    reason: e.to_string(),
+                })?;
+        let y_bytes =
+            URL_SAFE_NO_PAD
+                .decode(&key.y)
+                .map_err(|e| ECKeyError::InvalidCoordinate {
+                    component: "y",
+                    reason: e.to_string(),
+                })?;
+        let mut sec1 = Vec::with_capacity(1 + x_bytes.len() + y_bytes.len());
+        sec1.push(0x04); // uncompressed-point prefix
+        sec1.extend_from_slice(&x_bytes);
+        sec1.extend_from_slice(&y_bytes);
+        p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1)
+            .map_err(|e| ECKeyError::InvalidPublicKey(e.to_string()))
     }
 }
 
@@ -654,6 +721,41 @@ mod tests {
         let key = ECKey::from_p256_coordinates(&[0x01u8; 32], &[0x02u8; 32])
             .with_kid("assert-key-01".into());
         assert_eq!(key.kid(), Some("assert-key-01"));
+    }
+
+    #[test]
+    fn p256_verifying_key_try_from_ec_key_roundtrip() {
+        use p256::ecdsa::{SigningKey, VerifyingKey};
+        let mut rng_seed = [0u8; 32];
+        for (i, b) in rng_seed.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let signing = SigningKey::from_bytes(&rng_seed.into()).unwrap();
+        let verifying = signing.verifying_key();
+        let point = verifying.to_encoded_point(false);
+        let x_bytes = point.x().unwrap();
+        let y_bytes = point.y().unwrap();
+        let key = ECKey::from_p256_coordinates(x_bytes, y_bytes);
+
+        let recovered = VerifyingKey::try_from(&key).unwrap();
+        assert_eq!(&recovered, verifying);
+    }
+
+    #[test]
+    fn p256_verifying_key_try_from_ec_key_rejects_wrong_curve() {
+        let key = ECKey::new("P-384".into(), "x".into(), "y".into());
+        let err = p256::ecdsa::VerifyingKey::try_from(&key).unwrap_err();
+        assert!(matches!(err, ECKeyError::UnsupportedCurve(c) if c == "P-384"));
+    }
+
+    #[test]
+    fn p256_verifying_key_try_from_ec_key_rejects_invalid_base64() {
+        let key = ECKey::new("P-256".into(), "!!!not-base64".into(), "y".into());
+        let err = p256::ecdsa::VerifyingKey::try_from(&key).unwrap_err();
+        assert!(matches!(
+            err,
+            ECKeyError::InvalidCoordinate { component: "x", .. }
+        ));
     }
 
     #[test]
