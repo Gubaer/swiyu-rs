@@ -11,8 +11,8 @@ use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::{DIDDoc, DIDDocError, PublicKey, PublicKeyJWK, PublicKeyMultibase};
 use swiyu_core::didlog::{DIDDocState, DIDLog};
 
+use crate::cmd::didlog::{LogError, current_did, load_log};
 use crate::cmd::iso8601;
-use crate::cmd::log::{LogError, current_did, load_log};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
 
 const IAT_SKEW_SECS: u64 = 60;
@@ -508,8 +508,8 @@ fn print_summary(s: &Summary<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmd::create::{CreateArgs, cmd_create};
-    use crate::cmd::create_pop::{CreatePopArgs, cmd_create_pop};
+    use crate::cmd::did::create::{CreateArgs, cmd_create};
+    use crate::cmd::pop::create::{CreatePopArgs, cmd_create_pop};
     use crate::keystore::KeyStoreEntry;
     use ed25519_dalek::Signer as _;
     use serde_json::json;

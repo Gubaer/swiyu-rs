@@ -10,7 +10,7 @@ use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
-use crate::cmd::log::{LoadedLog, LogError, current_did, load_log};
+use crate::cmd::didlog::{LoadedLog, LogError, current_did, load_log};
 use crate::crypto::{
     CryptoError, generate_ecdsa_key_pair, generate_eddsa_key_pair, read_private_key_ecdsa,
     read_private_key_eddsa,
@@ -25,7 +25,7 @@ pub enum RotateRole {
     All,
 }
 
-pub struct UpdateArgs {
+pub struct RotateArgs {
     pub did: Option<String>,
     pub input: Option<PathBuf>,
     pub rotate: Vec<RotateRole>,
@@ -40,7 +40,7 @@ pub struct UpdateArgs {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum UpdateError {
+pub enum RotateError {
     #[error("nothing to update — pass at least one --rotate <role> or --<role>-key flag")]
     NoChange,
     #[error("--rotate {role} and --{role}-key are mutually exclusive")]
@@ -95,34 +95,34 @@ pub enum UpdateError {
     Json(#[from] serde_json::Error),
 }
 
-pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError> {
+pub fn cmd_rotate(store: &KeyStore, args: RotateArgs) -> Result<(), RotateError> {
     let plan = plan_rotation(&args)?;
 
     // With --did, the log is fetched over HTTPS and there is no local file to
     // append to. Combined with --no-publish and no --out, the new entry would
     // be discarded — reject early.
     if args.did.is_some() && args.out.is_none() && args.no_publish {
-        return Err(UpdateError::NoTarget);
+        return Err(RotateError::NoTarget);
     }
 
     // --- load existing log ---
     let loaded = load_log(store, args.did.clone(), args.input.clone())?;
     if loaded.log.entries().is_empty() {
-        return Err(UpdateError::EmptyLog);
+        return Err(RotateError::EmptyLog);
     }
     let last = loaded.log.entries().last().unwrap();
     if !matches!(last.format(), swiyu_core::didlog::LogEntryFormat::TDW03) {
-        return Err(UpdateError::UnsupportedFormat);
+        return Err(RotateError::UnsupportedFormat);
     }
     let prev_version_id = last.version_id().to_string();
     let prev_version_time = last.version_time().to_string();
 
     // --- resolve DID + previous key store entry ---
-    let did_str = current_did(&loaded.log).ok_or(UpdateError::DidNotInLog)?;
-    let did = DID::from_str(&did_str).map_err(|e| UpdateError::Did(did_str.clone(), e))?;
+    let did_str = current_did(&loaded.log).ok_or(RotateError::DidNotInLog)?;
+    let did = DID::from_str(&did_str).map_err(|e| RotateError::Did(did_str.clone(), e))?;
     let entry = store
         .lookup(&did)?
-        .ok_or_else(|| UpdateError::KeyStoreMiss(did_str.clone()))?;
+        .ok_or_else(|| RotateError::KeyStoreMiss(did_str.clone()))?;
     let prev_version = entry.latest_version()?;
     debug!(
         "key store entry hash {} at version {}",
@@ -221,7 +221,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
             " (or use --no-publish)",
         )?;
         let identifier = extract_registry_identifier(&did)
-            .ok_or_else(|| UpdateError::IdentifierExtraction(did_str.clone()))?;
+            .ok_or_else(|| RotateError::IdentifierExtraction(did_str.clone()))?;
         debug!("publishing updated DID log to registry");
         if let Err(source) = crate::swiyu::publish_entry(
             &registry_url,
@@ -230,13 +230,13 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
             updated_log.trim_end(),
         ) {
             return Err(match &written_to {
-                Some(path) => UpdateError::PublishFailed {
+                Some(path) => RotateError::PublishFailed {
                     source,
                     path: path.clone(),
                 },
                 None => {
                     let pending = crate::cmd::file::write_pending_log(&updated_log)?;
-                    UpdateError::PublishFailedPending {
+                    RotateError::PublishFailedPending {
                         source,
                         path: pending,
                     }
@@ -286,7 +286,7 @@ struct Plan {
     assertion: Action,
 }
 
-fn plan_rotation(args: &UpdateArgs) -> Result<Plan, UpdateError> {
+fn plan_rotation(args: &RotateArgs) -> Result<Plan, RotateError> {
     let mut auth = Action::Keep;
     let mut authn = Action::Keep;
     let mut assert = Action::Keep;
@@ -306,13 +306,13 @@ fn plan_rotation(args: &UpdateArgs) -> Result<Plan, UpdateError> {
 
     if let Some(path) = &args.authorized_key {
         if matches!(auth, Action::Generate) {
-            return Err(UpdateError::ConflictingRotation { role: "authorized" });
+            return Err(RotateError::ConflictingRotation { role: "authorized" });
         }
         auth = Action::Import(path.clone());
     }
     if let Some(path) = &args.authentication_key {
         if matches!(authn, Action::Generate) {
-            return Err(UpdateError::ConflictingRotation {
+            return Err(RotateError::ConflictingRotation {
                 role: "authentication",
             });
         }
@@ -320,7 +320,7 @@ fn plan_rotation(args: &UpdateArgs) -> Result<Plan, UpdateError> {
     }
     if let Some(path) = &args.assertion_key {
         if matches!(assert, Action::Generate) {
-            return Err(UpdateError::ConflictingRotation { role: "assertion" });
+            return Err(RotateError::ConflictingRotation { role: "assertion" });
         }
         assert = Action::Import(path.clone());
     }
@@ -329,7 +329,7 @@ fn plan_rotation(args: &UpdateArgs) -> Result<Plan, UpdateError> {
         && matches!(authn, Action::Keep)
         && matches!(assert, Action::Keep)
     {
-        return Err(UpdateError::NoChange);
+        return Err(RotateError::NoChange);
     }
 
     Ok(Plan {
@@ -339,7 +339,7 @@ fn plan_rotation(args: &UpdateArgs) -> Result<Plan, UpdateError> {
     })
 }
 
-fn stage_keys(entry: &KeyStoreEntry, version: u32, plan: &Plan) -> Result<StagedKeys, UpdateError> {
+fn stage_keys(entry: &KeyStoreEntry, version: u32, plan: &Plan) -> Result<StagedKeys, RotateError> {
     let authorized = match &plan.authorized {
         Action::Keep => entry.load_eddsa(KeyRole::Authorized, Some(version))?,
         Action::Generate => {
@@ -348,7 +348,7 @@ fn stage_keys(entry: &KeyStoreEntry, version: u32, plan: &Plan) -> Result<Staged
         }
         Action::Import(p) => {
             debug!("importing authorized Ed25519 key from {}", p.display());
-            read_private_key_eddsa(p).map_err(|source| UpdateError::KeyImport {
+            read_private_key_eddsa(p).map_err(|source| RotateError::KeyImport {
                 role: "authorized",
                 source,
             })?
@@ -362,7 +362,7 @@ fn stage_keys(entry: &KeyStoreEntry, version: u32, plan: &Plan) -> Result<Staged
         }
         Action::Import(p) => {
             debug!("importing authentication P-256 key from {}", p.display());
-            read_private_key_ecdsa(p).map_err(|source| UpdateError::KeyImport {
+            read_private_key_ecdsa(p).map_err(|source| RotateError::KeyImport {
                 role: "authentication",
                 source,
             })?
@@ -376,7 +376,7 @@ fn stage_keys(entry: &KeyStoreEntry, version: u32, plan: &Plan) -> Result<Staged
         }
         Action::Import(p) => {
             debug!("importing assertion P-256 key from {}", p.display());
-            read_private_key_ecdsa(p).map_err(|source| UpdateError::KeyImport {
+            read_private_key_ecdsa(p).map_err(|source| RotateError::KeyImport {
                 role: "assertion",
                 source,
             })?
@@ -425,8 +425,8 @@ pub(super) fn build_updated_log(loaded: &LoadedLog, new_line: &str) -> String {
 mod tests {
     use super::*;
 
-    fn args_with_rotate(roles: Vec<RotateRole>) -> UpdateArgs {
-        UpdateArgs {
+    fn args_with_rotate(roles: Vec<RotateRole>) -> RotateArgs {
+        RotateArgs {
             did: None,
             input: None,
             rotate: roles,
@@ -444,7 +444,7 @@ mod tests {
     #[test]
     fn plan_rejects_nothing_to_do() {
         let args = args_with_rotate(vec![]);
-        assert!(matches!(plan_rotation(&args), Err(UpdateError::NoChange)));
+        assert!(matches!(plan_rotation(&args), Err(RotateError::NoChange)));
     }
 
     #[test]
@@ -471,7 +471,7 @@ mod tests {
         args.authorized_key = Some(PathBuf::from("/dev/null"));
         assert!(matches!(
             plan_rotation(&args),
-            Err(UpdateError::ConflictingRotation { role: "authorized" })
+            Err(RotateError::ConflictingRotation { role: "authorized" })
         ));
     }
 

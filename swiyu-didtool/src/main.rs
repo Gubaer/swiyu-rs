@@ -12,9 +12,8 @@ use std::process;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use swiyu_core::didlog::LogEntryFormat;
-use tracing::debug;
 
-use keystore::{KeyRole, KeyStore, key_role_file_stem};
+use keystore::{KeyRole, KeyStore};
 
 #[derive(Parser)]
 #[command(name = "didtool", about = "Manage did:tdw and did:webvh identities")]
@@ -189,13 +188,13 @@ enum RotateRole {
     All,
 }
 
-impl From<RotateRole> for cmd::update::RotateRole {
-    fn from(r: RotateRole) -> cmd::update::RotateRole {
+impl From<RotateRole> for cmd::did::RotateRole {
+    fn from(r: RotateRole) -> cmd::did::RotateRole {
         match r {
-            RotateRole::Authorized => cmd::update::RotateRole::Authorized,
-            RotateRole::Authentication => cmd::update::RotateRole::Authentication,
-            RotateRole::Assertion => cmd::update::RotateRole::Assertion,
-            RotateRole::All => cmd::update::RotateRole::All,
+            RotateRole::Authorized => cmd::did::RotateRole::Authorized,
+            RotateRole::Authentication => cmd::did::RotateRole::Authentication,
+            RotateRole::Assertion => cmd::did::RotateRole::Assertion,
+            RotateRole::All => cmd::did::RotateRole::All,
         }
     }
 }
@@ -384,9 +383,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             authorized_key,
             authentication_key,
             assertion_key,
-        } => cmd::create::cmd_create(
+        } => cmd::did::cmd_create(
             &store,
-            cmd::create::CreateArgs {
+            cmd::did::CreateArgs {
                 url: None,
                 swiyu: true,
                 partner_id,
@@ -401,32 +400,33 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         )
         .map_err(|e| e.into()),
         Command::Keystore { command } => match command {
-            KeystoreCommand::List => cmd_list(&store),
-            KeystoreCommand::Versions { did } => cmd_versions(&store, &did),
-            KeystoreCommand::Show { did, role, version } => cmd_show(&store, &did, role, version),
+            KeystoreCommand::List => cmd::key::cmd_list(&store),
+            KeystoreCommand::Versions { did } => cmd::key::cmd_versions(&store, &did),
+            KeystoreCommand::Show { did, role, version } => {
+                cmd::key::cmd_show(&store, &did, role.map(Into::into), version)
+            }
             KeystoreCommand::Export {
                 did,
                 role,
                 out,
                 private,
                 version,
-            } => cmd_export(&store, &did, role, out, private, version),
+            } => cmd::key::cmd_export(&store, &did, role.into(), out, private, version),
         },
         Command::Log { command } => match command {
             LogCommand::List {
                 source: DidOrInputArgs { did, input },
-            } => {
-                cmd::log::cmd_list(&store, cmd::log::ListArgs { did, input }).map_err(|e| e.into())
-            }
+            } => cmd::didlog::cmd_list(&store, cmd::didlog::ListArgs { did, input })
+                .map_err(|e| e.into()),
             LogCommand::Show {
                 source: DidOrInputArgs { did, input },
                 out,
                 force,
                 raw,
                 pretty,
-            } => cmd::log::cmd_show(
+            } => cmd::didlog::cmd_show(
                 &store,
-                cmd::log::ShowArgs {
+                cmd::didlog::ShowArgs {
                     did,
                     input,
                     out,
@@ -443,9 +443,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 force,
                 raw,
                 pretty,
-            } => cmd::log::cmd_entry(
+            } => cmd::didlog::cmd_entry(
                 &store,
-                cmd::log::EntryArgs {
+                cmd::didlog::EntryArgs {
                     did,
                     input,
                     at,
@@ -471,9 +471,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     partner_id,
                     registry_url,
                 },
-        } => cmd::update::cmd_update(
+        } => cmd::did::cmd_rotate(
             &store,
-            cmd::update::UpdateArgs {
+            cmd::did::RotateArgs {
                 did,
                 input,
                 rotate: rotate.into_iter().map(Into::into).collect(),
@@ -496,9 +496,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             version,
             out,
             force,
-        } => cmd::create_pop::cmd_create_pop(
+        } => cmd::pop::cmd_create_pop(
             &store,
-            cmd::create_pop::CreatePopArgs {
+            cmd::pop::CreatePopArgs {
                 did,
                 role: role.into(),
                 nonce,
@@ -555,9 +555,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             source: DidOrInputArgs { did, input },
             nonce,
             allow_expired,
-        } => cmd::verify_pop::cmd_verify_pop(
+        } => cmd::pop::cmd_verify_pop(
             &store,
-            cmd::verify_pop::VerifyPopArgs {
+            cmd::pop::VerifyPopArgs {
                 jwt,
                 jwt_file,
                 did,
@@ -577,9 +577,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     partner_id,
                     registry_url,
                 },
-        } => cmd::deactivate::cmd_deactivate(
+        } => cmd::did::cmd_deactivate(
             &store,
-            cmd::deactivate::DeactivateArgs {
+            cmd::did::DeactivateArgs {
                 did,
                 input,
                 out,
@@ -599,121 +599,6 @@ fn open_store(path: Option<PathBuf>) -> Result<KeyStore, Box<dyn std::error::Err
         None => KeyStore::open_default()?,
     };
     Ok(store)
-}
-
-fn cmd_list(store: &KeyStore) -> Result<(), Box<dyn std::error::Error>> {
-    let entries = store.list()?;
-    debug!("found {} entries in key store", entries.len());
-    for entry in entries {
-        println!("{}  {}", entry.hash, entry.did);
-    }
-    Ok(())
-}
-
-fn cmd_versions(store: &KeyStore, target: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let entry = cmd::resolve_entry(store, target)?;
-    let versions = entry.all_versions()?;
-    debug!(
-        "entry {} has {} version(s) on disk",
-        entry.hash(),
-        versions.len()
-    );
-    let roles = [
-        ("authorized", KeyRole::Authorized),
-        ("authentication", KeyRole::Authentication),
-        ("assertion", KeyRole::Assertion),
-    ];
-    let mut prev: Option<[String; 3]> = None;
-    for v in versions {
-        let pems = [
-            entry.public_key_pem(roles[0].1, Some(v))?,
-            entry.public_key_pem(roles[1].1, Some(v))?,
-            entry.public_key_pem(roles[2].1, Some(v))?,
-        ];
-        let tag = match &prev {
-            None => "initial".to_string(),
-            Some(prev_pems) => {
-                let mut changed: Vec<&str> = Vec::with_capacity(3);
-                for (i, (label, _)) in roles.iter().enumerate() {
-                    if prev_pems[i] != pems[i] {
-                        changed.push(label);
-                    }
-                }
-                if changed.is_empty() {
-                    "(unchanged)".to_string()
-                } else {
-                    changed.join(" ")
-                }
-            }
-        };
-        println!("{v}  {tag}");
-        prev = Some(pems);
-    }
-    Ok(())
-}
-
-fn cmd_show(
-    store: &KeyStore,
-    target: &str,
-    role: Option<Role>,
-    version: Option<u32>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let entry = cmd::resolve_entry(store, target)?;
-    match role {
-        Some(role) => {
-            let key_role: KeyRole = role.into();
-            debug!(
-                "showing {} public key (version: {})",
-                key_role_file_stem(key_role),
-                version.map_or("latest".to_string(), |v| v.to_string())
-            );
-            let pem = entry.public_key_pem(key_role, version)?;
-            println!("{}", pem.trim());
-        }
-        None => {
-            debug!(
-                "showing all public keys (version: {})",
-                version.map_or("latest".to_string(), |v| v.to_string())
-            );
-            for (label, key_role) in [
-                ("authorized", KeyRole::Authorized),
-                ("authentication", KeyRole::Authentication),
-                ("assertion", KeyRole::Assertion),
-            ] {
-                let pem = entry.public_key_pem(key_role, version)?;
-                println!("# {label}");
-                println!("{}", pem.trim());
-                println!();
-            }
-        }
-    }
-    Ok(())
-}
-
-fn cmd_export(
-    store: &KeyStore,
-    target: &str,
-    role: Role,
-    out: PathBuf,
-    private: bool,
-    version: Option<u32>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let entry = cmd::resolve_entry(store, target)?;
-    let key_role: KeyRole = role.into();
-    let visibility = if private { "private" } else { "public" };
-    debug!(
-        "exporting {} {} key to {}",
-        key_role_file_stem(key_role),
-        visibility,
-        out.display()
-    );
-    if private {
-        entry.export_private_key(key_role, version, &out)?;
-    } else {
-        entry.export_public_key(key_role, version, &out)?;
-    }
-    debug!("exported to {}", out.display());
-    Ok(())
 }
 
 fn parse_partner_id(s: &str) -> Result<String, String> {
