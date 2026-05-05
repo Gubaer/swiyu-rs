@@ -16,7 +16,7 @@ This tutorial walks through that onboarding end-to-end with `didtool`. If you ar
 
    Stores DID logs — the public, append-only history of every registered DID. This is where DIDs *live*.
 
-   *In this tutorial:* the DID we create with `didtool create` is published here, together with later log entries from key rotations and the eventual deactivation.
+   *In this tutorial:* the DID we create with `didtool did create` is published here, together with later log entries from key rotations and the eventual deactivation.
 
 3. **Trust Registry**
 
@@ -71,7 +71,7 @@ We have to create a DID that we can bind to the business partner kacon gmbh.
 
 ```bash
 # create a new DID
-didtool create
+didtool did create
 ```
 
 Output:
@@ -85,9 +85,14 @@ Published to registry: https://identifier-reg.trust-infra.swiyu-int.admin.ch/api
 
 Three key pairs are associated with the generated DID. `didtool` generated them and stored them in the `didtool` keystore. You can look them up:
 
+> [!CAUTION]
+> The `didtool` keystore writes private keys to disk **unencrypted** (PEM files
+> in the keystore directory). This is fine for development against the SWIYU
+> integration environment, but **do not use `didtool` for production keys**.
+
 ```bash
 # list the entries in the key store; includes the entry for the DID we just generated
-didtool keystore list
+didtool key list
 ```
 
 Output:
@@ -98,9 +103,9 @@ Output:
 
 ```bash
 # show the public keys associated with the DID
-didtool keystore show --did 0e616e6729ad
+didtool key show --did 0e616e6729ad
 # or:
-didtool keystore show --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
+didtool key show --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
 ```
 
 This lists the three public keys associated with the DID:
@@ -127,7 +132,7 @@ jOIqWnkEKRJ3iKBZRvFK+VC0SEAosa7opBkkj84wl9gQkZhkNcKogSR2OQ==
 The DID is also registered in the SWIYU Identifier Registry. `didtool` created a DID log for the DID and populated it with a genesis entry. We can fetch the DID log from the Identifier Registry:
 
 ```bash
-didtool log list --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
+didtool didlog list --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
 ```
 
 Output:
@@ -146,7 +151,7 @@ Let's have a closer look at the first DID log entry:
 
 ```bash
 # show the first entry in the DID log for this DID
-didtool log entry \
+didtool didlog entry \
     --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3 \
     --at 1
 ```
@@ -353,15 +358,15 @@ To rotate all three key pairs at once:
 
 ```bash
 # rotate the key pairs
-didtool update \
+didtool did rotate \
     --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3 \
-    --rotate all
+    --role all
 ```
 
 There are now two sets of key pairs for this DID in the `didtool` keystore:
 
 ```bash
-didtool keystore versions \
+didtool key versions \
     --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
 ```
 
@@ -378,7 +383,7 @@ The DID log now includes two entries:
 
 ```bash
 # list the DID log entries for this DID
-didtool log list \
+didtool didlog list \
     --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
 ```
 
@@ -399,14 +404,14 @@ A DID can be deactivated when it is no longer in use. The DID log still exists i
 
 ```bash
 # deactivate the DID
-didtool deactivate \
+didtool did deactivate \
     --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
 ```
 
 After running this, list the DID log to confirm the deactivation:
 
 ```bash
-didtool log list \
+didtool didlog list \
     --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
 ```
 

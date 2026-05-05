@@ -218,7 +218,7 @@ Provide a struct for a SCID with an `impl` block:
 
 # Lessons Learned
 
-Notes captured while making `didtool create --swiyu --format tdw` round-trip
+Notes captured while making `didtool did create --swiyu --format tdw` round-trip
 through the SWIYU integration registry. They focus on details that are easy to
 get wrong from a casual read of the did:tdw 0.3 spec.
 

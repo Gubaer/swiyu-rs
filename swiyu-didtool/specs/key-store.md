@@ -171,11 +171,11 @@ can then pass to other commands instead of typing the full DID string. The inten
 workflow is:
 
 ```
-$ didtool keystore list
+$ didtool key list
 3f7a2c91b04e  did:webvh:abc123:example.com
 9b1d4e72f3a1  did:webvh:def456:other.example.com
 
-$ didtool keystore lookup 3f7a2c91b04e
+$ didtool key show --did 3f7a2c91b04e
 ```
 
 The two-column output (hash, DID separated by two spaces) is designed to be
@@ -183,11 +183,11 @@ The two-column output (hash, DID separated by two spaces) is designed to be
 
 # CLI API
 
-The `didtool keystore` subcommand exposes read-only access to the key store. Keys and key
+The `didtool key` subcommand exposes read-only access to the key store. Keys and key
 pairs are never inserted directly through the CLI — they are created as a side effect of
-DID operations such as `didtool create` and `didtool update`.
+DID operations such as `didtool did create` and `didtool did rotate`.
 
-## `didtool keystore list`
+## `didtool key list`
 
 Lists all entries in the key store, one per line, sorted by hash:
 
@@ -198,7 +198,7 @@ Lists all entries in the key store, one per line, sorted by hash:
 
 Two-column output (hash, DID separated by two spaces) for easy `grep`/`awk` use.
 
-## `didtool keystore show <hash|did> [--role authorized|authentication|assertion] [--version <n>]`
+## `didtool key show <hash|did> [--role authorized|authentication|assertion] [--version <n>]`
 
 Displays public key(s) to stdout. Private keys are never shown on stdout — use `export`
 for those.
@@ -208,7 +208,7 @@ for those.
 - `--version` selects a specific snapshot; defaults to the latest.
 - `<hash|did>`: accepts either the 12-character BLAKE3 hash or the full DID string.
 
-## `didtool keystore export <hash|did> --role authorized|authentication|assertion --out <file> [--private] [--version <n>]`
+## `didtool key export <hash|did> --role authorized|authentication|assertion --out <file> [--private] [--version <n>]`
 
 Writes a single key to `--out` in PEM format. PEM is the only supported format,
 consistent with the crypto module.
