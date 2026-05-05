@@ -50,6 +50,11 @@ Write code for human readers first. A future engineer should be able to understa
 - Keep generic bounds minimal. If a function works with a concrete type, use the concrete type.
 - Avoid blanket implementations that are hard to reason about.
 
+**Conversions.**
+
+- Prefer the standard conversion traits over named methods: `FromStr` for string parsing, `From<T>` / `TryFrom<T>` for type-to-type conversion. Avoid inherent methods like `parse`, `try_from_string`, `to_value`, `try_from_value`, `to_jsonld` when a trait fits.
+- Don't ship both an inherent method and the equivalent trait impl — pick the trait.
+
 **Async.**
 
 - Use `async`/`await` (tokio runtime) only where I/O concurrency is needed.
