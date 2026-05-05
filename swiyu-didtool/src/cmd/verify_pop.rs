@@ -396,7 +396,7 @@ fn find_vm_key_in_log(log: &DIDLog, kid: &str) -> Result<VerifyingKey, VerifyPop
         DIDDocState::Value(v) => v,
         DIDDocState::Patch(_) => return Err(VerifyPopError::PreviousStateIsPatch),
     };
-    let doc = DIDDoc::try_from_jsonld(doc_value)?;
+    let doc = DIDDoc::try_from(doc_value)?;
     let vm = doc
         .verification_method()
         .iter()

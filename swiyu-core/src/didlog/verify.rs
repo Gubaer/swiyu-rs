@@ -253,7 +253,7 @@ fn verify_entry(
             actual: vid.to_string(),
         })?;
 
-    let entry_json = entry.to_json();
+    let entry_json = Value::from(entry.clone());
     let arr = entry_json.as_array().ok_or_else(|| MalformedEntry {
         entry: i,
         message: "entry is not a JSON array".into(),

@@ -1,4 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use serde_json::Value;
 use std::fmt;
 use std::str::FromStr;
 
@@ -128,8 +129,8 @@ impl DIDJwk {
             return Err(DIDJwkError::UnsupportedAlgorithm(kty.into()));
         }
 
-        let jwk = PublicKeyJWK::try_from_json(&value)
-            .map_err(|e| DIDJwkError::InvalidJwk(e.to_string()))?;
+        let jwk =
+            PublicKeyJWK::try_from(&value).map_err(|e| DIDJwkError::InvalidJwk(e.to_string()))?;
 
         validate_curve(&jwk)?;
 
@@ -170,7 +171,7 @@ impl DIDJwk {
     pub fn from_jwk(jwk: &PublicKeyJWK) -> Result<Self, DIDJwkError> {
         validate_curve(jwk)?;
 
-        let value = jwk.to_json();
+        let value = Value::from(jwk.clone());
         let canonical = serde_jcs::to_string(&value)
             .map_err(|e| DIDJwkError::Canonicalization(e.to_string()))?;
         let encoded = URL_SAFE_NO_PAD.encode(canonical.as_bytes());
@@ -399,7 +400,7 @@ mod tests {
     fn to_diddoc_has_expected_shape() {
         let did = DIDJwk::parse(SPEC_EXAMPLE_P256).unwrap();
         let doc = did.to_diddoc();
-        let json = doc.to_jsonld();
+        let json = Value::from(doc);
         let expected_vm_id = format!("{SPEC_EXAMPLE_P256}#0");
 
         assert_eq!(json["id"], json!(SPEC_EXAMPLE_P256));

@@ -316,7 +316,7 @@ fn load_issuer_doc<'a>(
                 });
             }
         };
-        let doc = DIDDoc::try_from_jsonld(doc_value)?;
+        let doc = DIDDoc::try_from(doc_value)?;
         cache.insert(iss_did.to_string(), doc);
     }
     Ok(cache.get(iss_did).expect("just inserted"))

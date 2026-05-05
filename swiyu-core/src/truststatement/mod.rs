@@ -263,7 +263,7 @@ impl TrustStatement {
         let status = payload
             .get("status")
             .and_then(|s| s.get("status_list"))
-            .map(StatusListPointer::try_from_json)
+            .map(StatusListPointer::try_from)
             .transpose()?;
 
         let signing_input = format!("{}.{}", segs[0], segs[1]);

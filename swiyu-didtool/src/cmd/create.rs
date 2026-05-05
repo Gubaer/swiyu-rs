@@ -118,7 +118,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
 
     // Strip the proof slot before hashing; the SCID and entryHash are computed
     // over the 4-element preliminary entry per did:tdw 0.3.
-    let mut prelim = entry_template.to_json();
+    let mut prelim = Value::from(entry_template);
     strip_proof_slot(&mut prelim, &args.format);
 
     // --- derive SCID ---

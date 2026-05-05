@@ -424,7 +424,7 @@ fn format_pretty_header(index: usize, entry: &DIDLogEntry) -> String {
 }
 
 fn pretty_json(entry: &DIDLogEntry) -> String {
-    let value: Value = entry.to_json();
+    let value: Value = Value::from(entry.clone());
     serde_json::to_string_pretty(&value).expect("serializable JSON value")
 }
 

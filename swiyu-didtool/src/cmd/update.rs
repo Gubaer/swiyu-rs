@@ -163,7 +163,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
         prev_version_id,
         new_version_time.clone(),
         parameters,
-        json!({ "value": new_doc.to_jsonld() }),
+        json!({ "value": Value::from(new_doc) }),
     ]);
 
     let entry_hash = derive_entry_hash(&entry_value);
