@@ -444,6 +444,71 @@ impl DIDLogEntry {
         }
     }
 
+    /// Constructs a deactivation DID-log entry with `version_id` set
+    /// to the predecessor's value. Mirrors [`Self::new_genesis`] in
+    /// shape: callers compute the entryHash over the unsigned entry,
+    /// substitute the real `<n+1>-<entryHash>` via
+    /// `entry_edits::set_version_id`, sign, and append the proof.
+    ///
+    /// Carries the previous DID document forward unchanged in
+    /// `DIDDocState::Value`. The `parameters` block intentionally
+    /// holds only `deactivated = true` and an empty `update_keys`
+    /// list — `method`, `scid`, `portable`, etc. are not present in
+    /// non-genesis entries. did:tdw 0.3 and did:webvh 1.0 share the
+    /// same body shape; only the wire encoding differs and that is
+    /// handled in [`Self::to_json`].
+    pub fn new_deactivation(
+        format: &LogEntryFormat,
+        prev_version_id: &str,
+        prev_did_doc: &DIDDoc,
+        new_version_time: &str,
+    ) -> Self {
+        let parameters = match format {
+            LogEntryFormat::TDW03 => LogParameters::new_tdw(
+                None,
+                None,
+                Some(vec![]),
+                None,
+                None,
+                None,
+                Some(true),
+                None,
+                None,
+            ),
+            LogEntryFormat::WebVH10 => LogParameters::new_webvh(
+                None,
+                None,
+                Some(vec![]),
+                None,
+                None,
+                None,
+                Some(true),
+                None,
+                None,
+                None,
+            ),
+        };
+
+        let state = DIDDocState::Value(prev_did_doc.to_jsonld());
+
+        match format {
+            LogEntryFormat::TDW03 => Self::new_tdw(
+                prev_version_id.into(),
+                new_version_time.into(),
+                parameters,
+                state,
+                vec![],
+            ),
+            LogEntryFormat::WebVH10 => Self::new_webvh(
+                prev_version_id.into(),
+                new_version_time.into(),
+                parameters,
+                state,
+                vec![],
+            ),
+        }
+    }
+
     pub fn try_from_json(v: &Value) -> DIDLogResult<Self> {
         if v.is_array() {
             Self::try_from_json_array(v)
@@ -733,6 +798,86 @@ mod tests {
         let value = entry.to_json();
         assert_eq!(value["versionId"], "{SCID}");
         assert_eq!(value["versionTime"], "2026-05-03T12:00:00Z");
+    }
+
+    fn fixture_did_doc() -> DIDDoc {
+        DIDDoc::new_genesis("did:tdw:example.com:abc", &fixture_p256(), &fixture_p256())
+    }
+
+    #[test]
+    fn new_deactivation_tdw_carries_prev_version_id() {
+        let entry = DIDLogEntry::new_deactivation(
+            &LogEntryFormat::TDW03,
+            "1-QmPrevHash",
+            &fixture_did_doc(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = entry.to_json();
+        assert_eq!(value[0], "1-QmPrevHash");
+        assert_eq!(value[1], "2026-05-04T09:00:00Z");
+    }
+
+    #[test]
+    fn new_deactivation_tdw_parameters_hold_only_deactivated_and_empty_update_keys() {
+        let entry = DIDLogEntry::new_deactivation(
+            &LogEntryFormat::TDW03,
+            "1-QmPrevHash",
+            &fixture_did_doc(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = entry.to_json();
+        let params = value[2].as_object().expect("parameters must be an object");
+        assert_eq!(params["deactivated"], json!(true));
+        assert_eq!(params["updateKeys"], json!([]));
+        // No genesis-only fields leak in: method, scid, portable, etc.
+        assert!(!params.contains_key("method"));
+        assert!(!params.contains_key("scid"));
+        assert!(!params.contains_key("portable"));
+    }
+
+    #[test]
+    fn new_deactivation_tdw_carries_prev_did_doc_unchanged() {
+        let prev = fixture_did_doc();
+        let entry = DIDLogEntry::new_deactivation(
+            &LogEntryFormat::TDW03,
+            "1-QmPrevHash",
+            &prev,
+            "2026-05-04T09:00:00Z",
+        );
+        let value = entry.to_json();
+        assert_eq!(value[3]["value"], prev.to_jsonld());
+    }
+
+    #[test]
+    fn new_deactivation_tdw_has_no_proofs() {
+        let entry = DIDLogEntry::new_deactivation(
+            &LogEntryFormat::TDW03,
+            "1-QmPrevHash",
+            &fixture_did_doc(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = entry.to_json();
+        assert_eq!(value[4], json!([]));
+    }
+
+    #[test]
+    fn new_deactivation_webvh_carries_prev_version_id() {
+        let entry = DIDLogEntry::new_deactivation(
+            &LogEntryFormat::WebVH10,
+            "1-QmPrevHash",
+            &fixture_did_doc(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = entry.to_json();
+        assert_eq!(value["versionId"], "1-QmPrevHash");
+        assert_eq!(value["versionTime"], "2026-05-04T09:00:00Z");
+        let params = value["parameters"]
+            .as_object()
+            .expect("parameters must be an object");
+        assert_eq!(params["deactivated"], json!(true));
+        assert_eq!(params["updateKeys"], json!([]));
+        assert!(!params.contains_key("method"));
+        assert_eq!(value["proof"], json!([]));
     }
 
     fn tdw_genesis_with_portable(portable: Option<bool>) -> LogParameters {
