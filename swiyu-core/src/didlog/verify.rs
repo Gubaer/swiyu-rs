@@ -14,6 +14,7 @@
 //! soft skip if they wish.
 
 use std::fmt;
+use std::str::FromStr;
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde_json::Value;
@@ -253,7 +254,7 @@ fn verify_entry(
             actual: vid.to_string(),
         })?;
 
-    let entry_json = entry.to_json();
+    let entry_json = Value::from(entry.clone());
     let arr = entry_json.as_array().ok_or_else(|| MalformedEntry {
         entry: i,
         message: "entry is not a JSON array".into(),
@@ -398,7 +399,7 @@ fn parse_did_key_vm(vm: &str) -> Option<&str> {
 }
 
 fn decode_ed25519_multikey(s: &str) -> Result<[u8; 32], String> {
-    let mb = PublicKeyMultibase::try_from_string(s).map_err(|e| e.to_string())?;
+    let mb = PublicKeyMultibase::from_str(s).map_err(|e| e.to_string())?;
     let bytes = mb.raw_key();
     if bytes.len() != 34 {
         return Err(format!(
@@ -436,7 +437,7 @@ mod tests {
     const VALID_DID: &str = "did:tdw:QmbMyQ4rMDWZyjRkYd11hg3mfja9TiG4789jCFeYsYDktE:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:bade5c46-2adb-4aee-a6aa-a4b93d5e7f3c";
 
     fn valid_did() -> DID {
-        DID::parse(VALID_DID).expect("fixture DID parses")
+        DID::from_str(VALID_DID).expect("fixture DID parses")
     }
 
     fn load_valid() -> DIDLog {
@@ -462,7 +463,7 @@ mod tests {
     fn wrong_did_rejected() {
         let log = load_valid();
         // Different SCID (single-character mutation in the SCID portion).
-        let other = DID::parse(
+        let other = DID::from_str(
             "did:tdw:QmbMyQ4rMDWZyjRkYd11hg3mfja9TiG4789jCFeYsYDktX:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:bade5c46-2adb-4aee-a6aa-a4b93d5e7f3c"
         ).unwrap();
         let err = verify_log(&log, &other).unwrap_err();

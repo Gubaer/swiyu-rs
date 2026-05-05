@@ -90,7 +90,7 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
         DIDDocState::Value(v) => v,
         DIDDocState::Patch(_) => return Err(BuildError::PreviousStateIsPatch),
     };
-    let prev_doc = DIDDoc::try_from_jsonld(prev_doc_value)
+    let prev_doc = DIDDoc::try_from(prev_doc_value)
         .map_err(|e| BuildError::InvalidPredecessorDoc(e.to_string()))?;
     let prev_version_id = last.version_id().to_string();
 
@@ -105,7 +105,7 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
     // did:tdw 0.3 spec — same discipline as create_issuer's
     // log_builder. Strip first, then append the real proof at the
     // end.
-    let mut entry_value = entry_template.to_json();
+    let mut entry_value = Value::from(entry_template);
     strip_proof_slot(&mut entry_value, &FORMAT);
 
     let next_seq = log.len() as u32 + 1;
@@ -148,7 +148,7 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
     let hash_data = proof_config.signing_input(&document_for_hash);
     let signature = engine.sign(&authorized_key_id, &hash_data).await?;
     let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
-    append_proof(&mut entry_value, proof.to_value(), &FORMAT);
+    append_proof(&mut entry_value, Value::from(proof), &FORMAT);
 
     Ok(entry_value)
 }

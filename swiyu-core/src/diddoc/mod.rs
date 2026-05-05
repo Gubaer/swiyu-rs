@@ -4,6 +4,7 @@ pub use public_keys::{KeyUse, PublicKey, PublicKeyJWK, PublicKeyMultibase};
 use public_keys::{ECKey, P256PublicKey};
 use serde_json::{Map, Value, json};
 use std::fmt;
+use std::str::FromStr;
 
 pub type DIDDocResult<T> = Result<T, DIDDocError>;
 
@@ -235,127 +236,6 @@ impl DIDDoc {
         self
     }
 
-    /// Parses a DIDDoc from an already-parsed JSON-LD value.
-    ///
-    /// Expects the JSON-LD representation described in
-    /// <https://www.w3.org/TR/did-1.0/#consumption-0>.
-    pub fn try_from_jsonld(v: &Value) -> DIDDocResult<Self> {
-        let obj = v.as_object().ok_or_else(|| {
-            DIDDocError::InvalidFormat("DID document must be a JSON object".into())
-        })?;
-
-        let context = obj
-            .get("@context")
-            .cloned()
-            .ok_or_else(|| DIDDocError::MissingField("@context".into()))?;
-
-        let id = required_string(obj, "id")?;
-        let also_known_as = string_or_array(obj, "alsoKnownAs")?;
-        let controller = string_or_array(obj, "controller")?;
-        let verification_method = parse_vm_array(obj, "verificationMethod")?;
-        let authentication = parse_vm_or_ref_array(obj, "authentication")?;
-        let assertion_method = parse_vm_or_ref_array(obj, "assertionMethod")?;
-        let key_agreement = parse_vm_or_ref_array(obj, "keyAgreement")?;
-        let capability_invocation = parse_vm_or_ref_array(obj, "capabilityInvocation")?;
-        let capability_delegation = parse_vm_or_ref_array(obj, "capabilityDelegation")?;
-        let service = parse_service_array(obj, "service")?;
-
-        Ok(Self {
-            context,
-            id,
-            also_known_as,
-            controller,
-            verification_method,
-            authentication,
-            assertion_method,
-            key_agreement,
-            capability_invocation,
-            capability_delegation,
-            service,
-        })
-    }
-
-    /// Serializes this DIDDoc to JSON-LD as described in
-    /// <https://www.w3.org/TR/did-1.0/#production-0>.
-    pub fn to_jsonld(&self) -> Value {
-        let mut map = Map::new();
-
-        map.insert("@context".into(), self.context.clone());
-        map.insert("id".into(), json!(self.id));
-
-        if !self.also_known_as.is_empty() {
-            map.insert("alsoKnownAs".into(), json!(self.also_known_as));
-        }
-        if !self.controller.is_empty() {
-            map.insert("controller".into(), string_or_array_value(&self.controller));
-        }
-        if !self.verification_method.is_empty() {
-            let vms: Vec<Value> = self.verification_method.iter().map(vm_to_json).collect();
-            map.insert("verificationMethod".into(), json!(vms));
-        }
-        if !self.authentication.is_empty() {
-            map.insert(
-                "authentication".into(),
-                json!(
-                    self.authentication
-                        .iter()
-                        .map(vm_or_ref_to_json)
-                        .collect::<Vec<_>>()
-                ),
-            );
-        }
-        if !self.assertion_method.is_empty() {
-            map.insert(
-                "assertionMethod".into(),
-                json!(
-                    self.assertion_method
-                        .iter()
-                        .map(vm_or_ref_to_json)
-                        .collect::<Vec<_>>()
-                ),
-            );
-        }
-        if !self.key_agreement.is_empty() {
-            map.insert(
-                "keyAgreement".into(),
-                json!(
-                    self.key_agreement
-                        .iter()
-                        .map(vm_or_ref_to_json)
-                        .collect::<Vec<_>>()
-                ),
-            );
-        }
-        if !self.capability_invocation.is_empty() {
-            map.insert(
-                "capabilityInvocation".into(),
-                json!(
-                    self.capability_invocation
-                        .iter()
-                        .map(vm_or_ref_to_json)
-                        .collect::<Vec<_>>()
-                ),
-            );
-        }
-        if !self.capability_delegation.is_empty() {
-            map.insert(
-                "capabilityDelegation".into(),
-                json!(
-                    self.capability_delegation
-                        .iter()
-                        .map(vm_or_ref_to_json)
-                        .collect::<Vec<_>>()
-                ),
-            );
-        }
-        if !self.service.is_empty() {
-            let services: Vec<Value> = self.service.iter().map(service_to_json).collect();
-            map.insert("service".into(), json!(services));
-        }
-
-        Value::Object(map)
-    }
-
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -397,6 +277,106 @@ impl DIDDoc {
     }
 }
 
+/// Serialises a `DIDDoc` to JSON-LD as described in
+/// <https://www.w3.org/TR/did-1.0/#production-0>.
+impl From<DIDDoc> for Value {
+    fn from(doc: DIDDoc) -> Self {
+        let mut map = Map::new();
+
+        map.insert("@context".into(), doc.context);
+        map.insert("id".into(), Value::String(doc.id));
+
+        if !doc.also_known_as.is_empty() {
+            map.insert("alsoKnownAs".into(), json!(doc.also_known_as));
+        }
+        if !doc.controller.is_empty() {
+            map.insert("controller".into(), string_or_array_value(&doc.controller));
+        }
+        if !doc.verification_method.is_empty() {
+            let vms: Vec<Value> = doc.verification_method.iter().map(vm_to_json).collect();
+            map.insert("verificationMethod".into(), Value::Array(vms));
+        }
+        if !doc.authentication.is_empty() {
+            let arr: Vec<Value> = doc.authentication.iter().map(vm_or_ref_to_json).collect();
+            map.insert("authentication".into(), Value::Array(arr));
+        }
+        if !doc.assertion_method.is_empty() {
+            let arr: Vec<Value> = doc.assertion_method.iter().map(vm_or_ref_to_json).collect();
+            map.insert("assertionMethod".into(), Value::Array(arr));
+        }
+        if !doc.key_agreement.is_empty() {
+            let arr: Vec<Value> = doc.key_agreement.iter().map(vm_or_ref_to_json).collect();
+            map.insert("keyAgreement".into(), Value::Array(arr));
+        }
+        if !doc.capability_invocation.is_empty() {
+            let arr: Vec<Value> = doc
+                .capability_invocation
+                .iter()
+                .map(vm_or_ref_to_json)
+                .collect();
+            map.insert("capabilityInvocation".into(), Value::Array(arr));
+        }
+        if !doc.capability_delegation.is_empty() {
+            let arr: Vec<Value> = doc
+                .capability_delegation
+                .iter()
+                .map(vm_or_ref_to_json)
+                .collect();
+            map.insert("capabilityDelegation".into(), Value::Array(arr));
+        }
+        if !doc.service.is_empty() {
+            let services: Vec<Value> = doc.service.iter().map(service_to_json).collect();
+            map.insert("service".into(), Value::Array(services));
+        }
+
+        Value::Object(map)
+    }
+}
+
+/// Parses a `DIDDoc` from an already-parsed JSON-LD value.
+///
+/// Expects the JSON-LD representation described in
+/// <https://www.w3.org/TR/did-1.0/#consumption-0>.
+impl TryFrom<&Value> for DIDDoc {
+    type Error = DIDDocError;
+
+    fn try_from(v: &Value) -> Result<Self, Self::Error> {
+        let obj = v.as_object().ok_or_else(|| {
+            DIDDocError::InvalidFormat("DID document must be a JSON object".into())
+        })?;
+
+        let context = obj
+            .get("@context")
+            .cloned()
+            .ok_or_else(|| DIDDocError::MissingField("@context".into()))?;
+
+        let id = required_string(obj, "id")?;
+        let also_known_as = string_or_array(obj, "alsoKnownAs")?;
+        let controller = string_or_array(obj, "controller")?;
+        let verification_method = parse_vm_array(obj, "verificationMethod")?;
+        let authentication = parse_vm_or_ref_array(obj, "authentication")?;
+        let assertion_method = parse_vm_or_ref_array(obj, "assertionMethod")?;
+        let key_agreement = parse_vm_or_ref_array(obj, "keyAgreement")?;
+        let capability_invocation = parse_vm_or_ref_array(obj, "capabilityInvocation")?;
+        let capability_delegation = parse_vm_or_ref_array(obj, "capabilityDelegation")?;
+        let service = parse_service_array(obj, "service")?;
+
+        Ok(Self {
+            context,
+            id,
+            also_known_as,
+            controller,
+            verification_method,
+            authentication,
+            assertion_method,
+            key_agreement,
+            capability_invocation,
+            capability_delegation,
+            service,
+        })
+    }
+}
+
 // --- serialization helpers ---
 
 fn vm_to_json(vm: &VerificationMethod) -> Value {
@@ -406,7 +386,7 @@ fn vm_to_json(vm: &VerificationMethod) -> Value {
     map.insert("controller".into(), json!(vm.controller));
     match &vm.public_key {
         PublicKey::Jwk(jwk) => {
-            map.insert("publicKeyJwk".into(), jwk.to_json());
+            map.insert("publicKeyJwk".into(), Value::from(jwk.as_ref().clone()));
         }
         PublicKey::Multibase(mb) => {
             map.insert("publicKeyMultibase".into(), json!(mb.to_string()));
@@ -547,9 +527,9 @@ fn vm_from_json(v: &Value) -> DIDDocResult<VerificationMethod> {
     let type_ = required_string(obj, "type")?;
     let controller = required_string(obj, "controller")?;
     let public_key = if let Some(jwk) = obj.get("publicKeyJwk") {
-        PublicKey::Jwk(Box::new(PublicKeyJWK::try_from_json(jwk)?))
+        PublicKey::Jwk(Box::new(PublicKeyJWK::try_from(jwk)?))
     } else if let Some(mb) = obj.get("publicKeyMultibase").and_then(|v| v.as_str()) {
-        PublicKey::Multibase(PublicKeyMultibase::try_from_string(mb)?)
+        PublicKey::Multibase(PublicKeyMultibase::from_str(mb)?)
     } else {
         return Err(DIDDocError::MissingField(
             "verification method must have 'publicKeyJwk' or 'publicKeyMultibase'".into(),
@@ -646,7 +626,7 @@ mod tests {
 
     #[test]
     fn parse_full_doc() {
-        let doc = DIDDoc::try_from_jsonld(&sample_doc_json()).unwrap();
+        let doc = DIDDoc::try_from(&sample_doc_json()).unwrap();
         assert_eq!(doc.id(), "did:tdw:abc123:example.com");
         assert_eq!(doc.also_known_as(), &["https://example.com/user/alice"]);
         assert_eq!(doc.controller(), &["did:tdw:abc123:example.com"]);
@@ -657,7 +637,7 @@ mod tests {
 
     #[test]
     fn parse_verification_method_jwk() {
-        let doc = DIDDoc::try_from_jsonld(&sample_doc_json()).unwrap();
+        let doc = DIDDoc::try_from(&sample_doc_json()).unwrap();
         let vm = &doc.verification_method()[0];
         assert_eq!(vm.id(), "did:tdw:abc123:example.com#key-1");
         assert_eq!(vm.type_(), "JsonWebKey2020");
@@ -672,7 +652,7 @@ mod tests {
 
     #[test]
     fn parse_verification_method_multibase() {
-        let doc = DIDDoc::try_from_jsonld(&sample_doc_json()).unwrap();
+        let doc = DIDDoc::try_from(&sample_doc_json()).unwrap();
         let VerificationMethodOrRef::Embedded(vm) = &doc.authentication()[1] else {
             panic!("expected embedded");
         };
@@ -685,7 +665,7 @@ mod tests {
 
     #[test]
     fn parse_authentication_ref_and_embedded() {
-        let doc = DIDDoc::try_from_jsonld(&sample_doc_json()).unwrap();
+        let doc = DIDDoc::try_from(&sample_doc_json()).unwrap();
         assert!(matches!(
             &doc.authentication()[0],
             VerificationMethodOrRef::Reference(s) if s == "did:tdw:abc123:example.com#key-1"
@@ -698,7 +678,7 @@ mod tests {
 
     #[test]
     fn parse_service() {
-        let doc = DIDDoc::try_from_jsonld(&sample_doc_json()).unwrap();
+        let doc = DIDDoc::try_from(&sample_doc_json()).unwrap();
         let svc = &doc.service()[0];
         assert_eq!(svc.id(), "did:tdw:abc123:example.com#linked-domain");
         assert_eq!(svc.type_(), &["LinkedDomains"]);
@@ -708,7 +688,7 @@ mod tests {
     fn missing_context() {
         let v = json!({ "id": "did:tdw:abc:example.com" });
         assert!(matches!(
-            DIDDoc::try_from_jsonld(&v).unwrap_err(),
+            DIDDoc::try_from(&v).unwrap_err(),
             DIDDocError::MissingField(_)
         ));
     }
@@ -717,7 +697,7 @@ mod tests {
     fn missing_id() {
         let v = json!({ "@context": ["https://www.w3.org/ns/did/v1"] });
         assert!(matches!(
-            DIDDoc::try_from_jsonld(&v).unwrap_err(),
+            DIDDoc::try_from(&v).unwrap_err(),
             DIDDocError::MissingField(_)
         ));
     }
@@ -725,10 +705,10 @@ mod tests {
     #[test]
     fn roundtrip_to_jsonld() {
         let original = sample_doc_json();
-        let doc = DIDDoc::try_from_jsonld(&original).unwrap();
-        let produced = doc.to_jsonld();
+        let doc = DIDDoc::try_from(&original).unwrap();
+        let produced = Value::from(doc.clone());
         // Round-trip: re-parse the produced JSON-LD and compare the data model.
-        let doc2 = DIDDoc::try_from_jsonld(&produced).unwrap();
+        let doc2 = DIDDoc::try_from(&produced).unwrap();
         assert_eq!(doc, doc2);
     }
 
@@ -737,7 +717,7 @@ mod tests {
         let doc = DIDDoc::new("did:tdw:abc:example.com".into());
         assert_eq!(doc.id(), "did:tdw:abc:example.com");
         assert!(doc.service().is_empty());
-        let v = doc.to_jsonld();
+        let v = Value::from(doc);
         assert_eq!(v["id"], "did:tdw:abc:example.com");
         assert!(v.get("service").is_none());
     }

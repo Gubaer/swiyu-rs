@@ -8,7 +8,7 @@ use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 use swiyu_core::didlog::entry_edits::{append_proof, set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
 use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
-use swiyu_core::proof::ProofPurpose;
+use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
 use crate::crypto::{CryptoError, generate_ecdsa_key_pair, generate_eddsa_key_pair};
 use crate::keystore::{KeyStore, KeyStoreError, StagedKeys};
@@ -118,7 +118,7 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
 
     // Strip the proof slot before hashing; the SCID and entryHash are computed
     // over the 4-element preliminary entry per did:tdw 0.3.
-    let mut prelim = entry_template.to_json();
+    let mut prelim = Value::from(entry_template);
     strip_proof_slot(&mut prelim, &args.format);
 
     // --- derive SCID ---
@@ -155,14 +155,18 @@ pub fn cmd_create(store: &KeyStore, args: CreateArgs) -> Result<(), CreateError>
         LogEntryFormat::TDW03 => ProofPurpose::Authentication,
         LogEntryFormat::WebVH10 => ProofPurpose::AssertionMethod,
     };
-    let proof = super::proof::build_proof(
+    let proof_config = ProofConfig {
+        cryptosuite: Cryptosuite::EddsaJcs2022,
+        verification_method: format!("did:key:{authorized_multikey}#{authorized_multikey}"),
+        proof_purpose,
+        challenge: version_id.clone(),
+        created: now.clone(),
+    };
+    let proof = Value::from(DataIntegrityProof::sign(
         staged.authorized_signing(),
         &document_for_hash,
-        &authorized_multikey,
-        &version_id,
-        proof_purpose,
-        &now,
-    );
+        proof_config,
+    ));
     append_proof(&mut entry_value, proof, &args.format);
 
     // --- write DID log ---

@@ -1,6 +1,6 @@
-This is the specification for the `did_jwk` module in this repository.
+This is the specification for the `didjwk` module in this repository.
 
-The `did_jwk` module provides the data structures and operations for a DID according to the [did:jwk][did-jwk-spec] specification.
+The `didjwk` module provides the data structures and operations for a DID according to the [did:jwk][did-jwk-spec] specification.
 
 # Motivation
 
@@ -47,8 +47,8 @@ The DID Document is synthesised on the fly:
 
 ## Module placement
 
-* The module must live in `swiyu-core` as `did_jwk` (file: `src/did_jwk/mod.rs`).
-* The module must be re-exported from `lib.rs` so it is reachable as `swiyu_core::did_jwk`.
+* The module must live in `swiyu-core` as `didjwk` (file: `src/didjwk/mod.rs`).
+* The module must be re-exported from `lib.rs` so it is reachable as `swiyu_core::didjwk`.
 
 ## Public types
 
@@ -144,7 +144,7 @@ Synthesised DID Document (abridged):
 
 # Testing
 
-* Unit tests in `src/did_jwk/mod.rs` under `#[cfg(test)]`:
+* Unit tests in `src/didjwk/mod.rs` under `#[cfg(test)]`:
     * Parse the spec example above and check the decoded JWK.
     * Round-trip `from_jwk` → `parse` and confirm the JWK matches.
     * Reject inputs missing the `did:jwk:` prefix.

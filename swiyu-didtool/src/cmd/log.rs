@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use serde_json::Value;
 use tracing::debug;
@@ -177,7 +178,7 @@ fn verify_loaded_log(log: &DIDLog, target_did: Option<&DID>) -> Result<(), LogEr
 
     let did_for_verify = match target_did {
         Some(d) => d.clone(),
-        None => match current_did(log).and_then(|s| DID::parse(&s).ok()) {
+        None => match current_did(log).and_then(|s| DID::from_str(&s).ok()) {
             Some(d) => d,
             None => {
                 debug!("skipping log verification (no DID in genesis state)");
@@ -347,7 +348,7 @@ pub(crate) fn current_did(log: &DIDLog) -> Option<String> {
 }
 
 fn keystore_hash_for(store: &KeyStore, did: &str) -> Option<String> {
-    let parsed = DID::parse(did).ok()?;
+    let parsed = DID::from_str(did).ok()?;
     store
         .lookup(&parsed)
         .ok()
@@ -424,7 +425,7 @@ fn format_pretty_header(index: usize, entry: &DIDLogEntry) -> String {
 }
 
 fn pretty_json(entry: &DIDLogEntry) -> String {
-    let value: Value = entry.to_json();
+    let value: Value = Value::from(entry.clone());
     serde_json::to_string_pretty(&value).expect("serializable JSON value")
 }
 

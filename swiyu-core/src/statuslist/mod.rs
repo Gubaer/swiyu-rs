@@ -92,10 +92,14 @@ impl StatusListPointer {
     pub fn uri(&self) -> &str {
         &self.uri
     }
+}
 
-    /// Parses the `status_list` object embedded inside an SD-JWT VC's
-    /// `payload.status` claim. Expects `type`, `idx`, `uri` fields.
-    pub fn try_from_json(v: &Value) -> Result<Self, StatusListError> {
+/// Parses the `status_list` object embedded inside an SD-JWT VC's
+/// `payload.status` claim. Expects `type`, `idx`, `uri` fields.
+impl TryFrom<&Value> for StatusListPointer {
+    type Error = StatusListError;
+
+    fn try_from(v: &Value) -> Result<Self, Self::Error> {
         let obj = v
             .as_object()
             .ok_or(StatusListError::InvalidFieldType("status_list"))?;
@@ -368,7 +372,7 @@ mod tests {
             "idx": 643u64,
             "uri": "https://status-reg.example.com/list.jwt",
         });
-        let p = StatusListPointer::try_from_json(&v).unwrap();
+        let p = StatusListPointer::try_from(&v).unwrap();
         assert_eq!(p.type_(), "SwissTokenStatusList-1.0");
         assert_eq!(p.idx(), 643);
         assert_eq!(p.uri(), "https://status-reg.example.com/list.jwt");
@@ -378,7 +382,7 @@ mod tests {
     fn pointer_missing_idx() {
         let v = json!({ "type": "x", "uri": "y" });
         assert_eq!(
-            StatusListPointer::try_from_json(&v).unwrap_err(),
+            StatusListPointer::try_from(&v).unwrap_err(),
             StatusListError::MissingField("idx")
         );
     }
@@ -387,7 +391,7 @@ mod tests {
     fn pointer_idx_wrong_type() {
         let v = json!({ "type": "x", "idx": "643", "uri": "y" });
         assert_eq!(
-            StatusListPointer::try_from_json(&v).unwrap_err(),
+            StatusListPointer::try_from(&v).unwrap_err(),
             StatusListError::InvalidFieldType("idx")
         );
     }

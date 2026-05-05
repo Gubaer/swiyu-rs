@@ -108,7 +108,7 @@ pub async fn build_log_entry<S: SigningEngine>(
     );
 
     // SCID is derived over the four-element preliminary form.
-    let mut prelim = entry_template.to_json();
+    let mut prelim = Value::from(entry_template);
     strip_proof_slot(&mut prelim, &FORMAT);
     let scid = derive_scid(&prelim);
 
@@ -139,7 +139,7 @@ pub async fn build_log_entry<S: SigningEngine>(
     let hash_data = proof_config.signing_input(&document_for_hash);
     let signature = engine.sign(&key_ids.authorized, &hash_data).await?;
     let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
-    append_proof(&mut entry_value, proof.to_value(), &FORMAT);
+    append_proof(&mut entry_value, Value::from(proof), &FORMAT);
 
     Ok(entry_value)
 }

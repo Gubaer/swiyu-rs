@@ -46,7 +46,7 @@ pub enum LogEntryFormat {
 ```
 
 Indicates which wire format a `DIDLogEntry` was parsed from, and controls which wire format
-`to_json` emits. It has no influence on any other logic.
+the `From<DIDLogEntry> for Value` impl emits. It has no influence on any other logic.
 
 ---
 
@@ -95,7 +95,9 @@ Creates a v1.0 entry (`format = LogEntryFormat::WebVH10`).
 ## Parsing
 
 ```rust
-DIDLogEntry::try_from_json(v: &Value) -> Result<Self, DIDLogError>
+impl TryFrom<&Value> for DIDLogEntry {
+    type Error = DIDLogError;
+}
 ```
 
 Auto-detects the wire format:
@@ -106,10 +108,10 @@ Auto-detects the wire format:
 ## Serialisation
 
 ```rust
-DIDLogEntry::to_json(&self) -> Value
+impl From<DIDLogEntry> for Value
 ```
 
-Emits the wire format recorded in `self.format`:
+Emits the wire format recorded in the entry's `format`:
 - `TDW03` → five-element JSON array using field names `DIDDocState` / `DataIntegrityProof`
 - `WebVH10` → named-field JSON object using field names `state` / `proof`
 

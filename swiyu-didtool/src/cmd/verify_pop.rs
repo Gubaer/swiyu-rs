@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
@@ -354,8 +355,8 @@ fn resolve_context(
 }
 
 fn decode_multikey(s: &str) -> Result<VerifyingKey, VerifyPopError> {
-    let mb = PublicKeyMultibase::try_from_string(s)
-        .map_err(|e| VerifyPopError::Multikey(e.to_string()))?;
+    let mb =
+        PublicKeyMultibase::from_str(s).map_err(|e| VerifyPopError::Multikey(e.to_string()))?;
     let bytes = mb.raw_key();
     if bytes.len() < 2 {
         return Err(VerifyPopError::Multikey("payload too short".into()));
@@ -396,7 +397,7 @@ fn find_vm_key_in_log(log: &DIDLog, kid: &str) -> Result<VerifyingKey, VerifyPop
         DIDDocState::Value(v) => v,
         DIDDocState::Patch(_) => return Err(VerifyPopError::PreviousStateIsPatch),
     };
-    let doc = DIDDoc::try_from_jsonld(doc_value)?;
+    let doc = DIDDoc::try_from(doc_value)?;
     let vm = doc
         .verification_method()
         .iter()
@@ -413,7 +414,7 @@ fn resolve_via_keystore(
     kid_did: &str,
     kid: &str,
 ) -> Result<VerifyingKey, VerifyPopError> {
-    let did = DID::parse(kid_did)?;
+    let did = DID::from_str(kid_did)?;
     let entry = store
         .lookup(&did)?
         .ok_or_else(|| VerifyPopError::NotFound(kid_did.to_string()))?;
@@ -447,19 +448,8 @@ fn jwk_to_verifying_key(jwk: &PublicKeyJWK) -> Result<VerifyingKey, VerifyPopErr
             Ok(VerifyingKey::Eddsa(vk))
         }
         PublicKeyJWK::EC(k) if k.crv() == "P-256" => {
-            let x_bytes = URL_SAFE_NO_PAD
-                .decode(k.x())
-                .map_err(|e| VerifyPopError::JwtMalformed(format!("JWK 'x' not base64url: {e}")))?;
-            let y_bytes = URL_SAFE_NO_PAD
-                .decode(k.y())
-                .map_err(|e| VerifyPopError::JwtMalformed(format!("JWK 'y' not base64url: {e}")))?;
-            let mut sec1 = Vec::with_capacity(1 + x_bytes.len() + y_bytes.len());
-            sec1.push(0x04); // uncompressed point prefix
-            sec1.extend_from_slice(&x_bytes);
-            sec1.extend_from_slice(&y_bytes);
-            let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1).map_err(|e| {
-                VerifyPopError::JwtMalformed(format!("invalid P-256 public key: {e}"))
-            })?;
+            let vk = p256::ecdsa::VerifyingKey::try_from(k)
+                .map_err(|e| VerifyPopError::JwtMalformed(e.to_string()))?;
             Ok(VerifyingKey::Ecdsa(vk))
         }
         other => Err(VerifyPopError::UnsupportedAlg(format!(
@@ -492,25 +482,25 @@ fn print_summary(s: &Summary<'_>) {
         use std::io::Write;
         let mut out = std::io::stdout().lock();
         writeln!(out, "PoP is valid")?;
-        writeln!(out, "  alg:    {}", s.alg)?;
-        writeln!(out, "  kid:    {}", s.kid)?;
-        writeln!(out, "  iss:    {}", s.iss)?;
-        writeln!(out, "  iat:    {}", iso8601(s.iat))?;
+        writeln!(out, "  alg:              {}", s.alg)?;
+        writeln!(out, "  kid:              {}", s.kid)?;
+        writeln!(out, "  iss (issuer):     {}", s.iss)?;
+        writeln!(out, "  iat (issued at):  {}", iso8601(s.iat))?;
         let exp_iso = iso8601(s.exp);
         if s.expired {
             writeln!(
                 out,
-                "  exp:    {exp_iso} (expired {} ago)",
+                "  exp (expires):    {exp_iso} (expired {} ago)",
                 human_duration(s.now - s.exp)
             )?;
         } else {
             writeln!(
                 out,
-                "  exp:    {exp_iso} (in {})",
+                "  exp (expires):    {exp_iso} (in {})",
                 human_duration(s.exp - s.now)
             )?;
         }
-        writeln!(out, "  nonce:  {}", s.nonce)?;
+        writeln!(out, "  nonce:            {}", s.nonce)?;
         Ok(())
     })();
 }
@@ -526,7 +516,7 @@ mod tests {
     use swiyu_core::didlog::LogEntryFormat;
 
     fn test_did() -> DID {
-        DID::parse("did:webvh:abc123:example.com").unwrap()
+        DID::from_str("did:webvh:abc123:example.com").unwrap()
     }
 
     fn make_store() -> (tempfile::TempDir, KeyStore, KeyStoreEntry) {

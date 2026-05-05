@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
@@ -9,37 +10,33 @@ use swiyu_core::did::DID;
 use swiyu_core::diddoc::{DIDDoc, PublicKey, PublicKeyJWK};
 use swiyu_core::didlog::{DIDDocState, DIDLog};
 use swiyu_core::statuslist::{StatusList, StatusValue};
+use swiyu_core::truststatement::TrustStatement;
 
 use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
 use crate::keystore::KeyStore;
 
-use super::{BusinessEntityError, DecodedStatement, build_endpoint, decode_statement};
+use super::{TrustError, build_endpoint};
 
-pub use super::BusinessEntityError as VerifyTrustError;
+pub use super::TrustError as VerifyError;
 
-pub struct VerifyTrustArgs {
+pub struct VerifyArgs {
     pub did: String,
     pub trust_registry_url: Option<String>,
     pub trust_issuer: Option<String>,
 }
 
 #[derive(Debug)]
-pub enum VerifyTrustOutcome {
+pub enum VerifyOutcome {
     Trusted,
     Untrusted,
 }
 
-pub fn cmd_verify_trust(
-    store: &KeyStore,
-    args: VerifyTrustArgs,
-) -> Result<VerifyTrustOutcome, VerifyTrustError> {
+pub fn cmd_verify(store: &KeyStore, args: VerifyArgs) -> Result<VerifyOutcome, VerifyError> {
     let base_url = args
         .trust_registry_url
-        .ok_or(BusinessEntityError::TrustRegistryUrlMissing)?;
-    let expected_issuer = args
-        .trust_issuer
-        .ok_or(BusinessEntityError::TrustIssuerMissing)?;
+        .ok_or(TrustError::TrustRegistryUrlMissing)?;
+    let expected_issuer = args.trust_issuer.ok_or(TrustError::TrustIssuerMissing)?;
     let did = resolve_did(store, &args.did)?;
     let endpoint = build_endpoint(&base_url, &did);
     debug!("GET {endpoint}");
@@ -48,7 +45,7 @@ pub fn cmd_verify_trust(
     let array: Vec<String> = match fetch_text(&endpoint)? {
         FetchOutcome::NotFound => Vec::new(),
         FetchOutcome::Ok(body) => {
-            serde_json::from_str(&body).map_err(|_| BusinessEntityError::ResponseShape)?
+            serde_json::from_str(&body).map_err(|_| TrustError::ResponseShape)?
         }
     };
 
@@ -56,13 +53,13 @@ pub fn cmd_verify_trust(
         print_header(&did_str, &expected_issuer);
         println!();
         println!("Verdict: 0 trusted statements out of 0 — entity is untrusted.");
-        return Ok(VerifyTrustOutcome::Untrusted);
+        return Ok(VerifyOutcome::Untrusted);
     }
 
     let mut decoded = Vec::with_capacity(array.len());
     for (i, jwt) in array.iter().enumerate() {
-        let s = decode_statement(jwt)
-            .map_err(|reason| BusinessEntityError::Statement { n: i + 1, reason })?;
+        let s = TrustStatement::try_from_jwt(jwt)
+            .map_err(|source| TrustError::Statement { n: i + 1, source })?;
         decoded.push(s);
     }
     decoded.sort_by_key(|s| std::cmp::Reverse(s.iat));
@@ -88,10 +85,10 @@ pub fn cmd_verify_trust(
             "Verdict: {trusted_count} trusted statement{} out of {total} — entity is trusted.",
             if trusted_count == 1 { "" } else { "s" }
         );
-        Ok(VerifyTrustOutcome::Trusted)
+        Ok(VerifyOutcome::Trusted)
     } else {
         println!("Verdict: 0 trusted statements out of {total} — entity is untrusted.");
-        Ok(VerifyTrustOutcome::Untrusted)
+        Ok(VerifyOutcome::Untrusted)
     }
 }
 
@@ -132,7 +129,7 @@ impl VerifyContext {
 
 #[derive(Debug)]
 struct Report<'s> {
-    statement: &'s DecodedStatement,
+    statement: &'s TrustStatement,
     iss_check: Check,
     signature_check: Check,
     freshness_check: Check,
@@ -168,10 +165,10 @@ impl Check {
 }
 
 fn verify_one<'s>(
-    stmt: &'s DecodedStatement,
+    stmt: &'s TrustStatement,
     now: u64,
     ctx: &mut VerifyContext,
-) -> Result<Report<'s>, VerifyTrustError> {
+) -> Result<Report<'s>, VerifyError> {
     // 1. Issuer allowlist.
     let iss_check = if stmt.iss == ctx.expected_issuer {
         Check::Ok("matches expected issuer".into())
@@ -211,10 +208,7 @@ fn verify_one<'s>(
     })
 }
 
-fn verify_signature(
-    stmt: &DecodedStatement,
-    ctx: &mut VerifyContext,
-) -> Result<Check, VerifyTrustError> {
+fn verify_signature(stmt: &TrustStatement, ctx: &mut VerifyContext) -> Result<Check, VerifyError> {
     if stmt.alg != "ES256" {
         return Ok(Check::Fail(format!(
             "unsupported alg '{}' (expected ES256)",
@@ -247,7 +241,7 @@ fn verify_signature(
     }
 }
 
-fn check_freshness(stmt: &DecodedStatement, now: u64) -> Check {
+fn check_freshness(stmt: &TrustStatement, now: u64) -> Check {
     if let Some(nbf) = stmt.nbf
         && now < nbf
     {
@@ -263,10 +257,7 @@ fn check_freshness(stmt: &DecodedStatement, now: u64) -> Check {
     Check::Ok(format!("now within nbf..exp ({nbf}..{exp})"))
 }
 
-fn check_status(
-    stmt: &DecodedStatement,
-    ctx: &mut VerifyContext,
-) -> Result<Check, VerifyTrustError> {
+fn check_status(stmt: &TrustStatement, ctx: &mut VerifyContext) -> Result<Check, VerifyError> {
     let info = match &stmt.status {
         Some(s) => s,
         None => return Ok(Check::Fail("no status_list claim in payload".into())),
@@ -289,9 +280,9 @@ fn check_status(
 fn load_issuer_doc<'a>(
     iss_did: &str,
     cache: &'a mut HashMap<String, DIDDoc>,
-) -> Result<&'a DIDDoc, VerifyTrustError> {
+) -> Result<&'a DIDDoc, VerifyError> {
     if !cache.contains_key(iss_did) {
-        let did = DID::parse(iss_did).map_err(|e| VerifyTrustError::IssuerResolution {
+        let did = DID::from_str(iss_did).map_err(|e| VerifyError::IssuerResolution {
             iss: iss_did.to_string(),
             reason: e.to_string(),
         })?;
@@ -300,34 +291,33 @@ fn load_issuer_doc<'a>(
         let text = match fetch_text(&log_url)? {
             FetchOutcome::Ok(t) => t,
             FetchOutcome::NotFound => {
-                return Err(VerifyTrustError::IssuerResolution {
+                return Err(VerifyError::IssuerResolution {
                     iss: iss_did.to_string(),
                     reason: format!("'{log_url}' returned 404"),
                 });
             }
         };
-        let log =
-            DIDLog::try_from_jsonl(&text).map_err(|e| VerifyTrustError::IssuerResolution {
-                iss: iss_did.to_string(),
-                reason: format!("log parse: {e}"),
-            })?;
+        let log = DIDLog::try_from_jsonl(&text).map_err(|e| VerifyError::IssuerResolution {
+            iss: iss_did.to_string(),
+            reason: format!("log parse: {e}"),
+        })?;
         let last = log
             .entries()
             .last()
-            .ok_or_else(|| VerifyTrustError::IssuerResolution {
+            .ok_or_else(|| VerifyError::IssuerResolution {
                 iss: iss_did.to_string(),
                 reason: "log is empty".into(),
             })?;
         let doc_value = match last.did_doc_state() {
             DIDDocState::Value(v) => v,
             DIDDocState::Patch(_) => {
-                return Err(VerifyTrustError::IssuerResolution {
+                return Err(VerifyError::IssuerResolution {
                     iss: iss_did.to_string(),
                     reason: "latest entry's state is a JSON Patch".into(),
                 });
             }
         };
-        let doc = DIDDoc::try_from_jsonld(doc_value)?;
+        let doc = DIDDoc::try_from(doc_value)?;
         cache.insert(iss_did.to_string(), doc);
     }
     Ok(cache.get(iss_did).expect("just inserted"))
@@ -345,43 +335,22 @@ fn find_verifying_key(doc: &DIDDoc, kid: &str) -> Result<p256::ecdsa::VerifyingK
             return Err("verification method publicKey is not a JWK".into());
         }
     };
-    jwk_to_p256_verifying_key(jwk)
-}
-
-fn jwk_to_p256_verifying_key(jwk: &PublicKeyJWK) -> Result<p256::ecdsa::VerifyingKey, String> {
-    let ec = match jwk {
-        PublicKeyJWK::EC(k) if k.crv() == "P-256" => k,
-        other => {
-            return Err(format!(
-                "expected EC/P-256 JWK, got {}/{}",
-                other.kty(),
-                other.crv().unwrap_or("?")
-            ));
-        }
+    let ec = match jwk.as_ref() {
+        PublicKeyJWK::EC(k) => k,
+        other => return Err(format!("expected EC JWK, got {}", other.kty())),
     };
-    let x_bytes = URL_SAFE_NO_PAD
-        .decode(ec.x())
-        .map_err(|e| format!("JWK 'x' not base64url: {e}"))?;
-    let y_bytes = URL_SAFE_NO_PAD
-        .decode(ec.y())
-        .map_err(|e| format!("JWK 'y' not base64url: {e}"))?;
-    let mut sec1 = Vec::with_capacity(1 + x_bytes.len() + y_bytes.len());
-    sec1.push(0x04); // uncompressed-point prefix
-    sec1.extend_from_slice(&x_bytes);
-    sec1.extend_from_slice(&y_bytes);
-    p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1)
-        .map_err(|e| format!("invalid P-256 public key: {e}"))
+    p256::ecdsa::VerifyingKey::try_from(ec).map_err(|e| e.to_string())
 }
 
 fn load_status_list<'a>(
     url: &str,
     ctx: &'a mut VerifyContext,
-) -> Result<&'a StatusList, VerifyTrustError> {
+) -> Result<&'a StatusList, VerifyError> {
     if !ctx.status_lists.contains_key(url) {
         let text = match fetch_text(url)? {
             FetchOutcome::Ok(t) => t,
             FetchOutcome::NotFound => {
-                return Err(VerifyTrustError::StatusListMalformed {
+                return Err(VerifyError::StatusListMalformed {
                     url: url.to_string(),
                     reason: "registry returned 404".into(),
                 });
@@ -397,10 +366,10 @@ fn parse_and_verify_status_list(
     url: &str,
     jwt: &str,
     ctx: &mut VerifyContext,
-) -> Result<StatusList, VerifyTrustError> {
+) -> Result<StatusList, VerifyError> {
     let segs: Vec<&str> = jwt.split('.').collect();
     if segs.len() != 3 {
-        return Err(VerifyTrustError::StatusListMalformed {
+        return Err(VerifyError::StatusListMalformed {
             url: url.to_string(),
             reason: format!("expected 3 dot-separated parts, got {}", segs.len()),
         });
@@ -408,33 +377,31 @@ fn parse_and_verify_status_list(
     let header_bytes =
         URL_SAFE_NO_PAD
             .decode(segs[0])
-            .map_err(|e| VerifyTrustError::StatusListMalformed {
+            .map_err(|e| VerifyError::StatusListMalformed {
                 url: url.to_string(),
                 reason: format!("header not base64url: {e}"),
             })?;
-    let header: Value = serde_json::from_slice(&header_bytes).map_err(|e| {
-        VerifyTrustError::StatusListMalformed {
+    let header: Value =
+        serde_json::from_slice(&header_bytes).map_err(|e| VerifyError::StatusListMalformed {
             url: url.to_string(),
             reason: format!("header not JSON: {e}"),
-        }
-    })?;
+        })?;
     let payload_bytes =
         URL_SAFE_NO_PAD
             .decode(segs[1])
-            .map_err(|e| VerifyTrustError::StatusListMalformed {
+            .map_err(|e| VerifyError::StatusListMalformed {
                 url: url.to_string(),
                 reason: format!("payload not base64url: {e}"),
             })?;
-    let payload: Value = serde_json::from_slice(&payload_bytes).map_err(|e| {
-        VerifyTrustError::StatusListMalformed {
+    let payload: Value =
+        serde_json::from_slice(&payload_bytes).map_err(|e| VerifyError::StatusListMalformed {
             url: url.to_string(),
             reason: format!("payload not JSON: {e}"),
-        }
-    })?;
+        })?;
     let signature =
         URL_SAFE_NO_PAD
             .decode(segs[2])
-            .map_err(|e| VerifyTrustError::StatusListMalformed {
+            .map_err(|e| VerifyError::StatusListMalformed {
                 url: url.to_string(),
                 reason: format!("signature not base64url: {e}"),
             })?;
@@ -445,25 +412,26 @@ fn parse_and_verify_status_list(
         .and_then(Value::as_str)
         .unwrap_or("(missing)");
     if alg != "ES256" {
-        return Err(VerifyTrustError::StatusListMalformed {
+        return Err(VerifyError::StatusListMalformed {
             url: url.to_string(),
             reason: format!("unsupported alg '{alg}' (expected ES256)"),
         });
     }
     let kid = header.get("kid").and_then(Value::as_str).ok_or_else(|| {
-        VerifyTrustError::StatusListMalformed {
+        VerifyError::StatusListMalformed {
             url: url.to_string(),
             reason: "missing 'kid' in header".into(),
         }
     })?;
-    let kid_did = kid.split_once('#').map(|(d, _)| d).ok_or_else(|| {
-        VerifyTrustError::StatusListMalformed {
-            url: url.to_string(),
-            reason: format!("kid '{kid}' has no fragment"),
-        }
-    })?;
+    let kid_did =
+        kid.split_once('#')
+            .map(|(d, _)| d)
+            .ok_or_else(|| VerifyError::StatusListMalformed {
+                url: url.to_string(),
+                reason: format!("kid '{kid}' has no fragment"),
+            })?;
     if kid_did != ctx.expected_issuer {
-        return Err(VerifyTrustError::StatusListMalformed {
+        return Err(VerifyError::StatusListMalformed {
             url: url.to_string(),
             reason: format!(
                 "kid's DID '{kid_did}' does not match expected issuer '{}'",
@@ -474,20 +442,19 @@ fn parse_and_verify_status_list(
 
     // Verify signature.
     let doc = load_issuer_doc(kid_did, &mut ctx.issuer_docs)?;
-    let vk =
-        find_verifying_key(doc, kid).map_err(|reason| VerifyTrustError::StatusListMalformed {
-            url: url.to_string(),
-            reason: format!("issuer key resolution: {reason}"),
-        })?;
+    let vk = find_verifying_key(doc, kid).map_err(|reason| VerifyError::StatusListMalformed {
+        url: url.to_string(),
+        reason: format!("issuer key resolution: {reason}"),
+    })?;
     let sig = p256::ecdsa::Signature::from_slice(&signature)
-        .map_err(|_| VerifyTrustError::StatusListSignatureInvalid)?;
+        .map_err(|_| VerifyError::StatusListSignatureInvalid)?;
     let signing_input = format!("{}.{}", segs[0], segs[1]);
     use p256::ecdsa::signature::Verifier;
     vk.verify(signing_input.as_bytes(), &sig)
-        .map_err(|_| VerifyTrustError::StatusListSignatureInvalid)?;
+        .map_err(|_| VerifyError::StatusListSignatureInvalid)?;
 
     // Decode + decompress + bit-width validate via core. Errors propagate as
-    // BusinessEntityError::StatusList(StatusListError) through `?`.
+    // TrustError::StatusList(StatusListError) through `?`.
     Ok(StatusList::from_payload(&payload)?)
 }
 
@@ -501,24 +468,24 @@ fn print_header(did: &str, expected_issuer: &str) {
 fn print_report(n: usize, r: &Report<'_>) {
     let s = r.statement;
     println!("#{n}  {}", s.vct);
-    println!("  iat:          {}", iso8601(s.iat));
+    println!("  iat (issued at):    {}", iso8601(s.iat));
     println!(
-        "  iss:          {} {}",
+        "  iss (issuer):       {} {}",
         r.iss_check.marker(),
         r.iss_check.message()
     );
     println!(
-        "  signature:    {} {}",
+        "  signature:          {} {}",
         r.signature_check.marker(),
         r.signature_check.message()
     );
     println!(
-        "  freshness:    {} {}",
+        "  freshness:          {} {}",
         r.freshness_check.marker(),
         r.freshness_check.message()
     );
     println!(
-        "  status:       {} {}",
+        "  status:             {} {}",
         r.status_check.marker(),
         r.status_check.message()
     );
@@ -526,18 +493,18 @@ fn print_report(n: usize, r: &Report<'_>) {
         let mut first = true;
         for (lang, name) in &s.entity_name {
             if first {
-                println!("  entity name:  {lang}: {name}");
+                println!("  entity name:        {lang}: {name}");
                 first = false;
             } else {
-                println!("                {lang}: {name}");
+                println!("                      {lang}: {name}");
             }
         }
     }
     if let Some(b) = s.is_state_actor {
-        println!("  state actor:  {}", if b { "yes" } else { "no" });
+        println!("  state actor:        {}", if b { "yes" } else { "no" });
     }
     println!(
-        "  verdict:      {}  {}",
+        "  verdict:            {}  {}",
         if r.verdict { "[ok]  " } else { "[fail]" },
         if r.verdict { "trusted" } else { "untrusted" }
     );
@@ -571,8 +538,8 @@ mod tests {
         assert!(matches!(c, Check::Fail(_)));
     }
 
-    fn stub_statement(nbf: Option<u64>, exp: Option<u64>) -> DecodedStatement {
-        DecodedStatement {
+    fn stub_statement(nbf: Option<u64>, exp: Option<u64>) -> TrustStatement {
+        TrustStatement {
             vct: "TrustStatementIdentityV1".into(),
             iss: "did:tdw:abc".into(),
             iat: 1000,

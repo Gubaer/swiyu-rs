@@ -1,4 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use serde_json::Value;
 use std::fmt;
 use std::str::FromStr;
 
@@ -63,44 +64,116 @@ pub struct DIDJwk {
 }
 
 impl DIDJwk {
-    /// Parses a `did:jwk:<base64url(json)>` identifier.
+    /// Constructs a `did:jwk` identifier from a public JWK.
     ///
-    /// `input` is expected to be a bare DID. As a convenience for callers that
-    /// pass a DID URL (e.g. `did:jwk:...#0`, the verification method id of the
-    /// embedded key), any fragment or query component is stripped before
-    /// decoding and discarded; [`as_str`](Self::as_str) returns the bare DID.
+    /// `jwk` must be a public key with a supported algorithm: `OKP` with curve
+    /// `Ed25519`, or `EC` with curve `P-256`. Other key types and curves return
+    /// [`DIDJwkError::UnsupportedAlgorithm`].
     ///
-    /// The base64url suffix must be unpadded (RFC 4648 §5). The decoded JSON
-    /// must be a public JWK with `kty` of `OKP` (curve `Ed25519`) or `EC`
-    /// (curve `P-256`); other key types and curves return
-    /// [`DIDJwkError::UnsupportedAlgorithm`]. JWKs containing private key
-    /// components (`d`, `p`, `q`, `dp`, `dq`, `qi`, `k`) are rejected with
-    /// [`DIDJwkError::PrivateKeyMaterial`].
+    /// The JWK is serialised in canonical form (JCS, RFC 8785) before
+    /// base64url-encoding, so the resulting identifier is stable: two JWKs with
+    /// equal field content always produce the same DID, regardless of how they
+    /// were constructed.
     ///
     /// # Example
     ///
     /// ```
-    /// use swiyu_core::did_jwk::DIDJwk;
+    /// use swiyu_core::didjwk::DIDJwk;
+    /// use swiyu_core::diddoc::PublicKeyJWK;
     ///
-    /// let did = DIDJwk::parse(
-    ///     "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91\
-    ///      c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1L\
-    ///      dG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9",
-    /// )
-    /// .unwrap();
+    /// let jwk = PublicKeyJWK::new_okp(
+    ///     "Ed25519".into(),
+    ///     "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo".into(),
+    /// );
+    /// let did = DIDJwk::from_jwk(&jwk).unwrap();
+    /// assert!(did.as_str().starts_with("did:jwk:"));
     ///
-    /// assert_eq!(did.jwk().kty(), "EC");
-    /// assert_eq!(did.jwk().crv(), Some("P-256"));
+    /// // Parsing the produced DID recovers the original JWK byte-for-byte.
+    /// let parsed: DIDJwk = did.as_str().parse().unwrap();
+    /// assert_eq!(parsed.jwk(), &jwk);
     /// ```
-    pub fn parse(input: &str) -> Result<Self, DIDJwkError> {
-        let suffix = input
-            .strip_prefix(PREFIX)
-            .ok_or(DIDJwkError::MissingPrefix)?;
+    pub fn from_jwk(jwk: &PublicKeyJWK) -> Result<Self, DIDJwkError> {
+        validate_curve(jwk)?;
+
+        let value = Value::from(jwk.clone());
+        let canonical = serde_jcs::to_string(&value)
+            .map_err(|e| DIDJwkError::Canonicalization(e.to_string()))?;
+        let encoded = URL_SAFE_NO_PAD.encode(canonical.as_bytes());
+
+        Ok(Self {
+            did: format!("{PREFIX}{encoded}"),
+            jwk: jwk.clone(),
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.did
+    }
+
+    pub fn jwk(&self) -> &PublicKeyJWK {
+        &self.jwk
+    }
+}
+
+impl From<DIDJwk> for DIDDoc {
+    fn from(value: DIDJwk) -> Self {
+        let DIDJwk { did, jwk } = value;
+        let vm_id = format!("{did}#0");
+        let vm = VerificationMethod::new(
+            vm_id.clone(),
+            "JsonWebKey2020".into(),
+            did.clone(),
+            PublicKey::Jwk(Box::new(jwk)),
+        );
+        let vm_ref = VerificationMethodOrRef::Reference(vm_id);
+
+        DIDDoc::new(did)
+            .add_verification_method(vm)
+            .add_authentication(vm_ref.clone())
+            .add_assertion_method(vm_ref.clone())
+            .add_capability_invocation(vm_ref.clone())
+            .add_capability_delegation(vm_ref)
+    }
+}
+
+/// Parses a `did:jwk:<base64url(json)>` identifier.
+///
+/// `s` is expected to be a bare DID. As a convenience for callers that pass a
+/// DID URL (e.g. `did:jwk:...#0`, the verification method id of the embedded
+/// key), any fragment or query component is stripped before decoding and
+/// discarded; [`DIDJwk::as_str`] returns the bare DID.
+///
+/// The base64url suffix must be unpadded (RFC 4648 §5). The decoded JSON must
+/// be a public JWK with `kty` of `OKP` (curve `Ed25519`) or `EC` (curve
+/// `P-256`); other key types and curves return
+/// [`DIDJwkError::UnsupportedAlgorithm`]. JWKs containing private key
+/// components (`d`, `p`, `q`, `dp`, `dq`, `qi`, `k`) are rejected with
+/// [`DIDJwkError::PrivateKeyMaterial`].
+///
+/// # Example
+///
+/// ```
+/// use swiyu_core::didjwk::DIDJwk;
+///
+/// let did: DIDJwk = "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91\
+///      c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1L\
+///      dG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9"
+///     .parse()
+///     .unwrap();
+///
+/// assert_eq!(did.jwk().kty(), "EC");
+/// assert_eq!(did.jwk().crv(), Some("P-256"));
+/// ```
+impl FromStr for DIDJwk {
+    type Err = DIDJwkError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let suffix = s.strip_prefix(PREFIX).ok_or(DIDJwkError::MissingPrefix)?;
 
         // Accept callers that pass a DID URL (e.g. "did:jwk:...#0") by stripping
         // the fragment and query before decoding. The DIDJwk represents the bare DID.
         let suffix = match suffix.split_once(['#', '?']) {
-            Some((s, _)) => s,
+            Some((sub, _)) => sub,
             None => suffix,
         };
 
@@ -128,8 +201,8 @@ impl DIDJwk {
             return Err(DIDJwkError::UnsupportedAlgorithm(kty.into()));
         }
 
-        let jwk = PublicKeyJWK::try_from_json(&value)
-            .map_err(|e| DIDJwkError::InvalidJwk(e.to_string()))?;
+        let jwk =
+            PublicKeyJWK::try_from(&value).map_err(|e| DIDJwkError::InvalidJwk(e.to_string()))?;
 
         validate_curve(&jwk)?;
 
@@ -137,81 +210,6 @@ impl DIDJwk {
             did: format!("{PREFIX}{suffix}"),
             jwk,
         })
-    }
-
-    /// Constructs a `did:jwk` identifier from a public JWK.
-    ///
-    /// `jwk` must be a public key with a supported algorithm: `OKP` with curve
-    /// `Ed25519`, or `EC` with curve `P-256`. Other key types and curves return
-    /// [`DIDJwkError::UnsupportedAlgorithm`].
-    ///
-    /// The JWK is serialised in canonical form (JCS, RFC 8785) before
-    /// base64url-encoding, so the resulting identifier is stable: two JWKs with
-    /// equal field content always produce the same DID, regardless of how they
-    /// were constructed.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use swiyu_core::did_jwk::DIDJwk;
-    /// use swiyu_core::diddoc::PublicKeyJWK;
-    ///
-    /// let jwk = PublicKeyJWK::new_okp(
-    ///     "Ed25519".into(),
-    ///     "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo".into(),
-    /// );
-    /// let did = DIDJwk::from_jwk(&jwk).unwrap();
-    /// assert!(did.as_str().starts_with("did:jwk:"));
-    ///
-    /// // Parsing the produced DID recovers the original JWK byte-for-byte.
-    /// let parsed = DIDJwk::parse(did.as_str()).unwrap();
-    /// assert_eq!(parsed.jwk(), &jwk);
-    /// ```
-    pub fn from_jwk(jwk: &PublicKeyJWK) -> Result<Self, DIDJwkError> {
-        validate_curve(jwk)?;
-
-        let value = jwk.to_json();
-        let canonical = serde_jcs::to_string(&value)
-            .map_err(|e| DIDJwkError::Canonicalization(e.to_string()))?;
-        let encoded = URL_SAFE_NO_PAD.encode(canonical.as_bytes());
-
-        Ok(Self {
-            did: format!("{PREFIX}{encoded}"),
-            jwk: jwk.clone(),
-        })
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.did
-    }
-
-    pub fn jwk(&self) -> &PublicKeyJWK {
-        &self.jwk
-    }
-
-    pub fn to_diddoc(&self) -> DIDDoc {
-        let vm_id = format!("{}#0", self.did);
-        let vm = VerificationMethod::new(
-            vm_id.clone(),
-            "JsonWebKey2020".into(),
-            self.did.clone(),
-            PublicKey::Jwk(Box::new(self.jwk.clone())),
-        );
-        let vm_ref = VerificationMethodOrRef::Reference(vm_id);
-
-        DIDDoc::new(self.did.clone())
-            .add_verification_method(vm)
-            .add_authentication(vm_ref.clone())
-            .add_assertion_method(vm_ref.clone())
-            .add_capability_invocation(vm_ref.clone())
-            .add_capability_delegation(vm_ref)
-    }
-}
-
-impl FromStr for DIDJwk {
-    type Err = DIDJwkError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s)
     }
 }
 
@@ -251,7 +249,7 @@ mod tests {
 
     #[test]
     fn parse_spec_example() {
-        let did = DIDJwk::parse(SPEC_EXAMPLE_P256).expect("must parse spec example");
+        let did = DIDJwk::from_str(SPEC_EXAMPLE_P256).expect("must parse spec example");
         assert_eq!(did.as_str(), SPEC_EXAMPLE_P256);
         assert_eq!(did.jwk().kty(), "EC");
         assert_eq!(did.jwk().crv(), Some("P-256"));
@@ -268,18 +266,18 @@ mod tests {
     #[test]
     fn parse_strips_fragment_and_query() {
         let with_frag = format!("{SPEC_EXAMPLE_P256}#0");
-        let did = DIDJwk::parse(&with_frag).expect("must parse DID URL with fragment");
+        let did = DIDJwk::from_str(&with_frag).expect("must parse DID URL with fragment");
         assert_eq!(did.as_str(), SPEC_EXAMPLE_P256);
 
         let with_query = format!("{SPEC_EXAMPLE_P256}?versionId=1");
-        let did = DIDJwk::parse(&with_query).expect("must parse DID URL with query");
+        let did = DIDJwk::from_str(&with_query).expect("must parse DID URL with query");
         assert_eq!(did.as_str(), SPEC_EXAMPLE_P256);
     }
 
     #[test]
     fn missing_prefix_is_rejected() {
         assert_eq!(
-            DIDJwk::parse("did:tdw:somethingelse"),
+            DIDJwk::from_str("did:tdw:somethingelse"),
             Err(DIDJwkError::MissingPrefix)
         );
     }
@@ -288,7 +286,7 @@ mod tests {
     fn padded_base64_is_rejected() {
         // valid OKP JWK encoded with padding -- the URL_SAFE_NO_PAD decoder must reject it.
         let padded = "did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5IiwieCI6IjExcVlBWUt4Q3JmVlNfN1R5V1FIT2c3aGN2UGFwaU1scndJYWFQY0hVUm8ifQ==";
-        assert_eq!(DIDJwk::parse(padded), Err(DIDJwkError::InvalidBase64));
+        assert_eq!(DIDJwk::from_str(padded), Err(DIDJwkError::InvalidBase64));
     }
 
     #[test]
@@ -302,7 +300,7 @@ mod tests {
         });
         let encoded = URL_SAFE_NO_PAD.encode(jwk.to_string().as_bytes());
         let did = format!("{PREFIX}{encoded}");
-        assert_eq!(DIDJwk::parse(&did), Err(DIDJwkError::PrivateKeyMaterial));
+        assert_eq!(DIDJwk::from_str(&did), Err(DIDJwkError::PrivateKeyMaterial));
     }
 
     #[test]
@@ -311,7 +309,7 @@ mod tests {
         let encoded = URL_SAFE_NO_PAD.encode(jwk.to_string().as_bytes());
         let did = format!("{PREFIX}{encoded}");
         assert!(matches!(
-            DIDJwk::parse(&did),
+            DIDJwk::from_str(&did),
             Err(DIDJwkError::UnsupportedAlgorithm(_))
         ));
     }
@@ -322,7 +320,7 @@ mod tests {
         let encoded = URL_SAFE_NO_PAD.encode(jwk.to_string().as_bytes());
         let did = format!("{PREFIX}{encoded}");
         // Symmetric keys carry "k" which is private material; that check fires first.
-        assert_eq!(DIDJwk::parse(&did), Err(DIDJwkError::PrivateKeyMaterial));
+        assert_eq!(DIDJwk::from_str(&did), Err(DIDJwkError::PrivateKeyMaterial));
     }
 
     #[test]
@@ -331,7 +329,7 @@ mod tests {
         let encoded = URL_SAFE_NO_PAD.encode(jwk.to_string().as_bytes());
         let did = format!("{PREFIX}{encoded}");
         assert!(matches!(
-            DIDJwk::parse(&did),
+            DIDJwk::from_str(&did),
             Err(DIDJwkError::UnsupportedAlgorithm(s)) if s == "EC/P-384"
         ));
     }
@@ -342,7 +340,7 @@ mod tests {
         let encoded = URL_SAFE_NO_PAD.encode(jwk.to_string().as_bytes());
         let did = format!("{PREFIX}{encoded}");
         assert!(matches!(
-            DIDJwk::parse(&did),
+            DIDJwk::from_str(&did),
             Err(DIDJwkError::UnsupportedAlgorithm(s)) if s == "OKP/X25519"
         ));
     }
@@ -354,7 +352,7 @@ mod tests {
             "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo".into(),
         );
         let did = DIDJwk::from_jwk(&jwk).unwrap();
-        let parsed = DIDJwk::parse(did.as_str()).unwrap();
+        let parsed = DIDJwk::from_str(did.as_str()).unwrap();
         assert_eq!(parsed.jwk(), &jwk);
         assert_eq!(parsed.as_str(), did.as_str());
     }
@@ -363,7 +361,7 @@ mod tests {
     fn from_jwk_roundtrip_ec() {
         let jwk = PublicKeyJWK::new_ec("P-256".into(), "xval".into(), "yval".into());
         let did = DIDJwk::from_jwk(&jwk).unwrap();
-        let parsed = DIDJwk::parse(did.as_str()).unwrap();
+        let parsed = DIDJwk::from_str(did.as_str()).unwrap();
         assert_eq!(parsed.jwk(), &jwk);
     }
 
@@ -397,9 +395,9 @@ mod tests {
 
     #[test]
     fn to_diddoc_has_expected_shape() {
-        let did = DIDJwk::parse(SPEC_EXAMPLE_P256).unwrap();
-        let doc = did.to_diddoc();
-        let json = doc.to_jsonld();
+        let did = DIDJwk::from_str(SPEC_EXAMPLE_P256).unwrap();
+        let doc = DIDDoc::from(did);
+        let json = Value::from(doc);
         let expected_vm_id = format!("{SPEC_EXAMPLE_P256}#0");
 
         assert_eq!(json["id"], json!(SPEC_EXAMPLE_P256));
@@ -432,7 +430,7 @@ mod tests {
         let encoded = URL_SAFE_NO_PAD.encode(b"not json at all");
         let did = format!("{PREFIX}{encoded}");
         assert!(matches!(
-            DIDJwk::parse(&did),
+            DIDJwk::from_str(&did),
             Err(DIDJwkError::InvalidJson(_))
         ));
     }
@@ -442,7 +440,7 @@ mod tests {
         let encoded = URL_SAFE_NO_PAD.encode(b"\"a string, not an object\"");
         let did = format!("{PREFIX}{encoded}");
         assert!(matches!(
-            DIDJwk::parse(&did),
+            DIDJwk::from_str(&did),
             Err(DIDJwkError::InvalidJwk(_))
         ));
     }
@@ -452,7 +450,7 @@ mod tests {
         let encoded = URL_SAFE_NO_PAD.encode(b"{\"crv\":\"P-256\",\"x\":\"x\",\"y\":\"y\"}");
         let did = format!("{PREFIX}{encoded}");
         assert!(matches!(
-            DIDJwk::parse(&did),
+            DIDJwk::from_str(&did),
             Err(DIDJwkError::InvalidJwk(_))
         ));
     }

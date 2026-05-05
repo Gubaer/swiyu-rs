@@ -39,40 +39,6 @@ pub struct SCID {
 }
 
 impl SCID {
-    /// Parses a SCID from its base58btc-encoded multihash string representation.
-    ///
-    /// Returns `SCIDError::InvalidEncoding` if the string is not valid base58btc, or
-    /// `SCIDError::InvalidMultihash` if the decoded bytes are not a valid multihash.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use swiyu_core::didlog::scid::SCID;
-    /// use multihash_codetable::{Code, MultihashDigest};
-    ///
-    /// let mh = Code::Sha2_256.digest(b"inception entry data");
-    /// let encoded = bs58::encode(mh.to_bytes()).into_string();
-    ///
-    /// let scid = SCID::try_from_string(&encoded).unwrap();
-    /// assert_eq!(scid.hash_algorithm(), 0x12); // SHA2-256
-    /// assert_eq!(scid.hash_length(), 32);
-    /// assert_eq!(scid.to_string(), encoded);
-    /// ```
-    pub fn try_from_string(s: &str) -> SCIDResult<Self> {
-        let bytes = bs58::decode(s)
-            .into_vec()
-            .map_err(|e| SCIDError::InvalidEncoding(e.to_string()))?;
-
-        let mh = Multihash::<64>::from_bytes(&bytes)
-            .map_err(|e| SCIDError::InvalidMultihash(e.to_string()))?;
-
-        Ok(Self {
-            code: mh.code(),
-            size: mh.size(),
-            digest: mh.digest().to_vec(),
-        })
-    }
-
     /// The multihash codec code identifying the hash algorithm (e.g. 0x12 = SHA2-256).
     /// The full list of codec codes is at <https://github.com/multiformats/multicodec/blob/master/table.csv>.
     pub fn hash_algorithm(&self) -> u64 {
@@ -99,19 +65,49 @@ impl fmt::Display for SCID {
     }
 }
 
-impl TryFrom<String> for SCID {
-    type Error = SCIDError;
-
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        SCID::try_from_string(&s)
-    }
-}
-
+/// Parses a SCID from its base58btc-encoded multihash string representation.
+///
+/// Returns `SCIDError::InvalidEncoding` if the string is not valid base58btc, or
+/// `SCIDError::InvalidMultihash` if the decoded bytes are not a valid multihash.
+///
+/// # Example
+///
+/// ```
+/// use swiyu_core::didlog::scid::SCID;
+/// use multihash_codetable::{Code, MultihashDigest};
+///
+/// let mh = Code::Sha2_256.digest(b"inception entry data");
+/// let encoded = bs58::encode(mh.to_bytes()).into_string();
+///
+/// let scid = SCID::try_from(encoded.as_str()).unwrap();
+/// assert_eq!(scid.hash_algorithm(), 0x12); // SHA2-256
+/// assert_eq!(scid.hash_length(), 32);
+/// assert_eq!(scid.to_string(), encoded);
+/// ```
 impl TryFrom<&str> for SCID {
     type Error = SCIDError;
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
-        SCID::try_from_string(s)
+        let bytes = bs58::decode(s)
+            .into_vec()
+            .map_err(|e| SCIDError::InvalidEncoding(e.to_string()))?;
+
+        let mh = Multihash::<64>::from_bytes(&bytes)
+            .map_err(|e| SCIDError::InvalidMultihash(e.to_string()))?;
+
+        Ok(Self {
+            code: mh.code(),
+            size: mh.size(),
+            digest: mh.digest().to_vec(),
+        })
+    }
+}
+
+impl TryFrom<String> for SCID {
+    type Error = SCIDError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::try_from(s.as_str())
     }
 }
 
@@ -163,7 +159,7 @@ mod tests {
     #[test]
     fn parse_valid_scid() {
         let s = sample_scid_string();
-        let scid = SCID::try_from_string(&s).unwrap();
+        let scid = SCID::try_from(s.as_str()).unwrap();
         assert_eq!(scid.hash_algorithm(), 0x12); // SHA2-256
         assert_eq!(scid.hash_length(), 32);
         assert_eq!(scid.raw_hash().len(), 32);
@@ -172,7 +168,7 @@ mod tests {
     #[test]
     fn to_string_roundtrip() {
         let s = sample_scid_string();
-        let scid = SCID::try_from_string(&s).unwrap();
+        let scid = SCID::try_from(s.as_str()).unwrap();
         assert_eq!(scid.to_string(), s);
     }
 
@@ -192,7 +188,7 @@ mod tests {
     #[test]
     fn invalid_base58() {
         assert!(matches!(
-            SCID::try_from_string("not$valid$base58"),
+            SCID::try_from("not$valid$base58"),
             Err(SCIDError::InvalidEncoding(_))
         ));
     }
@@ -202,7 +198,7 @@ mod tests {
         // Valid base58 but not a valid multihash.
         let s = bs58::encode(b"not a multihash").into_string();
         assert!(matches!(
-            SCID::try_from_string(&s),
+            SCID::try_from(s.as_str()),
             Err(SCIDError::InvalidMultihash(_))
         ));
     }

@@ -92,7 +92,7 @@ println!("fetch {} and read slot {}", pointer.uri(), pointer.idx());
 * Verifying the JWT's signature against an expected issuer.
 * Caching across calls.
 
-These belong in the consuming application; see `swiyu-didtool/src/cmd/business_entity/verify_trust.rs` for a concrete consumer.
+These belong in the consuming application; see `swiyu-didtool/src/cmd/trust/verify.rs` for a concrete consumer.
 
 # References
 

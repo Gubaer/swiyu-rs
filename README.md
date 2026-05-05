@@ -170,33 +170,32 @@ didtool verify-pop --jwt "$(cat pop.jwt)"
 didtool verify-pop --jwt-file pop.jwt --did did:tdw:Qmb7D2murY... --nonce "<challenge>"
 ```
 
-Look up the SWIYU trust registry's statements about a business entity DID —
-displays the disclosed claims (entity name per locale, state-actor flag, status
-list pointer). Display only; signatures and revocation are not checked. Exit
-codes are `0` (statements found), `1` (none found — i.e. *untrusted*), `2`
-(operational error):
+Look up the SWIYU trust granted to a DID — displays the disclosed claims
+(entity name per locale, state-actor flag, status list pointer). Display only;
+signatures and revocation are not checked. Exit codes are `0` (statements
+found), `1` (none found — i.e. *untrusted*), `2` (operational error):
 
 ```sh
 # With SWIYU_TRUST_REGISTRY_URL set in .env.
-didtool business-entity lookup --did did:tdw:QmPAaz...
+didtool trust lookup --did did:tdw:QmPAaz...
 
 # Or via the flag.
-didtool business-entity lookup --did did:tdw:QmPAaz... \
+didtool trust lookup --did did:tdw:QmPAaz... \
     --trust-registry-url https://trust-reg.trust-infra.swiyu-int.admin.ch
 ```
 
-Verify that a business entity is currently vouched-for by SWIYU — checks the
-issuer allowlist, ES256 signature, freshness (`nbf`/`exp`), and revocation via
-the issuer-signed status list. Reports a per-statement breakdown plus an
-overall verdict. Exit codes are `0` (trusted), `1` (untrusted — no statement
-passes all checks), `2` (operational error):
+Verify that a DID is currently vouched-for by SWIYU — checks the issuer
+allowlist, ES256 signature, freshness (`nbf`/`exp`), and revocation via the
+issuer-signed status list. Reports a per-statement breakdown plus an overall
+verdict. Exit codes are `0` (trusted), `1` (untrusted — no statement passes
+all checks), `2` (operational error):
 
 ```sh
 # With SWIYU_TRUST_REGISTRY_URL and SWIYU_TRUST_ISSUER_DID set in .env.
-didtool business-entity verify-trust --did did:tdw:QmPAaz...
+didtool trust verify --did did:tdw:QmPAaz...
 
 # Or with the flags.
-didtool business-entity verify-trust --did did:tdw:QmPAaz... \
+didtool trust verify --did did:tdw:QmPAaz... \
     --trust-registry-url https://trust-reg.trust-infra.swiyu-int.admin.ch \
     --trust-issuer did:tdw:QmWrXW...:2e246676-...
 ```

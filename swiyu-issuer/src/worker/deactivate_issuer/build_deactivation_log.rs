@@ -441,7 +441,7 @@ mod tests {
             { "patch": [] },
             [],
         ]);
-        let entry = DIDLogEntry::try_from_json(&json).unwrap();
+        let entry = DIDLogEntry::try_from(&json).unwrap();
 
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![entry]));

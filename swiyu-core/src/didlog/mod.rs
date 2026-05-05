@@ -40,7 +40,7 @@ impl std::error::Error for DIDLogError {}
 ///
 /// This enum is carried by [`DIDLogEntry`] and [`LogParameters`] to drive format-specific
 /// parsing and serialisation without affecting any other logic.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LogEntryFormat {
     /// `did:tdw` v0.3 — log entry is a five-element JSON array.
     TDW03,
@@ -49,7 +49,7 @@ pub enum LogEntryFormat {
 }
 
 /// The state of the DID document in a log entry — either a full replacement or an incremental patch.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DIDDocState {
     Value(Value),
     Patch(Value),
@@ -82,7 +82,7 @@ impl DIDDocState {
 /// The parameters field of a log entry, controlling DID generation and verification.
 ///
 /// Covers both `did:tdw` v0.3 and `did:webvh` v1.0. Fields introduced in v1.0 are noted inline.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LogParameters {
     format: LogEntryFormat,
     /// The DID method version string (e.g. `did:tdw:0.3` or `did:webvh:1.0`). Present only in
@@ -339,7 +339,7 @@ impl LogParameters {
 
 /// A single entry in the DID log. The internal representation is identical for both versions;
 /// `format` records only the wire format used for parsing and serialisation.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DIDLogEntry {
     /// Wire format of this entry, determines how it is parsed and serialised.
     format: LogEntryFormat,
@@ -432,7 +432,7 @@ impl DIDLogEntry {
         };
 
         let genesis_doc = DIDDoc::new_genesis(did_placeholder, authentication, assertion);
-        let state = DIDDocState::Value(genesis_doc.to_jsonld());
+        let state = DIDDocState::Value(Value::from(genesis_doc));
 
         match format {
             LogEntryFormat::TDW03 => {
@@ -489,7 +489,7 @@ impl DIDLogEntry {
             ),
         };
 
-        let state = DIDDocState::Value(prev_did_doc.to_jsonld());
+        let state = DIDDocState::Value(Value::from(prev_did_doc.clone()));
 
         match format {
             LogEntryFormat::TDW03 => Self::new_tdw(
@@ -506,18 +506,6 @@ impl DIDLogEntry {
                 state,
                 vec![],
             ),
-        }
-    }
-
-    pub fn try_from_json(v: &Value) -> DIDLogResult<Self> {
-        if v.is_array() {
-            Self::try_from_json_array(v)
-        } else if v.is_object() {
-            Self::try_from_json_object(v)
-        } else {
-            Err(DIDLogError::InvalidFormat(
-                "log entry must be a JSON array (v0.3) or object (v1.0)".into(),
-            ))
         }
     }
 
@@ -597,27 +585,6 @@ impl DIDLogEntry {
         })
     }
 
-    pub fn to_json(&self) -> Value {
-        match self.format {
-            LogEntryFormat::TDW03 => json!([
-                self.version_id,
-                self.version_time,
-                self.parameters.to_json(),
-                self.did_doc_state.to_json(),
-                self.data_integrity_proofs,
-            ]),
-            LogEntryFormat::WebVH10 => {
-                let mut map = Map::new();
-                map.insert("versionId".into(), json!(self.version_id));
-                map.insert("versionTime".into(), json!(self.version_time));
-                map.insert("parameters".into(), self.parameters.to_json());
-                map.insert("state".into(), self.did_doc_state.to_json());
-                map.insert("proof".into(), json!(self.data_integrity_proofs));
-                Value::Object(map)
-            }
-        }
-    }
-
     pub fn format(&self) -> &LogEntryFormat {
         &self.format
     }
@@ -640,6 +607,45 @@ impl DIDLogEntry {
 
     pub fn data_integrity_proofs(&self) -> &[Value] {
         &self.data_integrity_proofs
+    }
+}
+
+impl From<DIDLogEntry> for Value {
+    fn from(entry: DIDLogEntry) -> Self {
+        match entry.format {
+            LogEntryFormat::TDW03 => json!([
+                entry.version_id,
+                entry.version_time,
+                entry.parameters.to_json(),
+                entry.did_doc_state.to_json(),
+                entry.data_integrity_proofs,
+            ]),
+            LogEntryFormat::WebVH10 => {
+                let mut map = Map::new();
+                map.insert("versionId".into(), Value::String(entry.version_id));
+                map.insert("versionTime".into(), Value::String(entry.version_time));
+                map.insert("parameters".into(), entry.parameters.to_json());
+                map.insert("state".into(), entry.did_doc_state.to_json());
+                map.insert("proof".into(), Value::Array(entry.data_integrity_proofs));
+                Value::Object(map)
+            }
+        }
+    }
+}
+
+impl TryFrom<&Value> for DIDLogEntry {
+    type Error = DIDLogError;
+
+    fn try_from(v: &Value) -> Result<Self, Self::Error> {
+        if v.is_array() {
+            Self::try_from_json_array(v)
+        } else if v.is_object() {
+            Self::try_from_json_object(v)
+        } else {
+            Err(DIDLogError::InvalidFormat(
+                "log entry must be a JSON array (v0.3) or object (v1.0)".into(),
+            ))
+        }
     }
 }
 
@@ -682,7 +688,7 @@ impl DIDLog {
             }
             let v: Value = serde_json::from_str(trimmed)
                 .map_err(|e| DIDLogError::InvalidFormat(format!("line {}: {}", i + 1, e)))?;
-            let entry = DIDLogEntry::try_from_json(&v).map_err(|e| match e {
+            let entry = DIDLogEntry::try_from(&v).map_err(|e| match e {
                 DIDLogError::InvalidFormat(m) => {
                     DIDLogError::InvalidFormat(format!("line {}: {}", i + 1, m))
                 }
@@ -790,7 +796,7 @@ mod tests {
             &fixture_p256(),
             "2026-05-03T12:00:00Z",
         );
-        let value = entry.to_json();
+        let value = Value::from(entry);
         assert_eq!(value[0], "{SCID}");
         assert_eq!(value[1], "2026-05-03T12:00:00Z");
     }
@@ -805,7 +811,7 @@ mod tests {
             &fixture_p256(),
             "2026-05-03T12:00:00Z",
         );
-        let value = entry.to_json();
+        let value = Value::from(entry);
         assert_eq!(value["versionId"], "{SCID}");
         assert_eq!(value["versionTime"], "2026-05-03T12:00:00Z");
     }
@@ -822,7 +828,7 @@ mod tests {
             &fixture_did_doc(),
             "2026-05-04T09:00:00Z",
         );
-        let value = entry.to_json();
+        let value = Value::from(entry);
         assert_eq!(value[0], "1-QmPrevHash");
         assert_eq!(value[1], "2026-05-04T09:00:00Z");
     }
@@ -835,7 +841,7 @@ mod tests {
             &fixture_did_doc(),
             "2026-05-04T09:00:00Z",
         );
-        let value = entry.to_json();
+        let value = Value::from(entry);
         let params = value[2].as_object().expect("parameters must be an object");
         assert_eq!(params["deactivated"], json!(true));
         assert_eq!(params["updateKeys"], json!([]));
@@ -854,8 +860,8 @@ mod tests {
             &prev,
             "2026-05-04T09:00:00Z",
         );
-        let value = entry.to_json();
-        assert_eq!(value[3]["value"], prev.to_jsonld());
+        let value = Value::from(entry);
+        assert_eq!(value[3]["value"], Value::from(prev));
     }
 
     #[test]
@@ -866,7 +872,7 @@ mod tests {
             &fixture_did_doc(),
             "2026-05-04T09:00:00Z",
         );
-        let value = entry.to_json();
+        let value = Value::from(entry);
         assert_eq!(value[4], json!([]));
     }
 
@@ -878,7 +884,7 @@ mod tests {
             &fixture_did_doc(),
             "2026-05-04T09:00:00Z",
         );
-        let value = entry.to_json();
+        let value = Value::from(entry);
         assert_eq!(value["versionId"], "1-QmPrevHash");
         assert_eq!(value["versionTime"], "2026-05-04T09:00:00Z");
         let params = value["parameters"]
@@ -999,7 +1005,7 @@ mod tests {
 
     #[test]
     fn parse_tdw_entry() {
-        let entry = DIDLogEntry::try_from_json(&tdw_entry_json()).unwrap();
+        let entry = DIDLogEntry::try_from(&tdw_entry_json()).unwrap();
         assert_eq!(entry.format(), &LogEntryFormat::TDW03);
         assert_eq!(
             entry.version_id(),
@@ -1016,7 +1022,7 @@ mod tests {
 
     #[test]
     fn parse_webvh_entry() {
-        let entry = DIDLogEntry::try_from_json(&webvh_entry_json()).unwrap();
+        let entry = DIDLogEntry::try_from(&webvh_entry_json()).unwrap();
         assert_eq!(entry.format(), &LogEntryFormat::WebVH10);
         assert_eq!(
             entry.version_id(),
@@ -1034,22 +1040,22 @@ mod tests {
     #[test]
     fn roundtrip_tdw() {
         let original = tdw_entry_json();
-        let entry = DIDLogEntry::try_from_json(&original).unwrap();
-        assert_eq!(entry.to_json(), original);
+        let entry = DIDLogEntry::try_from(&original).unwrap();
+        assert_eq!(Value::from(entry), original);
     }
 
     #[test]
     fn roundtrip_webvh() {
         let original = webvh_entry_json();
-        let entry = DIDLogEntry::try_from_json(&original).unwrap();
-        assert_eq!(entry.to_json(), original);
+        let entry = DIDLogEntry::try_from(&original).unwrap();
+        assert_eq!(Value::from(entry), original);
     }
 
     #[test]
     fn tdw_does_not_emit_watchers() {
         // watchers must not appear in v0.3 output even if the struct field were set
-        let entry = DIDLogEntry::try_from_json(&tdw_entry_json()).unwrap();
-        let json = entry.to_json();
+        let entry = DIDLogEntry::try_from(&tdw_entry_json()).unwrap();
+        let json = Value::from(entry);
         let params = &json.as_array().unwrap()[2];
         assert!(params.get("watchers").is_none());
     }
@@ -1063,7 +1069,7 @@ mod tests {
             { "patch": [{ "op": "add", "path": "/service", "value": [] }] },
             []
         ]);
-        let entry = DIDLogEntry::try_from_json(&v).unwrap();
+        let entry = DIDLogEntry::try_from(&v).unwrap();
         assert!(matches!(entry.did_doc_state(), DIDDocState::Patch(_)));
     }
 
@@ -1071,7 +1077,7 @@ mod tests {
     fn parse_wrong_element_count() {
         let v = json!(["a", "b", {}, {}]);
         assert!(matches!(
-            DIDLogEntry::try_from_json(&v).unwrap_err(),
+            DIDLogEntry::try_from(&v).unwrap_err(),
             DIDLogError::InvalidFormat(_)
         ));
     }
@@ -1080,7 +1086,7 @@ mod tests {
     fn parse_not_array_or_object() {
         let v = json!("a string");
         assert!(matches!(
-            DIDLogEntry::try_from_json(&v).unwrap_err(),
+            DIDLogEntry::try_from(&v).unwrap_err(),
             DIDLogError::InvalidFormat(_)
         ));
     }
@@ -1094,7 +1100,7 @@ mod tests {
             // "state" and "proof" missing
         });
         assert!(matches!(
-            DIDLogEntry::try_from_json(&v).unwrap_err(),
+            DIDLogEntry::try_from(&v).unwrap_err(),
             DIDLogError::MissingField(_)
         ));
     }
@@ -1133,7 +1139,7 @@ mod tests {
 
     #[test]
     fn log_entries_getter() {
-        let entry = DIDLogEntry::try_from_json(&tdw_entry_json()).unwrap();
+        let entry = DIDLogEntry::try_from(&tdw_entry_json()).unwrap();
         let log = DIDLog::new(vec![entry]);
         assert_eq!(log.entries().len(), 1);
         assert_eq!(

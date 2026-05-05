@@ -553,9 +553,10 @@ fn p256_coords(key: &EcdsaVerifyingKey) -> P256PublicKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     fn test_did() -> DID {
-        DID::parse("did:webvh:abc123:example.com").unwrap()
+        DID::from_str("did:webvh:abc123:example.com").unwrap()
     }
 
     fn temp_store() -> (tempfile::TempDir, KeyStore) {
@@ -680,8 +681,8 @@ mod tests {
     #[test]
     fn list_returns_sorted_entries() {
         let (_dir, store) = temp_store();
-        let did1 = DID::parse("did:webvh:abc123:example.com").unwrap();
-        let did2 = DID::parse("did:webvh:def456:other.example.com").unwrap();
+        let did1 = DID::from_str("did:webvh:abc123:example.com").unwrap();
+        let did2 = DID::from_str("did:webvh:def456:other.example.com").unwrap();
         store.commit(KeyStore::generate().unwrap(), &did1).unwrap();
         store.commit(KeyStore::generate().unwrap(), &did2).unwrap();
         let entries = store.list().unwrap();

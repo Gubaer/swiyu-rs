@@ -6,6 +6,7 @@
 
 use serde_json::{Map, Value, json};
 use std::fmt;
+use std::str::FromStr;
 
 use super::{DIDDocError, DIDDocResult};
 
@@ -38,6 +39,35 @@ impl fmt::Display for KeyUse {
         })
     }
 }
+
+#[derive(Debug, PartialEq)]
+pub enum ECKeyError {
+    /// The key's curve is not P-256.
+    UnsupportedCurve(String),
+    /// `x` or `y` is not valid base64url.
+    InvalidCoordinate {
+        component: &'static str,
+        reason: String,
+    },
+    /// SEC1 decoding rejected the public point (wrong length, point not on curve, etc.).
+    InvalidPublicKey(String),
+}
+
+impl fmt::Display for ECKeyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedCurve(crv) => {
+                write!(f, "unsupported curve '{crv}' (expected 'P-256')")
+            }
+            Self::InvalidCoordinate { component, reason } => {
+                write!(f, "JWK '{component}' not base64url: {reason}")
+            }
+            Self::InvalidPublicKey(reason) => write!(f, "invalid P-256 public key: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ECKeyError {}
 
 /// Elliptic Curve public key (`kty = "EC"`). Curves: "P-256", "P-384", "P-521".
 #[derive(Debug, Clone, PartialEq)]
@@ -99,17 +129,6 @@ impl ECKey {
         })
     }
 
-    /// Serialises the key to a JSON object (`kty = "EC"`).
-    pub fn to_json(&self) -> Value {
-        let mut map = Map::new();
-        map.insert("kty".into(), json!("EC"));
-        map.insert("crv".into(), json!(self.crv));
-        map.insert("x".into(), json!(self.x));
-        map.insert("y".into(), json!(self.y));
-        insert_jwk_optional_fields(&mut map, &self.use_, &self.key_ops, &self.alg, &self.kid);
-        Value::Object(map)
-    }
-
     pub fn crv(&self) -> &str {
         &self.crv
     }
@@ -149,6 +168,56 @@ impl ECKey {
     pub fn with_kid(mut self, kid: String) -> Self {
         self.kid = Some(kid);
         self
+    }
+}
+
+impl From<ECKey> for Value {
+    fn from(key: ECKey) -> Self {
+        let mut map = Map::new();
+        map.insert("kty".into(), json!("EC"));
+        map.insert("crv".into(), Value::String(key.crv));
+        map.insert("x".into(), Value::String(key.x));
+        map.insert("y".into(), Value::String(key.y));
+        insert_jwk_optional_fields(&mut map, &key.use_, &key.key_ops, &key.alg, &key.kid);
+        Value::Object(map)
+    }
+}
+
+/// Decodes a JWK EC key as a `p256::ecdsa::VerifyingKey`.
+///
+/// Returns [`ECKeyError::UnsupportedCurve`] if `crv` is not `"P-256"`,
+/// [`ECKeyError::InvalidCoordinate`] if `x` or `y` is not valid base64url,
+/// and [`ECKeyError::InvalidPublicKey`] if the SEC1 uncompressed point is
+/// rejected by the `p256` crate (wrong length, point not on curve, etc.).
+impl TryFrom<&ECKey> for p256::ecdsa::VerifyingKey {
+    type Error = ECKeyError;
+
+    fn try_from(key: &ECKey) -> Result<Self, Self::Error> {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        if key.crv != "P-256" {
+            return Err(ECKeyError::UnsupportedCurve(key.crv.clone()));
+        }
+        let x_bytes =
+            URL_SAFE_NO_PAD
+                .decode(&key.x)
+                .map_err(|e| ECKeyError::InvalidCoordinate {
+                    component: "x",
+                    reason: e.to_string(),
+                })?;
+        let y_bytes =
+            URL_SAFE_NO_PAD
+                .decode(&key.y)
+                .map_err(|e| ECKeyError::InvalidCoordinate {
+                    component: "y",
+                    reason: e.to_string(),
+                })?;
+        let mut sec1 = Vec::with_capacity(1 + x_bytes.len() + y_bytes.len());
+        sec1.push(0x04); // uncompressed-point prefix
+        sec1.extend_from_slice(&x_bytes);
+        sec1.extend_from_slice(&y_bytes);
+        p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1)
+            .map_err(|e| ECKeyError::InvalidPublicKey(e.to_string()))
     }
 }
 
@@ -200,16 +269,6 @@ impl OKPKey {
         })
     }
 
-    /// Serialises the key to a JSON object (`kty = "OKP"`).
-    pub fn to_json(&self) -> Value {
-        let mut map = Map::new();
-        map.insert("kty".into(), json!("OKP"));
-        map.insert("crv".into(), json!(self.crv));
-        map.insert("x".into(), json!(self.x));
-        insert_jwk_optional_fields(&mut map, &self.use_, &self.key_ops, &self.alg, &self.kid);
-        Value::Object(map)
-    }
-
     pub fn crv(&self) -> &str {
         &self.crv
     }
@@ -239,6 +298,17 @@ impl OKPKey {
     /// Corresponds to the `kid` field in RFC 7517 §4.5.
     pub fn kid(&self) -> Option<&str> {
         self.kid.as_deref()
+    }
+}
+
+impl From<OKPKey> for Value {
+    fn from(key: OKPKey) -> Self {
+        let mut map = Map::new();
+        map.insert("kty".into(), json!("OKP"));
+        map.insert("crv".into(), Value::String(key.crv));
+        map.insert("x".into(), Value::String(key.x));
+        insert_jwk_optional_fields(&mut map, &key.use_, &key.key_ops, &key.alg, &key.kid);
+        Value::Object(map)
     }
 }
 
@@ -277,16 +347,6 @@ impl RSAKey {
         })
     }
 
-    /// Serialises the key to a JSON object (`kty = "RSA"`).
-    pub fn to_json(&self) -> Value {
-        let mut map = Map::new();
-        map.insert("kty".into(), json!("RSA"));
-        map.insert("n".into(), json!(self.n));
-        map.insert("e".into(), json!(self.e));
-        insert_jwk_optional_fields(&mut map, &self.use_, &self.key_ops, &self.alg, &self.kid);
-        Value::Object(map)
-    }
-
     /// Returns the RSA modulus (base64url-encoded).
     pub fn n(&self) -> &str {
         &self.n
@@ -321,6 +381,17 @@ impl RSAKey {
     }
 }
 
+impl From<RSAKey> for Value {
+    fn from(key: RSAKey) -> Self {
+        let mut map = Map::new();
+        map.insert("kty".into(), json!("RSA"));
+        map.insert("n".into(), Value::String(key.n));
+        map.insert("e".into(), Value::String(key.e));
+        insert_jwk_optional_fields(&mut map, &key.use_, &key.key_ops, &key.alg, &key.kid);
+        Value::Object(map)
+    }
+}
+
 /// Public key in JWK format (RFC 7517/7518), public key material only.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PublicKeyJWK {
@@ -345,52 +416,6 @@ impl PublicKeyJWK {
     /// Creates an RSA public key. `n` is the base64url-encoded modulus and `e` the public exponent.
     pub fn new_rsa(n: String, e: String) -> Self {
         Self::RSA(RSAKey::new(n, e))
-    }
-
-    /// Parses a JWK public key from its JSON representation (RFC 7517).
-    ///
-    /// The `kty` field determines which variant is returned. Key-type-specific
-    /// fields (`crv`, `x`, `y` for EC/OKP; `n`, `e` for RSA) are required and
-    /// produce an error if absent. Returns [`DIDDocError::InvalidFormat`] for
-    /// an unrecognised `kty`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use swiyu_core::diddoc::{PublicKeyJWK, DIDDocError};
-    /// use serde_json::json;
-    ///
-    /// let v = json!({ "kty": "OKP", "crv": "Ed25519", "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" });
-    /// let jwk = PublicKeyJWK::try_from_json(&v).unwrap();
-    /// assert_eq!(jwk.kty(), "OKP");
-    /// assert_eq!(jwk.crv(), Some("Ed25519"));
-    ///
-    /// let bad = json!({ "kty": "oct", "k": "secret" });
-    /// assert!(matches!(PublicKeyJWK::try_from_json(&bad), Err(DIDDocError::InvalidFormat(_))));
-    /// ```
-    pub fn try_from_json(v: &Value) -> DIDDocResult<Self> {
-        let obj = v.as_object().ok_or_else(|| {
-            DIDDocError::InvalidFieldType("publicKeyJwk must be a JSON object".into())
-        })?;
-        let kty = super::required_string(obj, "kty")?;
-        match kty.as_str() {
-            "EC" => Ok(Self::EC(ECKey::try_from_json(obj)?)),
-            "OKP" => Ok(Self::OKP(OKPKey::try_from_json(obj)?)),
-            "RSA" => Ok(Self::RSA(RSAKey::try_from_json(obj)?)),
-            other => Err(DIDDocError::InvalidFormat(format!(
-                "unsupported JWK key type '{other}'; expected 'EC', 'OKP', or 'RSA'"
-            ))),
-        }
-    }
-
-    /// Serialises the key to its JWK JSON representation (RFC 7517).
-    /// Only fields that are set are included; absent optional fields are omitted entirely.
-    pub fn to_json(&self) -> Value {
-        match self {
-            Self::EC(key) => key.to_json(),
-            Self::OKP(key) => key.to_json(),
-            Self::RSA(key) => key.to_json(),
-        }
     }
 
     /// Returns the key type: `"EC"`, `"OKP"`, or `"RSA"`.
@@ -484,6 +509,56 @@ impl PublicKeyJWK {
     }
 }
 
+impl From<PublicKeyJWK> for Value {
+    fn from(jwk: PublicKeyJWK) -> Self {
+        match jwk {
+            PublicKeyJWK::EC(key) => Value::from(key),
+            PublicKeyJWK::OKP(key) => Value::from(key),
+            PublicKeyJWK::RSA(key) => Value::from(key),
+        }
+    }
+}
+
+/// Parses a JWK public key from its JSON representation (RFC 7517).
+///
+/// The `kty` field determines which variant is returned. Key-type-specific
+/// fields (`crv`, `x`, `y` for EC/OKP; `n`, `e` for RSA) are required and
+/// produce an error if absent. Returns [`DIDDocError::InvalidFormat`] for
+/// an unrecognised `kty`.
+///
+/// # Example
+///
+/// ```
+/// use swiyu_core::diddoc::{PublicKeyJWK, DIDDocError};
+/// use serde_json::json;
+///
+/// let v = json!({ "kty": "OKP", "crv": "Ed25519", "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" });
+/// let jwk = PublicKeyJWK::try_from(&v).unwrap();
+/// assert_eq!(jwk.kty(), "OKP");
+/// assert_eq!(jwk.crv(), Some("Ed25519"));
+///
+/// let bad = json!({ "kty": "oct", "k": "secret" });
+/// assert!(matches!(PublicKeyJWK::try_from(&bad), Err(DIDDocError::InvalidFormat(_))));
+/// ```
+impl TryFrom<&Value> for PublicKeyJWK {
+    type Error = DIDDocError;
+
+    fn try_from(v: &Value) -> Result<Self, Self::Error> {
+        let obj = v.as_object().ok_or_else(|| {
+            DIDDocError::InvalidFieldType("publicKeyJwk must be a JSON object".into())
+        })?;
+        let kty = super::required_string(obj, "kty")?;
+        match kty.as_str() {
+            "EC" => Ok(Self::EC(ECKey::try_from_json(obj)?)),
+            "OKP" => Ok(Self::OKP(OKPKey::try_from_json(obj)?)),
+            "RSA" => Ok(Self::RSA(RSAKey::try_from_json(obj)?)),
+            other => Err(DIDDocError::InvalidFormat(format!(
+                "unsupported JWK key type '{other}'; expected 'EC', 'OKP', or 'RSA'"
+            ))),
+        }
+    }
+}
+
 /// Public key encoded as a multibase string. Only base58btc encoding (prefix `z`) is supported,
 /// as used by `Ed25519VerificationKey2020` and similar suites in DID documents.
 #[derive(Debug, Clone, PartialEq)]
@@ -509,8 +584,16 @@ impl PublicKeyMultibase {
         Self { key: bytes }
     }
 
-    /// Parses a multibase-encoded public key string. Only the `z` prefix (base58btc) is supported.
-    pub fn try_from_string(s: &str) -> DIDDocResult<Self> {
+    pub fn raw_key(&self) -> &[u8] {
+        &self.key
+    }
+}
+
+/// Parses a multibase-encoded public key string. Only the `z` prefix (base58btc) is supported.
+impl FromStr for PublicKeyMultibase {
+    type Err = DIDDocError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut chars = s.chars();
         match chars.next() {
             Some('z') => {}
@@ -525,10 +608,6 @@ impl PublicKeyMultibase {
             .into_vec()
             .map_err(|e| DIDDocError::InvalidFormat(format!("invalid base58btc encoding: {e}")))?;
         Ok(Self { key })
-    }
-
-    pub fn raw_key(&self) -> &[u8] {
-        &self.key
     }
 }
 
@@ -657,9 +736,44 @@ mod tests {
     }
 
     #[test]
+    fn p256_verifying_key_try_from_ec_key_roundtrip() {
+        use p256::ecdsa::{SigningKey, VerifyingKey};
+        let mut rng_seed = [0u8; 32];
+        for (i, b) in rng_seed.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let signing = SigningKey::from_bytes(&rng_seed.into()).unwrap();
+        let verifying = signing.verifying_key();
+        let point = verifying.to_encoded_point(false);
+        let x_bytes = point.x().unwrap();
+        let y_bytes = point.y().unwrap();
+        let key = ECKey::from_p256_coordinates(x_bytes, y_bytes);
+
+        let recovered = VerifyingKey::try_from(&key).unwrap();
+        assert_eq!(&recovered, verifying);
+    }
+
+    #[test]
+    fn p256_verifying_key_try_from_ec_key_rejects_wrong_curve() {
+        let key = ECKey::new("P-384".into(), "x".into(), "y".into());
+        let err = p256::ecdsa::VerifyingKey::try_from(&key).unwrap_err();
+        assert!(matches!(err, ECKeyError::UnsupportedCurve(c) if c == "P-384"));
+    }
+
+    #[test]
+    fn p256_verifying_key_try_from_ec_key_rejects_invalid_base64() {
+        let key = ECKey::new("P-256".into(), "!!!not-base64".into(), "y".into());
+        let err = p256::ecdsa::VerifyingKey::try_from(&key).unwrap_err();
+        assert!(matches!(
+            err,
+            ECKeyError::InvalidCoordinate { component: "x", .. }
+        ));
+    }
+
+    #[test]
     fn multibase_unsupported_prefix() {
         assert!(matches!(
-            PublicKeyMultibase::try_from_string("mSomeBase64"),
+            PublicKeyMultibase::from_str("mSomeBase64"),
             Err(DIDDocError::InvalidFormat(_))
         ));
     }
@@ -667,43 +781,43 @@ mod tests {
     #[test]
     fn jwk_okp_roundtrip() {
         let v = json!({ "kty": "OKP", "crv": "Ed25519", "x": "abc123" });
-        let jwk = PublicKeyJWK::try_from_json(&v).unwrap();
+        let jwk = PublicKeyJWK::try_from(&v).unwrap();
         assert_eq!(jwk.kty(), "OKP");
         assert_eq!(jwk.crv(), Some("Ed25519"));
         assert_eq!(jwk.x(), Some("abc123"));
         assert_eq!(jwk.y(), None);
         assert_eq!(jwk.n(), None);
-        assert_eq!(jwk.to_json(), v);
+        assert_eq!(Value::from(jwk), v);
     }
 
     #[test]
     fn jwk_ec_roundtrip() {
         let v = json!({ "kty": "EC", "crv": "P-256", "x": "xval", "y": "yval" });
-        let jwk = PublicKeyJWK::try_from_json(&v).unwrap();
+        let jwk = PublicKeyJWK::try_from(&v).unwrap();
         assert_eq!(jwk.kty(), "EC");
         assert_eq!(jwk.crv(), Some("P-256"));
         assert_eq!(jwk.x(), Some("xval"));
         assert_eq!(jwk.y(), Some("yval"));
         assert_eq!(jwk.n(), None);
-        assert_eq!(jwk.to_json(), v);
+        assert_eq!(Value::from(jwk), v);
     }
 
     #[test]
     fn jwk_rsa_roundtrip() {
         let v = json!({ "kty": "RSA", "n": "modulus", "e": "AQAB" });
-        let jwk = PublicKeyJWK::try_from_json(&v).unwrap();
+        let jwk = PublicKeyJWK::try_from(&v).unwrap();
         assert_eq!(jwk.kty(), "RSA");
         assert_eq!(jwk.n(), Some("modulus"));
         assert_eq!(jwk.e(), Some("AQAB"));
         assert_eq!(jwk.crv(), None);
-        assert_eq!(jwk.to_json(), v);
+        assert_eq!(Value::from(jwk), v);
     }
 
     #[test]
     fn jwk_unknown_kty() {
         let v = json!({ "kty": "oct", "k": "secret" });
         assert!(matches!(
-            PublicKeyJWK::try_from_json(&v).unwrap_err(),
+            PublicKeyJWK::try_from(&v).unwrap_err(),
             DIDDocError::InvalidFormat(_)
         ));
     }
@@ -711,7 +825,7 @@ mod tests {
     #[test]
     fn ec_key_direct_access() {
         let v = json!({ "kty": "EC", "crv": "P-256", "x": "xval", "y": "yval" });
-        let PublicKeyJWK::EC(key) = PublicKeyJWK::try_from_json(&v).unwrap() else {
+        let PublicKeyJWK::EC(key) = PublicKeyJWK::try_from(&v).unwrap() else {
             panic!("expected EC");
         };
         assert_eq!(key.crv(), "P-256");
@@ -722,7 +836,7 @@ mod tests {
     #[test]
     fn okp_key_direct_access() {
         let v = json!({ "kty": "OKP", "crv": "Ed25519", "x": "abc123" });
-        let PublicKeyJWK::OKP(key) = PublicKeyJWK::try_from_json(&v).unwrap() else {
+        let PublicKeyJWK::OKP(key) = PublicKeyJWK::try_from(&v).unwrap() else {
             panic!("expected OKP");
         };
         assert_eq!(key.crv(), "Ed25519");
@@ -732,7 +846,7 @@ mod tests {
     #[test]
     fn rsa_key_direct_access() {
         let v = json!({ "kty": "RSA", "n": "modulus", "e": "AQAB" });
-        let PublicKeyJWK::RSA(key) = PublicKeyJWK::try_from_json(&v).unwrap() else {
+        let PublicKeyJWK::RSA(key) = PublicKeyJWK::try_from(&v).unwrap() else {
             panic!("expected RSA");
         };
         assert_eq!(key.n(), "modulus");
