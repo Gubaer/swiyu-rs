@@ -26,7 +26,7 @@ use reqwest::Url;
 use secrecy::SecretString;
 
 use swiyu_issuer::domain::{
-    KeyAlgorithm, KeyPairId, KeyRole, SigningEngineError, VaultSigningEngine,
+    KeyAlgorithm, KeyPairId, KeyRole, SigningEngine, SigningEngineError, VaultSigningEngine,
     VaultSigningEngineConfig,
 };
 

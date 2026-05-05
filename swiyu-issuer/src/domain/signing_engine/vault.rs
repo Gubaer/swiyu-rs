@@ -15,7 +15,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::{
-    GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngineError,
+    GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine,
+    SigningEngineError,
 };
 
 const VAULT_TYPE_ED25519: &str = "ed25519";
@@ -103,25 +104,8 @@ pub struct VaultSigningEngine {
     algorithm_cache: RwLock<HashMap<KeyPairId, KeyAlgorithm>>,
 }
 
-impl VaultSigningEngine {
-    pub fn new(config: VaultSigningEngineConfig) -> Self {
-        // reqwest::ClientBuilder::build only fails on TLS init errors;
-        // we configure no custom CA, no proxy, no resolver, so failure
-        // is unreachable for this code path.
-        let client = Client::builder()
-            .timeout(config.request_timeout)
-            .build()
-            .expect("reqwest client build with default options");
-        Self {
-            client,
-            address: config.address,
-            token: config.token,
-            transit_path: config.transit_path,
-            algorithm_cache: RwLock::new(HashMap::new()),
-        }
-    }
-
-    pub async fn generate_keypair(
+impl SigningEngine for VaultSigningEngine {
+    async fn generate_keypair(
         &self,
         role: KeyRole,
     ) -> Result<GeneratedKeyPair, SigningEngineError> {
@@ -141,15 +125,11 @@ impl VaultSigningEngine {
         Ok(GeneratedKeyPair { id, public_key })
     }
 
-    pub async fn get_public_key(&self, id: &KeyPairId) -> Result<RawPublicKey, SigningEngineError> {
+    async fn get_public_key(&self, id: &KeyPairId) -> Result<RawPublicKey, SigningEngineError> {
         self.fetch_public_key(id).await
     }
 
-    pub async fn sign(
-        &self,
-        id: &KeyPairId,
-        input: &[u8],
-    ) -> Result<Signature, SigningEngineError> {
+    async fn sign(&self, id: &KeyPairId, input: &[u8]) -> Result<Signature, SigningEngineError> {
         let algorithm = self.lookup_algorithm(id).await?;
         if algorithm == KeyAlgorithm::EcdsaP256 && input.len() != 32 {
             return Err(SigningEngineError::InvalidInputLength {
@@ -177,16 +157,34 @@ impl VaultSigningEngine {
         Ok(Signature { algorithm, bytes })
     }
 
-    pub async fn delete_keypair(&self, id: &KeyPairId) -> Result<(), SigningEngineError> {
-        // Vault marks new keys as non-deletable by default. The two-step
-        // dance (config flag, then DELETE) is required even for a key we
-        // just created. Both calls are idempotent: missing-key 400s are
-        // swallowed so a second delete returns Ok(()), per the trait
-        // contract.
+    // Vault marks new keys as non-deletable by default. The two-step dance
+    // (config flag, then DELETE) is required even for a key we just created.
+    // Both calls are idempotent: missing-key 400s are swallowed so a second
+    // delete returns Ok(()), per the trait contract.
+    async fn delete_keypair(&self, id: &KeyPairId) -> Result<(), SigningEngineError> {
         self.allow_deletion(id).await?;
         self.delete_key(id).await?;
         self.cache_remove(id);
         Ok(())
+    }
+}
+
+impl VaultSigningEngine {
+    pub fn new(config: VaultSigningEngineConfig) -> Self {
+        // reqwest::ClientBuilder::build only fails on TLS init errors;
+        // we configure no custom CA, no proxy, no resolver, so failure
+        // is unreachable for this code path.
+        let client = Client::builder()
+            .timeout(config.request_timeout)
+            .build()
+            .expect("reqwest client build with default options");
+        Self {
+            client,
+            address: config.address,
+            token: config.token,
+            transit_path: config.transit_path,
+            algorithm_cache: RwLock::new(HashMap::new()),
+        }
     }
 
     async fn allow_deletion(&self, id: &KeyPairId) -> Result<(), SigningEngineError> {
