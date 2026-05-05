@@ -1,15 +1,19 @@
-//! Builders that mutate serialised DID log entries during the
-//! multi-step proof flow.
+//! Small mutators that edit a serialised DID log entry in place
+//! during the SCID/entry-hash/proof derivation pipeline.
 //!
-//! These functions are pure: no I/O, no async, no dependence on any
-//! specific keystore. They produce the small mutators (set version
-//! id, append proof, strip proof slot) that callers — `swiyu-didtool`
-//! for CLI flows, `swiyu-issuer` for the issuer-management task flow
-//! — splice into during the multi-step process of deriving the SCID,
-//! the entry hash, and the proof.
+//! They operate on `serde_json::Value` rather than the typed
+//! `DIDLogEntry` because the pipeline is bytes-sensitive: the SCID
+//! is derived by string-replacing `{SCID}` in the JSON text, the
+//! entry hash is computed over a specific serialised form, and the
+//! proof signs over a serialised view of the document. Going
+//! through the typed model would invalidate any hash already
+//! computed over a prior form.
 //!
-//! The genesis entry itself is constructed via the type-level
-//! constructor `DIDLogEntry::new_genesis`.
+//! Pure: no I/O, no async, no dependence on any specific keystore.
+//! Callers — `swiyu-didtool` for CLI flows, `swiyu-issuer` for the
+//! issuer-management task flow — splice these in between the
+//! typed `DIDLogEntry::new_genesis` constructor and the final
+//! serialised entry.
 
 use serde_json::{Value, json};
 

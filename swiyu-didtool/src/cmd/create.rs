@@ -5,7 +5,7 @@ use tracing::debug;
 
 use swiyu_core::did::DID;
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
-use swiyu_core::didlog::build::{append_proof, set_version_id, strip_proof_slot};
+use swiyu_core::didlog::entry_edits::{append_proof, set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
 use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 use swiyu_core::proof::ProofPurpose;
