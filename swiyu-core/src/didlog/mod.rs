@@ -658,6 +658,16 @@ impl DIDLog {
         &self.entries
     }
 
+    /// Consumes the log and returns its owned entries. Mirrors
+    /// `String::into_bytes` / `Vec::into_boxed_slice`. Useful when a
+    /// caller needs `Vec<DIDLogEntry>` rather than the borrow that
+    /// [`Self::entries`] hands out — for example, an HTTP-client
+    /// adapter that parses the JSONL body and surfaces a typed
+    /// entry list to its own callers.
+    pub fn into_entries(self) -> Vec<DIDLogEntry> {
+        self.entries
+    }
+
     /// Parses a DID log from JSONL text.
     ///
     /// Blank lines are skipped. Each line must be a single JSON value that parses via
@@ -1167,5 +1177,14 @@ mod tests {
             DIDLogError::InvalidFormat(msg) => assert!(msg.contains("line 1")),
             other => panic!("expected InvalidFormat, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn into_entries_returns_owned_vec() {
+        let line = serde_json::to_string(&tdw_entry_json()).unwrap();
+        let text = format!("{line}\n{line}\n");
+        let log = DIDLog::try_from_jsonl(&text).unwrap();
+        let entries = log.into_entries();
+        assert_eq!(entries.len(), 2);
     }
 }
