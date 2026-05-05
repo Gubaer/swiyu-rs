@@ -509,6 +509,76 @@ impl DIDLogEntry {
         }
     }
 
+    /// Constructs a key-rotation DID-log entry with `version_id`
+    /// set to the predecessor's value. Mirrors [`Self::new_genesis`]
+    /// and [`Self::new_deactivation`] in shape: callers compute the
+    /// entryHash over the unsigned entry, substitute the real
+    /// `<n+1>-<entryHash>` via `entry_edits::set_version_id`, sign
+    /// with the **outgoing** Authorized private key, and append the
+    /// proof. The new Authorized key only signs the *next* entry —
+    /// even when the rotation rotates Authorized itself.
+    ///
+    /// `parameters.updateKeys` carries the multikey of the *new*
+    /// Authorized public key (the announcement that this is now the
+    /// signing key). The embedded DID document carries verification
+    /// methods for the new Authentication and Assertion keys. The
+    /// DID id stays the same across rotations.
+    pub fn new_rotation(
+        format: &LogEntryFormat,
+        prev_version_id: &str,
+        did: &str,
+        new_authorized_multikey: &str,
+        new_authentication: &P256PublicKey,
+        new_assertion: &P256PublicKey,
+        new_version_time: &str,
+    ) -> Self {
+        let parameters = match format {
+            LogEntryFormat::TDW03 => LogParameters::new_tdw(
+                None,
+                None,
+                Some(vec![new_authorized_multikey.into()]),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            LogEntryFormat::WebVH10 => LogParameters::new_webvh(
+                None,
+                None,
+                Some(vec![new_authorized_multikey.into()]),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        };
+
+        let new_doc = DIDDoc::new_genesis(did, new_authentication, new_assertion);
+        let state = DIDDocState::Value(Value::from(new_doc));
+
+        match format {
+            LogEntryFormat::TDW03 => Self::new_tdw(
+                prev_version_id.into(),
+                new_version_time.into(),
+                parameters,
+                state,
+                vec![],
+            ),
+            LogEntryFormat::WebVH10 => Self::new_webvh(
+                prev_version_id.into(),
+                new_version_time.into(),
+                parameters,
+                state,
+                vec![],
+            ),
+        }
+    }
+
     fn try_from_json_array(v: &Value) -> DIDLogResult<Self> {
         let arr = v.as_array().unwrap(); // caller verified v.is_array()
         if arr.len() != 5 {
@@ -893,6 +963,96 @@ mod tests {
         assert_eq!(params["deactivated"], json!(true));
         assert_eq!(params["updateKeys"], json!([]));
         assert!(!params.contains_key("method"));
+        assert_eq!(value["proof"], json!([]));
+    }
+
+    #[test]
+    fn new_rotation_tdw_carries_prev_version_id() {
+        let entry = DIDLogEntry::new_rotation(
+            &LogEntryFormat::TDW03,
+            "2-QmPrevHash",
+            "did:tdw:example.com:abc",
+            "z6Mk-new-authorized",
+            &fixture_p256(),
+            &fixture_p256(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = Value::from(entry);
+        assert_eq!(value[0], "2-QmPrevHash");
+        assert_eq!(value[1], "2026-05-04T09:00:00Z");
+    }
+
+    #[test]
+    fn new_rotation_tdw_parameters_hold_only_new_update_keys() {
+        let entry = DIDLogEntry::new_rotation(
+            &LogEntryFormat::TDW03,
+            "2-QmPrevHash",
+            "did:tdw:example.com:abc",
+            "z6Mk-new-authorized",
+            &fixture_p256(),
+            &fixture_p256(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = Value::from(entry);
+        let params = value[2].as_object().expect("parameters must be an object");
+        assert_eq!(params["updateKeys"], json!(["z6Mk-new-authorized"]));
+        // No genesis-only or deactivation-only fields leak in.
+        assert!(!params.contains_key("method"));
+        assert!(!params.contains_key("scid"));
+        assert!(!params.contains_key("portable"));
+        assert!(!params.contains_key("deactivated"));
+    }
+
+    #[test]
+    fn new_rotation_tdw_did_doc_carries_supplied_did_id() {
+        let entry = DIDLogEntry::new_rotation(
+            &LogEntryFormat::TDW03,
+            "2-QmPrevHash",
+            "did:tdw:example.com:abc",
+            "z6Mk-new-authorized",
+            &fixture_p256(),
+            &fixture_p256(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = Value::from(entry);
+        assert_eq!(value[3]["value"]["id"], "did:tdw:example.com:abc");
+    }
+
+    #[test]
+    fn new_rotation_tdw_has_no_proofs() {
+        let entry = DIDLogEntry::new_rotation(
+            &LogEntryFormat::TDW03,
+            "2-QmPrevHash",
+            "did:tdw:example.com:abc",
+            "z6Mk-new-authorized",
+            &fixture_p256(),
+            &fixture_p256(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = Value::from(entry);
+        assert_eq!(value[4], json!([]));
+    }
+
+    #[test]
+    fn new_rotation_webvh_carries_prev_version_id() {
+        let entry = DIDLogEntry::new_rotation(
+            &LogEntryFormat::WebVH10,
+            "2-QmPrevHash",
+            "did:webvh:example.com:abc",
+            "z6Mk-new-authorized",
+            &fixture_p256(),
+            &fixture_p256(),
+            "2026-05-04T09:00:00Z",
+        );
+        let value = Value::from(entry);
+        assert_eq!(value["versionId"], "2-QmPrevHash");
+        assert_eq!(value["versionTime"], "2026-05-04T09:00:00Z");
+        let params = value["parameters"]
+            .as_object()
+            .expect("parameters must be an object");
+        assert_eq!(params["updateKeys"], json!(["z6Mk-new-authorized"]));
+        assert!(!params.contains_key("method"));
+        assert!(!params.contains_key("deactivated"));
         assert_eq!(value["proof"], json!([]));
     }
 
