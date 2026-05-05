@@ -261,8 +261,8 @@ The DID we generated is not yet associated with the business partner kacon gmbh.
 To bind the DID to the business partner kacon gmbh, we have to create an entry in the SWIYU Trust Registry. Currently, there is no such entry:
 
 ```bash
-# look up the business entity our DID is bound to
-didtool business-entity lookup \
+# look up the SWIYU trust granted to our DID
+didtool trust lookup \
     --did did:tdw:QmUmKYAuBJvaYqC1TgNyo9ZuoMiUVBmV2dyADTUiHMSpGj:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:468c4af1-7af1-40ad-a6a5-a0076a8f51e3
 ```
 
@@ -294,7 +294,7 @@ The SWIYU organisation will respond by email within a few business days. After t
 
 ```bash
 # look up whether the DID is bound to a business partner
-didtool business-entity lookup \
+didtool trust lookup \
     --did did:tdw:QmPAazvipE6c5RgGhR5moLsrerxhbd1r6nm8kwryo9eATk:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:fce949f2-32c4-4915-8b60-0ee2f705231d
 ```
 
@@ -304,14 +304,14 @@ Output:
 Trust statements for did:tdw:QmPAazvipE6c5RgGhR5moLsrerxhbd1r6nm8kwryo9eATk:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:fce949f2-32c4-4915-8b60-0ee2f705231d
 
 #1  TrustStatementIdentityV1
-  issuer:       did:tdw:QmWrXWFEDenvoYWFXxSQGFCa6Pi22Cdsg2r6weGhY2ChiQ:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:2e246676-209a-4c21-aceb-721f8a90b212
-  iat:          2026-04-20T11:12:18Z
-  nbf:          2026-01-01T00:00:00Z
-  exp:          2027-01-01T00:00:00Z
-  entity name:  de-CH: kacon GmbH
-  state actor:  no
-  status:       SwissTokenStatusList-1.0 idx=643
-                https://status-reg.trust-infra.swiyu-int.admin.ch/api/v1/statuslist/ad94b60b-9efa-4dae-9dd1-4fc33a95bd95.jwt
+  issuer:            did:tdw:QmWrXWFEDenvoYWFXxSQGFCa6Pi22Cdsg2r6weGhY2ChiQ:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:2e246676-209a-4c21-aceb-721f8a90b212
+  iat (issued at):   2026-04-20T11:12:18Z
+  nbf (not before):  2026-01-01T00:00:00Z
+  exp (expires):     2027-01-01T00:00:00Z
+  entity name:       de-CH: kacon GmbH
+  state actor:       no
+  status:            SwissTokenStatusList-1.0 idx=643
+                     https://status-reg.trust-infra.swiyu-int.admin.ch/api/v1/statuslist/ad94b60b-9efa-4dae-9dd1-4fc33a95bd95.jwt
 ```
 
 This DID is bound to the business partner kacon gmbh, which isn't a state actor.
@@ -320,7 +320,7 @@ How can we be sure this Trust Statement is trustworthy? Is it still valid, or ha
 
 ```bash
 # verify the trust statement for a DID
-didtool business-entity verify-trust \
+didtool trust verify \
     --did did:tdw:QmPAazvipE6c5RgGhR5moLsrerxhbd1r6nm8kwryo9eATk:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:fce949f2-32c4-4915-8b60-0ee2f705231d
 ```
 
@@ -331,14 +331,14 @@ Trust statements for did:tdw:QmPAazvipE6c5RgGhR5moLsrerxhbd1r6nm8kwryo9eATk:iden
 Expected issuer:    did:tdw:QmWrXWFEDenvoYWFXxSQGFCa6Pi22Cdsg2r6weGhY2ChiQ:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:2e246676-209a-4c21-aceb-721f8a90b212
 
 #1  TrustStatementIdentityV1
-  iat:          2026-04-20T11:12:18Z
-  iss:          [ok]   matches expected issuer
-  signature:    [ok]   valid (kid: did:tdw:QmWrXWFEDenvoYWFXxSQGFCa6Pi22Cdsg2r6weGhY2ChiQ:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:2e246676-209a-4c21-aceb-721f8a90b212#assert-key-02)
-  freshness:    [ok]   now within nbf..exp (2026-01-01T00:00:00Z..2027-01-01T00:00:00Z)
-  status:       [ok]   valid (idx=643, bits=2)
-  entity name:  de-CH: kacon GmbH
-  state actor:  no
-  verdict:      [ok]    trusted
+  iat (issued at):    2026-04-20T11:12:18Z
+  iss (issuer):       [ok]   matches expected issuer
+  signature:          [ok]   valid (kid: did:tdw:QmWrXWFEDenvoYWFXxSQGFCa6Pi22Cdsg2r6weGhY2ChiQ:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:2e246676-209a-4c21-aceb-721f8a90b212#assert-key-02)
+  freshness:          [ok]   now within nbf..exp (2026-01-01T00:00:00Z..2027-01-01T00:00:00Z)
+  status:             [ok]   valid (idx=643, bits=2)
+  entity name:        de-CH: kacon GmbH
+  state actor:        no
+  verdict:            [ok]    trusted
 ```
 
 The output confirms that the trust statement was issued by the expected SWIYU issuer, is still valid (within `nbf..exp` and not revoked), and the signatures check out.
