@@ -136,6 +136,13 @@ where
     async fn execute_task(&mut self, task: &OperationTask) -> Result<(), WorkerError> {
         match task.task_type {
             TaskType::CreateIssuer => self.execute_create_issuer(task).await,
+            // The DeactivateIssuer task type exists in the domain (step
+            // 9.1) but no endpoint can create one yet, so this arm is
+            // unreachable in practice. Replaced with the real
+            // dispatcher in step 9.6.
+            TaskType::DeactivateIssuer => Err(WorkerError::Decode(
+                "DeactivateIssuer task type not yet implemented".into(),
+            )),
         }
     }
 

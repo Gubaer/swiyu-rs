@@ -6,6 +6,7 @@
 
 pub mod backoff;
 pub mod create_issuer;
+pub mod deactivate_issuer;
 pub mod dispatch;
 pub mod registry;
 pub mod runner;

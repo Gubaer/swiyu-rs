@@ -49,23 +49,25 @@ impl TaskState {
 
 /// The kind of long-running operation a task represents.
 ///
-/// v1 supports only `CreateIssuer`. `RotateKeys` and `DeactivateIssuer`
-/// follow the same task model in subsequent slices.
+/// `RotateKeys` follows the same task model in a subsequent slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskType {
     CreateIssuer,
+    DeactivateIssuer,
 }
 
 impl TaskType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::CreateIssuer => "create_issuer",
+            Self::DeactivateIssuer => "deactivate_issuer",
         }
     }
 
     pub fn parse(s: &str) -> Result<Self, DomainError> {
         match s {
             "create_issuer" => Ok(Self::CreateIssuer),
+            "deactivate_issuer" => Ok(Self::DeactivateIssuer),
             _ => Err(DomainError::InvalidInput {
                 details: format!("unknown task type: {s}"),
             }),
@@ -192,10 +194,9 @@ mod tests {
 
     #[test]
     fn task_type_round_trips_through_strings() {
-        assert_eq!(
-            TaskType::parse(TaskType::CreateIssuer.as_str()).unwrap(),
-            TaskType::CreateIssuer
-        );
+        for task_type in [TaskType::CreateIssuer, TaskType::DeactivateIssuer] {
+            assert_eq!(TaskType::parse(task_type.as_str()).unwrap(), task_type);
+        }
     }
 
     #[test]
