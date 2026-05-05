@@ -1,4 +1,4 @@
-# Local PostgreSQL for swiyu-issuer development.
+# Local PostgreSQL and HashiCorp Vault for swiyu-issuer development.
 #
 # Usage (run from this directory, swiyu-issuer/):
 #   docker compose up -d
@@ -14,15 +14,24 @@
 # there you must keep DATABASE_URL in .env consistent with the
 # four POSTGRES_* values, since the binary reads the URL directly.
 #
-# The host port defaults to 5433 (not the default 5432) so a
-# Postgres install already running on the host does not clash with
-# this dev container.
+# The Postgres host port defaults to 5433 (not the default 5432) so
+# a Postgres install already running on the host does not clash
+# with this dev container. Vault uses 8200 (its standard port).
+#
+# Vault runs in dev mode: in-memory storage, already unsealed, a
+# single fixed root token. State is wiped on every container
+# restart. This is for local development and integration tests
+# only — production must use a real Vault deployment with sealed
+# storage and proper auth (see specs/impl-key-management.md,
+# VaultSigningEngine subsection). The vault-init service enables
+# the Transit secrets engine once Vault is healthy so callers can
+# create keys and sign immediately.
 #
 # Migrations are NOT applied by this compose file. The swiyu-issuer
 # binary runs them at startup via persistence::run_migrations, so
 # the same code path applies in dev and in production.
 #
-# To wipe the database (drops the volume):
+# To wipe the database (drops the volume) and reset Vault state:
 #   docker compose down -v
 
 name: swiyu-issuer
@@ -47,6 +56,42 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+
+  vault:
+    image: hashicorp/vault:1.18
+    container_name: swiyu-issuer-vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    ports:
+      - "${VAULT_HOST_PORT:-8200}:8200"
+    healthcheck:
+      test:
+        - CMD
+        - vault
+        - status
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  vault-init:
+    image: hashicorp/vault:1.18
+    container_name: swiyu-issuer-vault-init
+    depends_on:
+      vault:
+        condition: service_healthy
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - vault secrets enable transit || true
+    restart: "no"
 
 volumes:
   postgres_data:
