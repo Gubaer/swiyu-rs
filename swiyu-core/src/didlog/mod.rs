@@ -6,7 +6,7 @@ use multihash_codetable::{Code, MultihashDigest};
 use serde_json::{Map, Value, json};
 use std::fmt;
 
-use crate::diddoc::builder::build_initial_did_doc;
+use crate::diddoc::DIDDoc;
 use crate::diddoc::public_keys::P256PublicKey;
 
 pub type DIDLogResult<T> = Result<T, DIDLogError>;
@@ -431,8 +431,8 @@ impl DIDLogEntry {
             ),
         };
 
-        let genesis_doc = build_initial_did_doc(did_placeholder, authentication, assertion);
-        let state = DIDDocState::Value(genesis_doc);
+        let genesis_doc = DIDDoc::new_genesis(did_placeholder, authentication, assertion);
+        let state = DIDDocState::Value(genesis_doc.to_jsonld());
 
         match format {
             LogEntryFormat::TDW03 => {

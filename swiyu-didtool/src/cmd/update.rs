@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use tracing::debug;
 
 use swiyu_core::did::{DID, DIDError};
+use swiyu_core::diddoc::DIDDoc;
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::proof::ProofPurpose;
@@ -140,7 +141,11 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
     debug!("authorized rotated: {}", authorized_rotated);
 
     // --- new DID document ---
-    let new_doc = super::diddoc::build_did_doc(&did_str, &staged);
+    let new_doc = DIDDoc::new_genesis(
+        &did_str,
+        &staged.authentication_key_coords(),
+        &staged.assertion_key_coords(),
+    );
 
     // --- parameters: only changed fields ---
     let mut params = serde_json::Map::new();
@@ -158,7 +163,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
         prev_version_id,
         new_version_time.clone(),
         parameters,
-        json!({ "value": new_doc.clone() }),
+        json!({ "value": new_doc.to_jsonld() }),
     ]);
 
     let entry_hash = derive_entry_hash(&entry_value);

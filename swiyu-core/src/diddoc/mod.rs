@@ -1,7 +1,7 @@
-pub mod builder;
 pub mod public_keys;
 pub use public_keys::{KeyUse, PublicKey, PublicKeyJWK, PublicKeyMultibase};
 
+use public_keys::{ECKey, P256PublicKey};
 use serde_json::{Map, Value, json};
 use std::fmt;
 
@@ -151,6 +151,52 @@ impl DIDDoc {
             capability_delegation: Vec::new(),
             service: Vec::new(),
         }
+    }
+
+    /// Constructs the DID document for a freshly created DID, given the
+    /// `authentication` and `assertion` P-256 public keys.
+    ///
+    /// The authorized (update) key is **not** embedded as a verification
+    /// method — it lives only in `parameters.updateKeys` of the DID log
+    /// entry as a multikey, and the proof references it via `did:key`.
+    /// Callers therefore pass only the two roles whose public keys appear
+    /// in the document: `authentication` and `assertion`.
+    pub fn new_genesis(
+        did: &str,
+        authentication: &P256PublicKey,
+        assertion: &P256PublicKey,
+    ) -> Self {
+        let auth_vm_id = format!("{did}#authentication-key-01");
+        let assert_vm_id = format!("{did}#assertion-key-01");
+
+        let auth_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
+            ECKey::from_p256_coordinates(&authentication.x, &authentication.y)
+                .with_kid("authentication-key-01".into()),
+        )));
+        let assert_key = PublicKey::Jwk(Box::new(PublicKeyJWK::EC(
+            ECKey::from_p256_coordinates(&assertion.x, &assertion.y)
+                .with_kid("assertion-key-01".into()),
+        )));
+
+        DIDDoc::new(did.to_string())
+            .with_context(json!([
+                "https://www.w3.org/ns/did/v1",
+                "https://w3id.org/security/jwk/v1"
+            ]))
+            .add_verification_method(VerificationMethod::new(
+                auth_vm_id.clone(),
+                "JsonWebKey2020".into(),
+                did.to_string(),
+                auth_key,
+            ))
+            .add_verification_method(VerificationMethod::new(
+                assert_vm_id.clone(),
+                "JsonWebKey2020".into(),
+                did.to_string(),
+                assert_key,
+            ))
+            .add_authentication(VerificationMethodOrRef::Reference(auth_vm_id))
+            .add_assertion_method(VerificationMethodOrRef::Reference(assert_vm_id))
     }
 
     /// Replaces the JSON-LD context. The default is `["https://www.w3.org/ns/did/v1"]`.
@@ -694,5 +740,63 @@ mod tests {
         let v = doc.to_jsonld();
         assert_eq!(v["id"], "did:tdw:abc:example.com");
         assert!(v.get("service").is_none());
+    }
+
+    fn fixture_p256() -> P256PublicKey {
+        let mut x = [0u8; 32];
+        let mut y = [0u8; 32];
+        for i in 0..32 {
+            x[i] = i as u8;
+            y[i] = (i + 100) as u8;
+        }
+        P256PublicKey { x, y }
+    }
+
+    #[test]
+    fn new_genesis_embeds_did_and_two_verification_methods() {
+        let did = "did:tdw:example.com:abc";
+        let auth = fixture_p256();
+        let assertion = fixture_p256();
+
+        let doc = DIDDoc::new_genesis(did, &auth, &assertion);
+
+        assert_eq!(doc.id(), did);
+        assert_eq!(doc.verification_method().len(), 2);
+        let ids: Vec<&str> = doc.verification_method().iter().map(|vm| vm.id()).collect();
+        assert!(ids.contains(&format!("{did}#authentication-key-01").as_str()));
+        assert!(ids.contains(&format!("{did}#assertion-key-01").as_str()));
+    }
+
+    #[test]
+    fn new_genesis_does_not_embed_authorized_key() {
+        let did = "did:tdw:example.com:abc";
+        let auth = fixture_p256();
+        let assertion = fixture_p256();
+
+        let doc = DIDDoc::new_genesis(did, &auth, &assertion);
+
+        assert!(
+            !doc.verification_method()
+                .iter()
+                .any(|vm| vm.id() == format!("{did}#authorized-key-01"))
+        );
+    }
+
+    #[test]
+    fn new_genesis_uses_p256_jwk_for_both_keys() {
+        let did = "did:tdw:example.com:abc";
+        let auth = fixture_p256();
+        let assertion = fixture_p256();
+
+        let doc = DIDDoc::new_genesis(did, &auth, &assertion);
+
+        for vm in doc.verification_method() {
+            assert_eq!(vm.type_(), "JsonWebKey2020");
+            let PublicKey::Jwk(jwk) = vm.public_key() else {
+                panic!("expected Jwk");
+            };
+            assert_eq!(jwk.kty(), "EC");
+            assert_eq!(jwk.crv(), Some("P-256"));
+        }
     }
 }
