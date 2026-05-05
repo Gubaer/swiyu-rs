@@ -144,6 +144,12 @@ where
         match task.task_type {
             TaskType::CreateIssuer => self.execute_create_issuer(task).await,
             TaskType::DeactivateIssuer => self.execute_deactivate_issuer(task).await,
+            // The RotateKeys task type exists in the domain but no
+            // endpoint can create one yet, so this arm is unreachable
+            // in practice until the dispatcher is wired up.
+            TaskType::RotateKeys => Err(WorkerError::Decode(
+                "RotateKeys task type not yet implemented".into(),
+            )),
         }
     }
 

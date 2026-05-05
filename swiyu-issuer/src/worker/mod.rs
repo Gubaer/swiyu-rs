@@ -9,6 +9,7 @@ pub mod create_issuer;
 pub mod deactivate_issuer;
 pub mod dispatch;
 pub mod registry;
+pub mod rotate_keys;
 pub mod runner;
 
 pub use runner::{Worker, WorkerError};

@@ -48,12 +48,11 @@ impl TaskState {
 }
 
 /// The kind of long-running operation a task represents.
-///
-/// `RotateKeys` follows the same task model in a subsequent slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskType {
     CreateIssuer,
     DeactivateIssuer,
+    RotateKeys,
 }
 
 impl TaskType {
@@ -61,6 +60,7 @@ impl TaskType {
         match self {
             Self::CreateIssuer => "create_issuer",
             Self::DeactivateIssuer => "deactivate_issuer",
+            Self::RotateKeys => "rotate_keys",
         }
     }
 
@@ -68,6 +68,7 @@ impl TaskType {
         match s {
             "create_issuer" => Ok(Self::CreateIssuer),
             "deactivate_issuer" => Ok(Self::DeactivateIssuer),
+            "rotate_keys" => Ok(Self::RotateKeys),
             _ => Err(DomainError::InvalidInput {
                 details: format!("unknown task type: {s}"),
             }),
@@ -194,14 +195,18 @@ mod tests {
 
     #[test]
     fn task_type_round_trips_through_strings() {
-        for task_type in [TaskType::CreateIssuer, TaskType::DeactivateIssuer] {
+        for task_type in [
+            TaskType::CreateIssuer,
+            TaskType::DeactivateIssuer,
+            TaskType::RotateKeys,
+        ] {
             assert_eq!(TaskType::parse(task_type.as_str()).unwrap(), task_type);
         }
     }
 
     #[test]
     fn task_type_parse_rejects_unknown() {
-        assert!(TaskType::parse("rotate_keys").is_err());
+        assert!(TaskType::parse("compress_log").is_err());
     }
 
     #[test]
