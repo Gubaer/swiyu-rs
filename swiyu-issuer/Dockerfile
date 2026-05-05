@@ -9,7 +9,12 @@
 # To build by hand:
 #   docker build -f swiyu-issuer/Dockerfile -t swiyu-issuer-mgmt:dev .
 
-ARG RUST_TAG=latest-rust-1
+# `-bookworm` keeps the builder's glibc in sync with the
+# `debian:bookworm-slim` runtime stage. Mismatching variants (e.g.
+# the default `latest-rust-1` is trixie-based) link the binary
+# against a newer glibc than the runtime provides and the container
+# fails to start with `GLIBC_2.38 not found`.
+ARG RUST_TAG=latest-rust-1-bookworm
 FROM lukemathwalker/cargo-chef:${RUST_TAG} AS chef
 WORKDIR /app
 
