@@ -64,7 +64,7 @@ async fn insert_target_shape_issuer(
     let issuer = Issuer {
         id: IssuerId::generate(),
         tenant_id: tenant_id.clone(),
-        did: format!("did:tdw:example.com:{}", IssuerId::generate().bare()),
+        did: format!("did:tdw:{}:example.com", IssuerId::generate().bare()),
         state: Some(IssuerState::Active),
         description: Some(format!("{display_name} description")),
         authorized_key_id: Some(KeyPairId::generate()),

@@ -37,7 +37,6 @@ The slice is the issuer-management API: BA can create / list / get / deactivate 
 
 - **DIDLog caching.** Whether swiyu-issuer keeps a local copy of the DIDLog for offline operation. Default lean: no — fetch on demand. Confirmed in step 9 (deactivate's `build_deactivation_log` fetches the tail at saga time).
 - **Registry's "already deactivated" error shape.** Step 9.4 currently catches the resume case via `BuildError::AlreadyDeactivated` (registry tail inspection). The PUT-side error response (some 4xx with a body identifying the DID as already deactivated) is a second place to land that branch; concrete shape lands during integration testing against the SWIYU registry.
-- **DID format inconsistency.** `swiyu-core::DID::parse` expects spec-canonical `did:tdw:<scid>:<domain>:<path>`, but create_issuer's flow stores `did:tdw:<domain>:<path>:<scid>`. Worked around in `worker/deactivate_issuer::registry_identifier` with a string-split helper. Resolving for real requires aligning the parser and producer.
 
 ## Useful pointers
 

@@ -54,7 +54,6 @@ These touch `swiyu-issuer/specs/` and should land alongside the code commits, no
 
 ## Open questions
 
-- **DID format inconsistency** (also flagged in `plan.md` §Open issues). Rotation entries don't add new pain here — `registry_identifier` from step 9 still applies — but it's a reminder that a real fix is overdue.
 - **Old-key deletion timing.** If we ever do delete old keys, the safest moment is *after* the rotation entry has been verifiably propagated (e.g. observable in a fetched log on a later run). Out of scope for step 10; flagged for a future cleanup slice.
 
 ## Resolved decisions

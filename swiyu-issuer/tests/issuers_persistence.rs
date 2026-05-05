@@ -24,7 +24,7 @@ fn legacy_shaped_issuer(tenant_id: TenantId) -> Issuer {
     Issuer {
         id: IssuerId::generate(),
         tenant_id,
-        did: "did:tdw:example.com:legacy".into(),
+        did: "did:tdw:legacy:example.com".into(),
         state: None,
         description: None,
         authorized_key_id: None,
@@ -42,7 +42,7 @@ fn signing_engine_shaped_issuer(tenant_id: TenantId) -> Issuer {
     Issuer {
         id: IssuerId::generate(),
         tenant_id,
-        did: "did:tdw:example.com:new".into(),
+        did: "did:tdw:new:example.com".into(),
         state: Some(IssuerState::Active),
         description: Some("Issuer authority for residence certificates".into()),
         authorized_key_id: Some(KeyPairId::generate()),

@@ -117,7 +117,7 @@ mod tests {
     }
 
     fn fixture_did() -> &'static str {
-        "did:tdw:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d:scid-placeholder"
+        "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d"
     }
 
     fn fixture_issuer() -> Issuer {

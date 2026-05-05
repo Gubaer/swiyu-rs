@@ -51,7 +51,7 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = Issuer {
         id: IssuerId::generate(),
         tenant_id: tenant_id.clone(),
-        did: "did:tdw:example.com:fixture-uuid:scid".into(),
+        did: "did:tdw:scid:example.com:fixture-uuid".into(),
         state: Some(IssuerState::Active),
         description: Some("test issuer".into()),
         authorized_key_id: Some(KeyPairId::generate()),

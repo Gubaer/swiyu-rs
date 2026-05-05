@@ -35,7 +35,7 @@ const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const FIXTURE_SCID: &str = "Qm-fixture-scid";
 
 fn fixture_did() -> String {
-    format!("did:tdw:reg.test:{REGISTRY_UUID}:{FIXTURE_SCID}")
+    format!("did:tdw:{FIXTURE_SCID}:reg.test:{REGISTRY_UUID}")
 }
 
 fn fetch_log_path() -> String {

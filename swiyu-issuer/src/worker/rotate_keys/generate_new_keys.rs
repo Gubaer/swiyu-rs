@@ -131,7 +131,7 @@ mod tests {
         Issuer {
             id: IssuerId::generate(),
             tenant_id: TenantId::generate(),
-            did: "did:tdw:reg.example.com:fixture-uuid:scid".into(),
+            did: "did:tdw:scid:reg.example.com:fixture-uuid".into(),
             state: Some(IssuerState::Active),
             description: Some("fixture".into()),
             authorized_key_id: Some(fixture_kid(0x01)),

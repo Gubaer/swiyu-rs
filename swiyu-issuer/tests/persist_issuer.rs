@@ -148,7 +148,7 @@ async fn skips_when_issuer_row_already_exists(pool: PgPool) {
     let existing = Issuer {
         id: issuer_id.clone(),
         tenant_id: tenant_id.clone(),
-        did: "did:tdw:reg.example.com:api:v1:did:abc:Qm-pre-existing".into(),
+        did: "did:tdw:Qm-pre-existing:reg.example.com:api:v1:did:abc".into(),
         state: Some(IssuerState::Active),
         description: Some("pre-existing".into()),
         authorized_key_id: Some(fixture_kid(0x11)),

@@ -170,7 +170,7 @@ mod tests {
     const FIXTURE_UUID: &str = "fce949f2-32c4-4915-8b60-0ee2f705231d";
 
     fn fixture_did() -> String {
-        format!("did:tdw:reg.example.com:{FIXTURE_UUID}:scid-placeholder")
+        format!("did:tdw:scid-placeholder:reg.example.com:{FIXTURE_UUID}")
     }
 
     fn fixture_issuer() -> Issuer {

@@ -12,6 +12,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
+use swiyu_core::did::DID;
 use swiyu_core::diddoc::public_keys::{P256PublicKey, ed25519_verifying_key_to_multikey};
 use swiyu_core::didlog::entry_edits::{append_proof, set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
@@ -108,10 +109,15 @@ pub async fn build_log_entry<S: SigningEngine>(
     let assertion_pk = engine.get_public_key(&key_ids.assertion).await?;
     let assertion_key = sec1_to_p256("assertion", &assertion_pk)?;
 
-    let did_placeholder = match path.as_deref() {
-        Some(p) => format!("did:tdw:{domain}:{p}:{{SCID}}"),
-        None => format!("did:tdw:{domain}:{{SCID}}"),
-    };
+    // Build a canonical did:tdw via the typed constructor; with
+    // scid=None the Display impl writes the literal `{SCID}`
+    // placeholder, which we substitute after derive_scid below.
+    // Going through the type guarantees the wire format matches what
+    // `DID::from_str` expects (canonical: SCID first), which is what
+    // every downstream parser in swiyu-core / swiyu-didtool relies on.
+    let did_placeholder = DID::try_new_tdw(None, domain.clone(), path.clone())
+        .map_err(|e| BuildError::InvalidUrl(format!("DID construction failed: {e}")))?
+        .to_string();
 
     let now_iso = now.to_rfc3339_opts(SecondsFormat::Secs, true);
 

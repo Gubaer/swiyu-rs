@@ -128,7 +128,7 @@ mod tests {
         Issuer {
             id: IssuerId::generate(),
             tenant_id: TenantId::generate(),
-            did: "did:tdw:example.com:9hXq2vRtL8pK7f".into(),
+            did: "did:tdw:9hXq2vRtL8pK7f:example.com".into(),
             state: None,
             description: None,
             authorized_key_id: None,
