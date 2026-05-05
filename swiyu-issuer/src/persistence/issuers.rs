@@ -94,6 +94,79 @@ pub async fn find_by_id_for_tenant(
     row.map(|row| row_to_issuer(&row)).transpose()
 }
 
+/// Outcome of [`mark_deactivated`].
+///
+/// `NowDeactivated` is the first-write case: the row was `Active`
+/// and the UPDATE flipped it. `Already` is the idempotent re-run
+/// case: the row is already `Deactivated`, so the UPDATE matched no
+/// rows but the issuer is in the desired terminal state. Callers in
+/// the deactivate saga treat both as success; the variant is exposed
+/// so the worker can log the distinction and so future code can
+/// gate side effects (e.g. only emit a domain event on the
+/// first-write transition).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkOutcome {
+    Already,
+    NowDeactivated,
+}
+
+/// Flips an `Active` issuer to `Deactivated`, idempotent on re-run.
+///
+/// The state guard in the WHERE clause makes the SQL update a no-op
+/// once the row is already `Deactivated`, which is the resume case
+/// after a saga crashed between the registry-side publish and this
+/// terminal local step. The function distinguishes the two by
+/// re-reading the row when the UPDATE matched nothing:
+///
+/// - row exists and is `Deactivated` → `MarkOutcome::Already`
+/// - row exists in any other state, or is missing, or belongs to a
+///   different tenant → `PersistenceError::NotFound`
+///
+/// Mirrors the lookup discipline of [`find_by_id_for_tenant`]:
+/// "wrong tenant" collapses to "not found" so callers cannot probe
+/// across tenants.
+pub async fn mark_deactivated(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+) -> Result<MarkOutcome, PersistenceError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE issuers
+        SET state = 'deactivated'
+        WHERE id = $1 AND tenant_id = $2 AND state = 'active'
+        "#,
+    )
+    .bind(issuer_id.bare())
+    .bind(tenant_id.bare())
+    .execute(&mut *conn)
+    .await?;
+
+    if result.rows_affected() == 1 {
+        return Ok(MarkOutcome::NowDeactivated);
+    }
+
+    let current_state: Option<String> = sqlx::query(
+        r#"
+        SELECT state
+        FROM issuers
+        WHERE id = $1 AND tenant_id = $2
+        "#,
+    )
+    .bind(issuer_id.bare())
+    .bind(tenant_id.bare())
+    .fetch_optional(&mut *conn)
+    .await?
+    .map(|row| row.try_get::<Option<String>, _>("state"))
+    .transpose()?
+    .flatten();
+
+    match current_state.as_deref() {
+        Some("deactivated") => Ok(MarkOutcome::Already),
+        _ => Err(PersistenceError::NotFound),
+    }
+}
+
 pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), PersistenceError> {
     sqlx::query(
         r#"

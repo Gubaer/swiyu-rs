@@ -1,0 +1,270 @@
+//! Integration tests for `persistence::credential_offers`.
+//!
+//! Each test runs against a freshly created Postgres database via
+//! `sqlx::test`; migrations apply automatically. Requires
+//! `DATABASE_URL` to point to a Postgres instance whose user has
+//! `CREATEDB` privilege.
+
+use chrono::{DateTime, Duration, Utc};
+use serde_json::json;
+use sqlx::PgPool;
+
+use swiyu_issuer::domain::{
+    CredentialOffer, CredentialOfferState, Issuer, IssuerId, IssuerState, KeyPairId, PreAuthCode,
+    TenantId,
+};
+use swiyu_issuer::persistence::{credential_offers, issuers};
+
+async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
+    sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
+        .bind(tenant_id.bare())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
+    let issuer = Issuer {
+        id: IssuerId::generate(),
+        tenant_id: tenant_id.clone(),
+        did: "did:tdw:example.com:fixture".into(),
+        state: Some(IssuerState::Active),
+        description: None,
+        authorized_key_id: Some(KeyPairId::generate()),
+        authentication_key_id: Some(KeyPairId::generate()),
+        assertion_key_id: Some(KeyPairId::generate()),
+        signing_key_id: None,
+        display_name: Some("Fixture issuer".into()),
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    };
+    let id = issuer.id.clone();
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+    id
+}
+
+/// Postgres `TIMESTAMPTZ` keeps microsecond precision. `Utc::now()`
+/// produces nanoseconds, which round-trip through the database as
+/// truncated values and break direct equality assertions on what the
+/// caller passed in. Tests round to microseconds up front so the
+/// asserted timestamp is exactly what the row will hold.
+fn now_with_postgres_precision() -> DateTime<Utc> {
+    let micros = Utc::now().timestamp_micros();
+    DateTime::from_timestamp_micros(micros).unwrap()
+}
+
+fn pending_offer(tenant_id: &TenantId, issuer_id: &IssuerId) -> CredentialOffer {
+    CredentialOffer::new(
+        tenant_id.clone(),
+        issuer_id.clone(),
+        "https://example.com/vct/test".into(),
+        json!({"first_name": "Anna"}),
+        PreAuthCode::generate(),
+        Utc::now() + Duration::hours(1),
+    )
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancel_all_pending_flips_only_pending_offers(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+
+    let mut conn = pool.acquire().await.unwrap();
+
+    let pending_a = pending_offer(&tenant_id, &issuer_id);
+    let pending_b = pending_offer(&tenant_id, &issuer_id);
+
+    let mut already_issued = pending_offer(&tenant_id, &issuer_id);
+    already_issued.state = CredentialOfferState::Issued;
+    already_issued.issued_at = Some(now_with_postgres_precision());
+    already_issued.pre_auth_code = None;
+
+    let mut already_cancelled = pending_offer(&tenant_id, &issuer_id);
+    already_cancelled.state = CredentialOfferState::Cancelled;
+    already_cancelled.cancelled_at = Some(now_with_postgres_precision());
+    already_cancelled.pre_auth_code = None;
+
+    for offer in [&pending_a, &pending_b, &already_issued, &already_cancelled] {
+        credential_offers::insert(&mut conn, offer).await.unwrap();
+    }
+
+    let now = now_with_postgres_precision();
+    let cancelled =
+        credential_offers::cancel_all_pending_for_issuer(&mut conn, &tenant_id, &issuer_id, now)
+            .await
+            .unwrap();
+    assert_eq!(cancelled, 2);
+
+    let loaded_a = credential_offers::find_by_id(&mut conn, &tenant_id, &issuer_id, &pending_a.id)
+        .await
+        .unwrap();
+    assert_eq!(loaded_a.state, CredentialOfferState::Cancelled);
+    assert_eq!(loaded_a.cancelled_at, Some(now));
+    assert!(loaded_a.pre_auth_code.is_none());
+
+    let loaded_b = credential_offers::find_by_id(&mut conn, &tenant_id, &issuer_id, &pending_b.id)
+        .await
+        .unwrap();
+    assert_eq!(loaded_b.state, CredentialOfferState::Cancelled);
+
+    // Issued offers stay Issued.
+    let loaded_issued =
+        credential_offers::find_by_id(&mut conn, &tenant_id, &issuer_id, &already_issued.id)
+            .await
+            .unwrap();
+    assert_eq!(loaded_issued.state, CredentialOfferState::Issued);
+    assert_eq!(loaded_issued.issued_at, already_issued.issued_at);
+    assert!(loaded_issued.pre_auth_code.is_none());
+
+    // Cancelled offers keep their original cancelled_at — the bulk cancel
+    // does not reset the timestamp on rows that are already cancelled.
+    let loaded_cancelled =
+        credential_offers::find_by_id(&mut conn, &tenant_id, &issuer_id, &already_cancelled.id)
+            .await
+            .unwrap();
+    assert_eq!(loaded_cancelled.state, CredentialOfferState::Cancelled);
+    assert_eq!(
+        loaded_cancelled.cancelled_at,
+        already_cancelled.cancelled_at
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancel_all_pending_is_idempotent_on_rerun(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+
+    let mut conn = pool.acquire().await.unwrap();
+
+    let pending = pending_offer(&tenant_id, &issuer_id);
+    credential_offers::insert(&mut conn, &pending)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let first =
+        credential_offers::cancel_all_pending_for_issuer(&mut conn, &tenant_id, &issuer_id, now)
+            .await
+            .unwrap();
+    let second =
+        credential_offers::cancel_all_pending_for_issuer(&mut conn, &tenant_id, &issuer_id, now)
+            .await
+            .unwrap();
+
+    assert_eq!(first, 1);
+    assert_eq!(second, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancel_all_pending_returns_zero_when_no_pending_offers(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    let cancelled = credential_offers::cancel_all_pending_for_issuer(
+        &mut conn,
+        &tenant_id,
+        &issuer_id,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(cancelled, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancel_all_pending_does_not_touch_other_tenants(pool: PgPool) {
+    let tenant_owner = TenantId::generate();
+    let tenant_other = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_owner).await;
+    insert_test_tenant(&pool, &tenant_other).await;
+    let issuer_owner = insert_test_issuer(&pool, &tenant_owner).await;
+    let issuer_other = insert_test_issuer(&pool, &tenant_other).await;
+
+    let mut conn = pool.acquire().await.unwrap();
+
+    let owner_offer = pending_offer(&tenant_owner, &issuer_owner);
+    let other_offer = pending_offer(&tenant_other, &issuer_other);
+    credential_offers::insert(&mut conn, &owner_offer)
+        .await
+        .unwrap();
+    credential_offers::insert(&mut conn, &other_offer)
+        .await
+        .unwrap();
+
+    // Caller from `tenant_owner` deactivating issuer_owner must leave
+    // tenant_other's offer alone, even though we feed in a deliberately
+    // mismatched (tenant_other, issuer_owner) pair to test the AND-guard
+    // — that combination matches no rows.
+    let cross = credential_offers::cancel_all_pending_for_issuer(
+        &mut conn,
+        &tenant_other,
+        &issuer_owner,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(cross, 0);
+
+    let loaded_owner =
+        credential_offers::find_by_id(&mut conn, &tenant_owner, &issuer_owner, &owner_offer.id)
+            .await
+            .unwrap();
+    assert_eq!(loaded_owner.state, CredentialOfferState::Pending);
+    let loaded_other =
+        credential_offers::find_by_id(&mut conn, &tenant_other, &issuer_other, &other_offer.id)
+            .await
+            .unwrap();
+    assert_eq!(loaded_other.state, CredentialOfferState::Pending);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancel_all_pending_does_not_touch_other_issuers(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer_target = insert_test_issuer(&pool, &tenant_id).await;
+    let issuer_bystander = insert_test_issuer(&pool, &tenant_id).await;
+
+    let mut conn = pool.acquire().await.unwrap();
+
+    let target_offer = pending_offer(&tenant_id, &issuer_target);
+    let bystander_offer = pending_offer(&tenant_id, &issuer_bystander);
+    credential_offers::insert(&mut conn, &target_offer)
+        .await
+        .unwrap();
+    credential_offers::insert(&mut conn, &bystander_offer)
+        .await
+        .unwrap();
+
+    let cancelled = credential_offers::cancel_all_pending_for_issuer(
+        &mut conn,
+        &tenant_id,
+        &issuer_target,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(cancelled, 1);
+
+    let loaded_target =
+        credential_offers::find_by_id(&mut conn, &tenant_id, &issuer_target, &target_offer.id)
+            .await
+            .unwrap();
+    assert_eq!(loaded_target.state, CredentialOfferState::Cancelled);
+
+    let loaded_bystander = credential_offers::find_by_id(
+        &mut conn,
+        &tenant_id,
+        &issuer_bystander,
+        &bystander_offer.id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(loaded_bystander.state, CredentialOfferState::Pending);
+    assert!(loaded_bystander.pre_auth_code.is_some());
+}

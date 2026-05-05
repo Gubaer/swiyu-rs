@@ -195,6 +195,55 @@ pub async fn cancel(
     Ok(())
 }
 
+/// Bulk-cancels every `Pending` offer for the named issuer.
+///
+/// Used by the deactivate-issuer saga's terminal local step, which
+/// runs in the same transaction that flips the issuer row to
+/// `Deactivated`. Already-`issued`, already-`cancelled`, and
+/// already-`expired` (i.e. stored-`pending` past `expires_at`)
+/// offers are left alone. The expiry projection from `list` is
+/// deliberately *not* applied here: an offer that is observably
+/// `Expired` but stored as `Pending` still has an active
+/// `pre_auth_code` row, and zeroing it out alongside the bulk cancel
+/// is desirable rather than a bug.
+///
+/// Returns the number of rows that flipped to `cancelled` so the
+/// worker can log/observe the count. A zero return is normal — it
+/// means the issuer had no pending offers, which is the common case
+/// when the BA has already drained outstanding work before
+/// requesting deactivation.
+///
+/// Tenant-scoping is defence in depth: the issuer_id alone is
+/// enough to locate the rows (`issuers.id` is globally unique and
+/// `credential_offers.issuer_id` references it), but filtering on
+/// both columns matches the rest of this module's query discipline
+/// and keeps the call safe even if a future table layout drops the
+/// FK.
+pub async fn cancel_all_pending_for_issuer(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+    cancelled_at: DateTime<Utc>,
+) -> Result<u64, PersistenceError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE credential_offers
+        SET state = 'cancelled',
+            cancelled_at = $3,
+            pre_auth_code = NULL
+        WHERE tenant_id = $1 AND issuer_id = $2
+              AND state = 'pending'
+        "#,
+    )
+    .bind(tenant_id.bare())
+    .bind(issuer_id.bare())
+    .bind(cancelled_at)
+    .execute(conn)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
 fn row_to_offer(row: &PgRow) -> Result<CredentialOffer, PersistenceError> {
     let id: String = row.try_get("id")?;
     let tenant_id: String = row.try_get("tenant_id")?;

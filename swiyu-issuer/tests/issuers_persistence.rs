@@ -9,7 +9,8 @@ use chrono::Utc;
 use sqlx::PgPool;
 
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
-use swiyu_issuer::persistence::issuers;
+use swiyu_issuer::persistence::PersistenceError;
+use swiyu_issuer::persistence::issuers::{self, MarkOutcome};
 
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
     sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
@@ -126,6 +127,94 @@ async fn seeded_dev_row_reads_with_legacy_shape(pool: PgPool) {
     assert_eq!(loaded.state, None);
     assert!(loaded.authorized_key_id.is_none());
     assert!(loaded.signing_key_id.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn mark_deactivated_flips_active_issuer(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+
+    let outcome = issuers::mark_deactivated(&mut conn, &tenant_id, &issuer.id)
+        .await
+        .unwrap();
+    assert_eq!(outcome, MarkOutcome::NowDeactivated);
+
+    let loaded = issuers::find_by_id(&mut conn, &issuer.id)
+        .await
+        .unwrap()
+        .expect("issuer must still exist after deactivation");
+    assert_eq!(loaded.state, Some(IssuerState::Deactivated));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn mark_deactivated_is_idempotent_on_resume(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+
+    let first = issuers::mark_deactivated(&mut conn, &tenant_id, &issuer.id)
+        .await
+        .unwrap();
+    let second = issuers::mark_deactivated(&mut conn, &tenant_id, &issuer.id)
+        .await
+        .unwrap();
+
+    assert_eq!(first, MarkOutcome::NowDeactivated);
+    assert_eq!(second, MarkOutcome::Already);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn mark_deactivated_rejects_cross_tenant_caller(pool: PgPool) {
+    let tenant_owner = TenantId::generate();
+    let tenant_other = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_owner).await;
+    insert_test_tenant(&pool, &tenant_other).await;
+    let issuer = signing_engine_shaped_issuer(tenant_owner.clone());
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+
+    let result = issuers::mark_deactivated(&mut conn, &tenant_other, &issuer.id).await;
+    assert!(matches!(result, Err(PersistenceError::NotFound)));
+
+    // Owner-tenant view is unaffected.
+    let loaded = issuers::find_by_id(&mut conn, &issuer.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.state, Some(IssuerState::Active));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn mark_deactivated_returns_not_found_for_unknown_issuer(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let unknown = IssuerId::generate();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let result = issuers::mark_deactivated(&mut conn, &tenant_id, &unknown).await;
+    assert!(matches!(result, Err(PersistenceError::NotFound)));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn mark_deactivated_rejects_legacy_state_null_row(pool: PgPool) {
+    // The seeded dev row from migration 0004 has state = NULL. The
+    // deactivate saga must refuse to flip that row, since it never
+    // started in `Active` and has no Authorized key to sign a
+    // deactivation entry with.
+    let tenant_id = TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap();
+    let legacy_id = IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let result = issuers::mark_deactivated(&mut conn, &tenant_id, &legacy_id).await;
+    assert!(matches!(result, Err(PersistenceError::NotFound)));
 }
 
 #[sqlx::test(migrations = "./migrations")]
