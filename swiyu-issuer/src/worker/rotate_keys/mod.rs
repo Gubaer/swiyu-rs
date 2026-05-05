@@ -5,5 +5,6 @@ pub mod generate_new_keys;
 pub mod log_builder;
 pub mod publish_log;
 pub mod state;
+pub mod swap_keys;
 
 pub use state::{RotateKeysInput, RotateKeysStateData};
