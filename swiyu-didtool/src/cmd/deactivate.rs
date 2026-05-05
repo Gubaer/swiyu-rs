@@ -8,10 +8,9 @@ use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::didlog::{DIDDocState, LogEntryFormat};
 
 use crate::cmd::log::{LogError, current_did, load_log};
-use crate::cmd::proof::build_proof;
 use crate::cmd::update::{build_updated_log, compute_version_time, extract_registry_identifier};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
-use swiyu_core::proof::ProofPurpose;
+use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
 pub struct DeactivateArgs {
     pub did: Option<String>,
@@ -138,14 +137,20 @@ pub fn cmd_deactivate(store: &KeyStore, args: DeactivateArgs) -> Result<(), Deac
     entry_value[0] = json!(new_version_id);
 
     // --- proof: signed by the current authorized key ---
-    let proof = build_proof(
+    let proof_config = ProofConfig {
+        cryptosuite: Cryptosuite::EddsaJcs2022,
+        verification_method: format!(
+            "did:key:{prev_authorized_multikey}#{prev_authorized_multikey}"
+        ),
+        proof_purpose: ProofPurpose::Authentication,
+        challenge: new_version_id.clone(),
+        created: new_version_time.clone(),
+    };
+    let proof = Value::from(DataIntegrityProof::sign(
         &prev_authorized,
         &entry_value[3]["value"],
-        &prev_authorized_multikey,
-        &new_version_id,
-        ProofPurpose::Authentication,
-        &new_version_time,
-    );
+        proof_config,
+    ));
     if let Value::Array(arr) = &mut entry_value {
         arr.push(json!([proof]));
     }

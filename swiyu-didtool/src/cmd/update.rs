@@ -7,7 +7,7 @@ use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::DIDDoc;
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
 use swiyu_core::didlog::scid::derive_entry_hash;
-use swiyu_core::proof::ProofPurpose;
+use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
 use crate::cmd::log::{LoadedLog, LogError, current_did, load_log};
 use crate::crypto::{
@@ -174,14 +174,20 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
     entry_value[0] = json!(new_version_id);
 
     // --- proof: signed by previous authorized key, hashes only the DID document ---
-    let proof = super::proof::build_proof(
+    let proof_config = ProofConfig {
+        cryptosuite: Cryptosuite::EddsaJcs2022,
+        verification_method: format!(
+            "did:key:{prev_authorized_multikey}#{prev_authorized_multikey}"
+        ),
+        proof_purpose: ProofPurpose::Authentication,
+        challenge: new_version_id.clone(),
+        created: new_version_time.clone(),
+    };
+    let proof = Value::from(DataIntegrityProof::sign(
         &prev_authorized,
         &entry_value[3]["value"],
-        &prev_authorized_multikey,
-        &new_version_id,
-        ProofPurpose::Authentication,
-        &new_version_time,
-    );
+        proof_config,
+    ));
     if let Value::Array(arr) = &mut entry_value {
         arr.push(json!([proof]));
     }
