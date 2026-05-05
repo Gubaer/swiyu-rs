@@ -1,0 +1,14 @@
+{
+  "request_id": "ccbd4d05-2d10-90b8-a127-57760e640eef",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 0,
+  "data": {
+    "key_version": 1,
+    "signature": "vault:v1:IlKcyf5fLJ19yCrtmtUebOjeM4w+XTzkYP/LasXe2kxy1o08kqR8w/scCS/sEbhX+/h94OHgMwkqII734rRbBA=="
+  },
+  "wrap_info": null,
+  "warnings": null,
+  "auth": null,
+  "mount_type": "transit"
+}

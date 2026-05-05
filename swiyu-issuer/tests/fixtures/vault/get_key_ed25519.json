@@ -1,0 +1,36 @@
+{
+  "request_id": "31ac69b9-0e67-be49-9245-fed3e1eabfc9",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 0,
+  "data": {
+    "allow_plaintext_backup": false,
+    "auto_rotate_period": 0,
+    "deletion_allowed": false,
+    "derived": false,
+    "exportable": false,
+    "imported_key": false,
+    "keys": {
+      "1": {
+        "certificate_chain": "",
+        "creation_time": "2026-05-05T14:26:59.833791673Z",
+        "name": "ed25519",
+        "public_key": "2gc1vkhCCUeNrTVhLA/miCFvEXAFeylMxBdZqwls1HQ="
+      }
+    },
+    "latest_version": 1,
+    "min_available_version": 0,
+    "min_decryption_version": 1,
+    "min_encryption_version": 0,
+    "name": "11111111-1111-4111-8111-111111111111",
+    "supports_decryption": false,
+    "supports_derivation": true,
+    "supports_encryption": false,
+    "supports_signing": true,
+    "type": "ed25519"
+  },
+  "wrap_info": null,
+  "warnings": null,
+  "auth": null,
+  "mount_type": "transit"
+}

@@ -18,20 +18,26 @@ The set of backends is closed (dev / vault / hsm) and chosen once at startup. En
 
 Vault returns ECDSA public keys as PEM-encoded `SubjectPublicKeyInfo`. The trait contract says `RawPublicKey::bytes` is single-shape per algorithm; both backends must agree. The engine normalises to SEC1 uncompressed (`0x04 || x || y`, 65 bytes) — matching what `DevSigningEngine` already produces. Implementation: `p256::PublicKey::from_public_key_pem(...)` then `.to_encoded_point(false).as_bytes().to_vec()`. No new deps (`p256` is already in for the dev engine). The byte-shape rule is then promoted into the trait section of the spec, not buried in a backend.
 
-## 1. Spike: confirm Vault response shapes
+## 1. Spike: confirm Vault response shapes — **done**
 
-Before writing engine code, hit the running Vault container and capture the exact JSON shape of every endpoint we'll use. Save the responses as fixture files under `swiyu-issuer/tests/fixtures/vault/` so unit tests can parse against real data without needing Vault running.
+The spike has been run against the dev container (Vault 1.18.5). Fixtures captured at `swiyu-issuer/tests/fixtures/vault/`; full write-up at `swiyu-issuer/specs/notes-vault-api.md`. Findings settle the open shape questions and revise the error-mapping section below.
 
-Endpoints to capture:
+Endpoints captured:
 
-- `POST /v1/transit/keys/{uuid}` — both `type=ed25519` and `type=ecdsa-p256`.
-- `GET /v1/transit/keys/{uuid}` — both algorithms; specifically confirm the ECDSA public-key encoding (PEM SPKI vs raw) and Ed25519 encoding (base64 of 32 bytes).
-- `POST /v1/transit/sign/{uuid}` — Ed25519, default parameters.
-- `POST /v1/transit/sign/{uuid}` — ECDSA P-256 with `prehashed=true`, `hash_algorithm=sha2-256`, `marshaling_algorithm=jws`.
-- `POST /v1/transit/keys/{uuid}/config` with `deletion_allowed=true`, then `DELETE /v1/transit/keys/{uuid}` — capture both 200 and the 404 shape.
-- An auth failure (404 / 403) to confirm error response shape.
+- `POST /v1/transit/keys/{uuid}` — both `type=ed25519` and `type=ecdsa-p256` → 200.
+- `GET /v1/transit/keys/{uuid}` — both algorithms → 200. Ed25519 public key is standard base64 of 32 raw bytes at `data.keys["1"].public_key`. ECDSA public key is PEM `SubjectPublicKeyInfo` at the same path.
+- `POST /v1/transit/sign/{uuid}` — Ed25519 (default) → 200. Signature at `data.signature`, prefixed `vault:v1:` + standard base64 → 64 raw bytes.
+- `POST /v1/transit/sign/{uuid}` — ECDSA P-256 with `prehashed=true`, `hash_algorithm=sha2-256`, `marshaling_algorithm=jws` → 200. Signature `vault:v1:` + base64url-no-pad → 64 raw bytes (`r ‖ s`).
+- `POST /v1/transit/keys/{uuid}/config` with `deletion_allowed=true` → 200 (returns the full key body, not 204).
+- `DELETE /v1/transit/keys/{uuid}` (allowed) → 204 empty body.
+- `GET /v1/transit/keys/{nx}` → 404, body `{"errors":[]}`.
+- `POST /v1/transit/sign/{nx}` → **400** (not 404), body `{"errors":["signing key not found"]}`.
+- `DELETE /v1/transit/keys/{nx}` → **400** (not 404), body `{"errors":["error deleting policy <id>: could not delete key; not found"]}`.
+- `POST /v1/transit/keys/{nx}/config` → 400, body `{"errors":["no existing key named <id> could be found"]}`.
+- `DELETE /v1/transit/keys/{id}` without `deletion_allowed=true` → 400, body `{"errors":["error deleting policy <id>: deletion is not allowed for this key"]}`. Engine never hits this path because it always sets `deletion_allowed=true` first.
+- Bogus token on any endpoint → 403, body `{"errors":["2 errors occurred:\n\t* permission denied\n\t* invalid token\n\n"]}`.
 
-Output: fixture JSON files plus a short `notes-vault-api.md` (worktree-local, not committed) that records exact JSON paths, base64 vs base64url for each signature kind, and the public-key encoding conclusion.
+Implication: HTTP status alone does not identify "key missing" for `sign` or `delete`. The engine must read response bodies for those two cases.
 
 ## 2. Configuration
 
@@ -74,29 +80,37 @@ The trait pre-validates ECDSA input length but the engine itself needs to know t
 - Ed25519: `POST /v1/{transit_path}/sign/{id}` with `{"input": base64(input)}`. Decode `data.signature` as `vault:v1:<standard-base64>` → 64 raw bytes.
 - ECDSA P-256: validate `input.len() == 32` (`InvalidInputLength` otherwise) → `POST /v1/{transit_path}/sign/{id}` with `{"input": base64(input), "prehashed": true, "hash_algorithm": "sha2-256", "marshaling_algorithm": "jws"}`. Decode `data.signature` as `vault:v1:<base64url-no-padding>` → 64 raw bytes (`r || s`).
 
-Map 404 → `KeyNotFound`.
+Vault returns **400 with body `{"errors":["signing key not found"]}`** when the key is missing, not 404. Map that body shape → `KeyNotFound`; other 400s → `Backend`.
 
 ### `delete_keypair(id)`
 
-- `POST /v1/{transit_path}/keys/{id}/config` with `{"deletion_allowed": true}` — ignore 404.
-- `DELETE /v1/{transit_path}/keys/{id}` — ignore 404.
+- `POST /v1/{transit_path}/keys/{id}/config` with `{"deletion_allowed": true}` — swallow 400 with body containing `no existing key named` (key already gone). Other 400s → `Backend`.
+- `DELETE /v1/{transit_path}/keys/{id}` — swallow 400 with body containing `could not delete key; not found`. Other 400s → `Backend`.
 - Drop from the algorithm cache.
 
-Idempotent per the trait contract.
+Idempotent per the trait contract. Vault returns 400 (not 404) for missing keys on both endpoints, so the engine discriminates on the body string. The substring match is fragile but is what Vault gives us; the integration test suite catches any wording change.
 
 ### Error mapping
 
 Concentrate all status-to-error mapping in one helper. Network errors and JSON parse failures map to `Backend`. Resist adding finer-grained variants to `SigningEngineError` until concrete failure modes show up in real use — the spec is explicit about that.
 
+The spike showed Vault uses 400, not 404, for "key missing" on `sign` and `delete`, so the helper has to inspect the body string for those operations. `Get` is the only operation that returns a clean 404 for missing keys.
+
 ```rust
 fn map_error(status: StatusCode, body: &str, id: KeyPairId, op: Op) -> SigningEngineError {
     match (op, status.as_u16()) {
-        (Op::Sign | Op::Get, 404) => SigningEngineError::KeyNotFound(id),
-        // delete swallows 404 before reaching this helper
+        (Op::Get, 404) => SigningEngineError::KeyNotFound(id),
+        (Op::Sign, 400) if body.contains("signing key not found") => {
+            SigningEngineError::KeyNotFound(id)
+        }
+        // Delete-related "already gone" cases are swallowed by the caller before
+        // they reach this helper; they never produce a SigningEngineError.
         _ => SigningEngineError::Backend(format!("vault {}: {}", status, body).into()),
     }
 }
 ```
+
+The two delete-path "not found" body substrings (`no existing key named` for the config update, `could not delete key; not found` for the delete itself) are matched at the call site in `delete_keypair`, not here, so this helper stays focused on the `KeyNotFound` cases that actually surface to callers.
 
 ### Retry / backoff
 
@@ -108,7 +122,7 @@ Out of scope for this round. The trait surface stays the same when we add it lat
 
 - Signature envelope parsing: `vault:v1:<base64>` → 64 bytes, both standard base64 (Ed25519) and base64url-no-padding (ECDSA + jws marshalling).
 - ECDSA public-key conversion: PEM SPKI input → SEC1 uncompressed output, byte-exact against a known vector.
-- Error mapping: 404 on `sign` → `KeyNotFound`; 404 on `delete` → `Ok(())`; 403 / 500 / network → `Backend`.
+- Error mapping: `Get` 404 → `KeyNotFound`; `Sign` 400 with body `signing key not found` → `KeyNotFound`; `Sign` 400 with other body → `Backend`; `delete_keypair` 400 with `could not delete key; not found` → `Ok(())`; `delete_keypair` 400 with `no existing key named` on the config update → `Ok(())`; 403 / 500 / network → `Backend`.
 
 These run against the captured fixture JSON; no Vault needed.
 
@@ -150,8 +164,9 @@ After implementation lands, update `impl-key-management.md`:
 - Resolve open question 1 (dispatch) → enum dispatch with the rationale from §0b.
 - Promote the public-key normalisation rule (engines return SEC1 uncompressed for ECDSA, raw 32 bytes for Ed25519) into the trait section, not buried in a backend.
 - Capture the Vault signature-envelope decoding rules (`vault:v1:` prefix, base64 vs base64url depending on algorithm) as a short paragraph under the Vault subsection — they are non-obvious and the next reader will want them.
+- Capture the "key missing" mapping rules: `GET` returns 404 cleanly, but `sign` and `delete` return 400 with discriminating body strings (`signing key not found`, `could not delete key; not found`, `no existing key named`). Note that the engine matches on body substring; the integration tests guard against silent wording changes.
 - Replace the network-failure subsection's "to be specified when implementation begins" with the actual v1 behaviour: single attempt, configurable timeout (default 5s), all failures map to `Backend`, retry/backoff deferred.
-- Delete this plan file once the spec carries the substance.
+- Delete this plan file once the spec carries the substance. The companion `notes-vault-api.md` either folds into the spec or is deleted; do not leave a freestanding spike notes file in `specs/` long-term.
 
 ## 7. Out of scope for this round
 
@@ -168,7 +183,7 @@ State explicitly so future readers don't think we forgot:
 
 Roughly one PR-sized chunk, split for reviewability:
 
-1. Spike fixtures + notes (no production code).
+1. Spike fixtures + notes (no production code). **Done** — fixtures at `swiyu-issuer/tests/fixtures/vault/`, notes at `swiyu-issuer/specs/notes-vault-api.md`.
 2. `VaultSigningEngineConfig` + skeleton struct, no methods yet.
 3. `generate_keypair` + `get_public_key` + their unit tests.
 4. `sign` (both algorithms) + unit tests.
