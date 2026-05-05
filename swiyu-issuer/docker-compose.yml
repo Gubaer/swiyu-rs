@@ -1,11 +1,14 @@
-# Local PostgreSQL and HashiCorp Vault for swiyu-issuer development.
+# Local PostgreSQL, HashiCorp Vault, and issuer-mgmt for swiyu-issuer
+# development.
 #
 # Usage (run from this directory, swiyu-issuer/):
-#   docker compose up -d
-#   cargo run --bin issuer-mgmt
+#   docker compose up -d            # builds + starts everything
 #
 # Or from the workspace root:
 #   docker compose -f swiyu-issuer/docker-compose.yml up -d
+#
+# `docker compose build issuer-mgmt` rebuilds only the binary image.
+# `docker compose up -d --build issuer-mgmt` rebuilds and restarts it.
 #
 # Compose auto-loads .env from this directory. The defaults below
 # (after the :- in each ${VAR:-default}) match those documented in
@@ -92,6 +95,48 @@ services:
       - -c
       - vault secrets enable transit || true
     restart: "no"
+
+  # The issuer-mgmt management API. SWIYU_IDENTIFIER_REGISTRY_URL and
+  # SWIYU_ACCESS_TOKEN come from .env; the in-container hostnames for
+  # Postgres and Vault are forced here because the host-side values
+  # in .env (localhost:5433, localhost:8200) do not resolve inside
+  # the compose network.
+  issuer-mgmt:
+    build:
+      context: ..
+      dockerfile: swiyu-issuer/Dockerfile
+    container_name: swiyu-issuer-mgmt
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}
+      BIND_ADDR: 0.0.0.0:8080
+      ISSUER_BASE_URL: ${ISSUER_BASE_URL:-http://localhost:8080}
+      SIGNING_ENGINE: ${SIGNING_ENGINE:-vault}
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+      SWIYU_IDENTIFIER_REGISTRY_URL: ${SWIYU_IDENTIFIER_REGISTRY_URL}
+      SWIYU_ACCESS_TOKEN: ${SWIYU_ACCESS_TOKEN}
+      # Smoke-test friendly default: debug for our crates, info for
+      # known-noisy deps (sqlx prints every prepared statement at debug;
+      # hyper/h2/reqwest/tower flood with per-byte trace lines).
+      # Override via `.env` if you want something different.
+      RUST_LOG: ${RUST_LOG:-debug,sqlx=info,hyper=info,h2=info,reqwest=info,tower=info,tower_http=info}
+    ports:
+      - "${ISSUER_MGMT_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://localhost:8080/healthz
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
 
 volumes:
   postgres_data:

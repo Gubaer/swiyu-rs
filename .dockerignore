@@ -9,6 +9,8 @@ target/
 .gitignore
 .gitattributes
 
+.worktrees/
+
 .devcontainer/
 .vscode/
 .idea/
