@@ -25,10 +25,14 @@ const VAULT_TOKEN_HEADER: &str = "X-Vault-Token";
 // (rotation creates a brand-new Vault key under a new UUID instead).
 const VAULT_KEY_VERSION: &str = "1";
 const VAULT_SIGNATURE_PREFIX: &str = "vault:v1:";
-// Body fragment Vault returns (HTTP 400) when sign or delete is called for a
-// key that does not exist. The integration tests guard against silent wording
-// changes; substring match is what Vault gives us.
+// Body fragments Vault returns (HTTP 400) for "key missing" cases. Substring
+// match is what Vault gives us — there's no machine-readable discriminator;
+// the integration tests guard against silent wording changes.
 const VAULT_SIGN_KEY_NOT_FOUND: &str = "signing key not found";
+// `POST keys/{id}/config` on a missing key.
+const VAULT_CONFIG_KEY_NOT_FOUND: &str = "no existing key named";
+// `DELETE keys/{id}` on a missing key.
+const VAULT_DELETE_KEY_NOT_FOUND: &str = "could not delete key; not found";
 
 /// Configuration for the Vault Transit signing backend.
 ///
@@ -173,6 +177,68 @@ impl VaultSigningEngine {
         Ok(Signature { algorithm, bytes })
     }
 
+    pub async fn delete_keypair(&self, id: &KeyPairId) -> Result<(), SigningEngineError> {
+        // Vault marks new keys as non-deletable by default. The two-step
+        // dance (config flag, then DELETE) is required even for a key we
+        // just created. Both calls are idempotent: missing-key 400s are
+        // swallowed so a second delete returns Ok(()), per the trait
+        // contract.
+        self.allow_deletion(id).await?;
+        self.delete_key(id).await?;
+        self.cache_remove(id);
+        Ok(())
+    }
+
+    async fn allow_deletion(&self, id: &KeyPairId) -> Result<(), SigningEngineError> {
+        let url = self.key_config_url(id)?;
+        let body = json!({ "deletion_allowed": true });
+        let response = self
+            .client
+            .post(url)
+            .header(VAULT_TOKEN_HEADER, self.token.expose_secret())
+            .json(&body)
+            .send()
+            .await
+            .map_err(reqwest_to_backend)?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body_text = response.text().await.unwrap_or_default();
+        if status == StatusCode::BAD_REQUEST && body_text.contains(VAULT_CONFIG_KEY_NOT_FOUND) {
+            return Ok(());
+        }
+        Err(SigningEngineError::Backend(
+            format!("vault keys/{id}/config {status}: {body_text}").into(),
+        ))
+    }
+
+    async fn delete_key(&self, id: &KeyPairId) -> Result<(), SigningEngineError> {
+        let url = self.key_url(id)?;
+        let response = self
+            .client
+            .delete(url)
+            .header(VAULT_TOKEN_HEADER, self.token.expose_secret())
+            .send()
+            .await
+            .map_err(reqwest_to_backend)?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body_text = response.text().await.unwrap_or_default();
+        if status == StatusCode::BAD_REQUEST && body_text.contains(VAULT_DELETE_KEY_NOT_FOUND) {
+            return Ok(());
+        }
+        Err(SigningEngineError::Backend(
+            format!("vault delete keys/{id} {status}: {body_text}").into(),
+        ))
+    }
+
+    fn cache_remove(&self, id: &KeyPairId) {
+        self.algorithm_cache.write().unwrap().remove(id);
+    }
+
     async fn lookup_algorithm(&self, id: &KeyPairId) -> Result<KeyAlgorithm, SigningEngineError> {
         if let Some(algorithm) = self.cache_get(id) {
             return Ok(algorithm);
@@ -250,20 +316,24 @@ impl VaultSigningEngine {
     }
 
     fn key_url(&self, id: &KeyPairId) -> Result<Url, SigningEngineError> {
-        self.transit_url("keys", id)
+        self.transit_url(&format!("keys/{id}"))
     }
 
     fn sign_url(&self, id: &KeyPairId) -> Result<Url, SigningEngineError> {
-        self.transit_url("sign", id)
+        self.transit_url(&format!("sign/{id}"))
     }
 
-    fn transit_url(&self, kind: &str, id: &KeyPairId) -> Result<Url, SigningEngineError> {
+    fn key_config_url(&self, id: &KeyPairId) -> Result<Url, SigningEngineError> {
+        self.transit_url(&format!("keys/{id}/config"))
+    }
+
+    fn transit_url(&self, suffix: &str) -> Result<Url, SigningEngineError> {
         // `Url::join` re-bases relative paths and would silently drop a
         // configured base prefix (e.g. `http://host/proxy`) when the joined
         // string starts with `/`. Build the full string explicitly.
         let base = self.address.as_str().trim_end_matches('/');
         let mount = self.transit_path.trim_matches('/');
-        let url_str = format!("{base}/v1/{mount}/{kind}/{id}");
+        let url_str = format!("{base}/v1/{mount}/{suffix}");
         Url::parse(&url_str)
             .map_err(|e| SigningEngineError::Backend(format!("vault url parse: {e}").into()))
     }
@@ -421,6 +491,12 @@ mod tests {
         include_str!("../../../tests/fixtures/vault/sign_key_not_found.json");
     const SIGN_UNAUTHORIZED_BODY: &str =
         include_str!("../../../tests/fixtures/vault/sign_unauthorized.json");
+    const CONFIG_DELETION_ALLOWED_BODY: &str =
+        include_str!("../../../tests/fixtures/vault/config_deletion_allowed.json");
+    const CONFIG_KEY_NOT_FOUND_BODY: &str =
+        include_str!("../../../tests/fixtures/vault/config_key_not_found.json");
+    const DELETE_KEY_NOT_FOUND_BODY: &str =
+        include_str!("../../../tests/fixtures/vault/delete_key_not_found.json");
 
     // Signature strings extracted from the fixtures above; used by the
     // pure-helper tests to avoid re-parsing the JSON envelopes.
@@ -429,6 +505,7 @@ mod tests {
 
     const KEYS_PATH_REGEX: &str = r"^/v1/transit/keys/[^/]+$";
     const SIGN_PATH_REGEX: &str = r"^/v1/transit/sign/[^/]+$";
+    const KEYS_CONFIG_PATH_REGEX: &str = r"^/v1/transit/keys/[^/]+/config$";
 
     fn engine_for(server: &MockServer) -> VaultSigningEngine {
         VaultSigningEngine::new(VaultSigningEngineConfig {
@@ -899,6 +976,154 @@ mod tests {
         let id = KeyPairId::generate();
         let _ = engine.sign(&id, b"first").await.unwrap();
         let _ = engine.sign(&id, b"second").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_keypair_succeeds_with_known_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(KEYS_CONFIG_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(CONFIG_DELETION_ALLOWED_BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        engine.delete_keypair(&KeyPairId::generate()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_keypair_idempotent_when_key_already_gone() {
+        // Both endpoints report the key is missing — both 400s are swallowed.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(KEYS_CONFIG_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(400).set_body_string(CONFIG_KEY_NOT_FOUND_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(400).set_body_string(DELETE_KEY_NOT_FOUND_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        engine.delete_keypair(&KeyPairId::generate()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_keypair_idempotent_when_only_delete_reports_key_gone() {
+        // Race scenario: config succeeds, then the key is removed before DELETE.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(KEYS_CONFIG_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(CONFIG_DELETION_ALLOWED_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(400).set_body_string(DELETE_KEY_NOT_FOUND_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        engine.delete_keypair(&KeyPairId::generate()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_keypair_returns_backend_on_unrelated_config_400() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(KEYS_CONFIG_PATH_REGEX))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_string(r#"{"errors":["some other problem"]}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let err = engine
+            .delete_keypair(&KeyPairId::generate())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_keypair_returns_backend_on_unrelated_delete_400() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(KEYS_CONFIG_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(CONFIG_DELETION_ALLOWED_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_string(r#"{"errors":["unexpected"]}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let err = engine
+            .delete_keypair(&KeyPairId::generate())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_keypair_returns_backend_on_unauthorized() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(KEYS_CONFIG_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(403).set_body_string(SIGN_UNAUTHORIZED_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let err = engine
+            .delete_keypair(&KeyPairId::generate())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_keypair_evicts_from_algorithm_cache() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ED25519_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(KEYS_CONFIG_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(CONFIG_DELETION_ALLOWED_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        let _ = engine.get_public_key(&id).await.unwrap();
+        assert!(engine.cache_get(&id).is_some(), "cache should be warmed");
+        engine.delete_keypair(&id).await.unwrap();
+        assert!(
+            engine.cache_get(&id).is_none(),
+            "cache should be evicted after delete_keypair"
+        );
     }
 
     #[tokio::test]
