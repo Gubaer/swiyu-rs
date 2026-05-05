@@ -24,6 +24,7 @@ use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, Step
 use crate::worker::registry::RegistryFacade;
 
 use super::log_builder::{BuildError, build_deactivation_entry};
+use super::registry_identifier;
 
 pub async fn execute_build_deactivation_log<R: RegistryFacade, S: SigningEngine>(
     issuer: &Issuer,
@@ -71,29 +72,6 @@ pub async fn execute_build_deactivation_log<R: RegistryFacade, S: SigningEngine>
             error_message: e.to_string(),
         },
     }
-}
-
-/// Pulls the SWIYU registry's `<uuid>` identifier out of a stored
-/// issuer DID of the form `did:tdw:<domain>:<path-segments>:<uuid>:<scid>`.
-///
-/// `swiyu-core::did::DID::parse` expects the spec-canonical
-/// `did:tdw:<scid>:<domain>:<path>` order, but the create_issuer
-/// flow constructs DIDs with the SCID as the *trailing* segment
-/// (see `worker/create_issuer/log_builder.rs`). Resolving that
-/// inconsistency in swiyu-core is out of scope for this step; here
-/// we accept whatever shape create_issuer stores and pull out the
-/// segment immediately before the SCID, which is the registry UUID.
-///
-/// The registry's allocation URL always carries a UUID path
-/// segment, so on issuers created through the task flow the
-/// second-to-last segment is the identifier we want.
-fn registry_identifier(did: &str) -> Option<String> {
-    let rest = did.strip_prefix("did:tdw:")?;
-    let segments: Vec<&str> = rest.split(':').filter(|s| !s.is_empty()).collect();
-    if segments.len() < 3 {
-        return None;
-    }
-    Some(segments[segments.len() - 2].to_string())
 }
 
 fn error_code_for(e: &BuildError) -> &'static str {
