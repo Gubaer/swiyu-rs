@@ -112,10 +112,10 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Inspect or verify SWIYU business-entity trust statements.
-    BusinessEntity {
+    /// Inspect or verify the SWIYU trust granted to a DID.
+    Trust {
         #[command(subcommand)]
-        command: BusinessEntityCommand,
+        command: TrustCommand,
     },
     /// Verify a Proof of Possession (PoP) JWT against a DID's keys.
     VerifyPop {
@@ -247,8 +247,8 @@ enum LogCommand {
 }
 
 #[derive(Subcommand)]
-enum BusinessEntityCommand {
-    /// Look up trust statements for a business entity DID and display them.
+enum TrustCommand {
+    /// Look up the SWIYU trust statements for a DID and display them.
     Lookup {
         /// Subject DID — full DID string or 12-character BLAKE3 hash.
         #[arg(long, required = true)]
@@ -260,8 +260,8 @@ enum BusinessEntityCommand {
         #[arg(long)]
         raw: bool,
     },
-    /// Verify the SWIYU trust statements for a business entity DID.
-    VerifyTrust {
+    /// Verify the SWIYU trust statements for a DID.
+    Verify {
         /// Subject DID — full DID string or 12-character BLAKE3 hash.
         #[arg(long, required = true)]
         did: String,
@@ -509,42 +509,40 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             },
         )
         .map_err(|e| e.into()),
-        Command::BusinessEntity { command } => match command {
-            BusinessEntityCommand::Lookup {
+        Command::Trust { command } => match command {
+            TrustCommand::Lookup {
                 did,
                 trust_registry_url,
                 raw,
-            } => match cmd::business_entity::lookup::cmd_lookup(
+            } => match cmd::trust::lookup::cmd_lookup(
                 &store,
-                cmd::business_entity::lookup::LookupArgs {
+                cmd::trust::lookup::LookupArgs {
                     did,
                     trust_registry_url,
                     raw,
                 },
             ) {
-                Ok(cmd::business_entity::lookup::LookupOutcome::Found) => Ok(()),
-                Ok(cmd::business_entity::lookup::LookupOutcome::NoStatements) => process::exit(1),
+                Ok(cmd::trust::lookup::LookupOutcome::Found) => Ok(()),
+                Ok(cmd::trust::lookup::LookupOutcome::NoStatements) => process::exit(1),
                 Err(e) => {
                     eprintln!("error: {e}");
                     process::exit(2);
                 }
             },
-            BusinessEntityCommand::VerifyTrust {
+            TrustCommand::Verify {
                 did,
                 trust_registry_url,
                 trust_issuer,
-            } => match cmd::business_entity::verify_trust::cmd_verify_trust(
+            } => match cmd::trust::verify::cmd_verify(
                 &store,
-                cmd::business_entity::verify_trust::VerifyTrustArgs {
+                cmd::trust::verify::VerifyArgs {
                     did,
                     trust_registry_url,
                     trust_issuer,
                 },
             ) {
-                Ok(cmd::business_entity::verify_trust::VerifyTrustOutcome::Trusted) => Ok(()),
-                Ok(cmd::business_entity::verify_trust::VerifyTrustOutcome::Untrusted) => {
-                    process::exit(1)
-                }
+                Ok(cmd::trust::verify::VerifyOutcome::Trusted) => Ok(()),
+                Ok(cmd::trust::verify::VerifyOutcome::Untrusted) => process::exit(1),
                 Err(e) => {
                     eprintln!("error: {e}");
                     process::exit(2);

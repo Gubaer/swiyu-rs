@@ -1,5 +1,5 @@
 pub mod lookup;
-pub mod verify_trust;
+pub mod verify;
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -16,7 +16,7 @@ use crate::cmd::http::FetchError;
 use crate::keystore::KeyStoreError;
 
 #[derive(Debug, thiserror::Error)]
-pub enum BusinessEntityError {
+pub enum TrustError {
     #[error("--trust-registry-url or SWIYU_TRUST_REGISTRY_URL is required")]
     TrustRegistryUrlMissing,
     #[error("--trust-issuer or SWIYU_TRUST_ISSUER_DID is required")]
@@ -48,7 +48,7 @@ pub enum BusinessEntityError {
 /// A SWIYU trust statement, decoded from its SD-JWT VC wire form.
 ///
 /// Holds both the high-level claims used by `lookup` (for display) and the lower-level
-/// JWS bits used by `verify-trust` (for signature verification). Constructed by
+/// JWS bits used by `verify` (for signature verification). Constructed by
 /// [`decode_statement`]; consumed read-only by both subcommands.
 ///
 /// Disclosure-hash-vs-`_sd` integrity is enforced during decoding: any disclosure whose
@@ -60,15 +60,15 @@ pub(crate) struct DecodedStatement {
     /// Identifies which schema the disclosed claims conform to.
     pub vct: String,
     /// Issuer DID from `payload.iss`. For SWIYU trust statements this is the trust
-    /// authority's `did:tdw`. `verify-trust` cross-checks this against `--trust-issuer`.
+    /// authority's `did:tdw`. `verify` cross-checks this against `--trust-issuer`.
     pub iss: String,
     /// Issued-at, Unix seconds (`payload.iat`). Used by `lookup` to sort statements
-    /// newest-first; `verify-trust` reports it for context but does not enforce it.
+    /// newest-first; `verify` reports it for context but does not enforce it.
     pub iat: u64,
     /// Optional not-before timestamp, Unix seconds (`payload.nbf`). When present,
-    /// `verify-trust` requires `now >= nbf` for the statement to be fresh.
+    /// `verify` requires `now >= nbf` for the statement to be fresh.
     pub nbf: Option<u64>,
-    /// Optional expiration, Unix seconds (`payload.exp`). When present, `verify-trust`
+    /// Optional expiration, Unix seconds (`payload.exp`). When present, `verify`
     /// requires `now < exp` for the statement to be fresh.
     pub exp: Option<u64>,
     /// Language-keyed legal names from the disclosed `entityName` claim, e.g.
@@ -83,7 +83,7 @@ pub(crate) struct DecodedStatement {
     /// JWT header `kid` — the verification method id used to sign the statement.
     /// SWIYU's trust authority signs with the `#assert-key-02` fragment of its DID.
     pub kid: String,
-    /// JWT header `alg`. SWIYU uses `ES256` exclusively; `verify-trust` rejects
+    /// JWT header `alg`. SWIYU uses `ES256` exclusively; `verify` rejects
     /// anything else.
     pub alg: String,
     /// `<header_b64>.<payload_b64>` as ASCII bytes — the exact byte sequence the issuer

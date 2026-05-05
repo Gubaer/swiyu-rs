@@ -4,10 +4,10 @@ use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
 use crate::keystore::KeyStore;
 
-use super::{BusinessEntityError, DecodedStatement, build_endpoint, decode_statement};
+use super::{DecodedStatement, TrustError, build_endpoint, decode_statement};
 
 // Re-export the shared error type as `LookupError` for clarity at call sites.
-pub use super::BusinessEntityError as LookupError;
+pub use super::TrustError as LookupError;
 
 #[allow(dead_code)] // raw is referenced via field access only by way of args
 pub struct LookupArgs {
@@ -25,7 +25,7 @@ pub enum LookupOutcome {
 pub fn cmd_lookup(store: &KeyStore, args: LookupArgs) -> Result<LookupOutcome, LookupError> {
     let base_url = args
         .trust_registry_url
-        .ok_or(BusinessEntityError::TrustRegistryUrlMissing)?;
+        .ok_or(TrustError::TrustRegistryUrlMissing)?;
     let did = resolve_did(store, &args.did)?;
     let endpoint = build_endpoint(&base_url, &did);
     debug!("GET {endpoint}");
@@ -43,8 +43,7 @@ pub fn cmd_lookup(store: &KeyStore, args: LookupArgs) -> Result<LookupOutcome, L
 }
 
 fn process_body(did: &str, body: &str, raw: bool) -> Result<LookupOutcome, LookupError> {
-    let array: Vec<String> =
-        serde_json::from_str(body).map_err(|_| BusinessEntityError::ResponseShape)?;
+    let array: Vec<String> = serde_json::from_str(body).map_err(|_| TrustError::ResponseShape)?;
 
     if array.is_empty() {
         eprintln!("no trust statements found for {did}");
@@ -60,8 +59,8 @@ fn process_body(did: &str, body: &str, raw: bool) -> Result<LookupOutcome, Looku
 
     let mut statements = Vec::with_capacity(array.len());
     for (i, jwt) in array.iter().enumerate() {
-        let s = decode_statement(jwt)
-            .map_err(|reason| BusinessEntityError::Statement { n: i + 1, reason })?;
+        let s =
+            decode_statement(jwt).map_err(|reason| TrustError::Statement { n: i + 1, reason })?;
         statements.push(s);
     }
     statements.sort_by(|a, b| b.iat.cmp(&a.iat));
@@ -127,7 +126,7 @@ mod tests {
     #[test]
     fn process_body_non_array_is_response_shape_error() {
         let err = process_body("did:tdw:abc", "{}", false).unwrap_err();
-        assert!(matches!(err, BusinessEntityError::ResponseShape));
+        assert!(matches!(err, TrustError::ResponseShape));
     }
 
     #[test]

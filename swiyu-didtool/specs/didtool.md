@@ -725,37 +725,38 @@ is left behind.
 
 ---
 
-## `didtool business-entity`
+## `didtool trust`
 
-Read-only access to the SWIYU **trust registry**: the service that holds
-`TrustStatementIdentityV1` statements asserting facts about registered SWIYU business
-entities (legal name in each language, state-actor flag, etc.). The trust registry is a
-distinct service from the identifier (DID) registry — see the URL anatomy below.
+These subcommands inspect or verify the **trust** SWIYU grants to a DID — i.e. SWIYU's
+trust authority vouching for the business entity that owns the DID. SWIYU expresses
+this trust as `TrustStatementIdentityV1` statements (legal name in each language,
+state-actor flag, etc.) hosted in a dedicated **trust registry**, distinct from the
+identifier (DID) registry — see the URL anatomy below.
 
 The current subcommand list:
 
 | Subcommand | Purpose |
 |---|---|
-| `lookup` | Fetch and display trust statements for a business entity. **Does not** verify signatures or revocation. |
-| `verify-trust` | Fetch, then perform full verification: issuer allowlist, signature, freshness, revocation. |
+| `lookup` | Fetch and display trust statements for a DID. **Does not** verify signatures or revocation. |
+| `verify` | Fetch, then perform full verification: issuer allowlist, signature, freshness, revocation. |
 
-### `didtool business-entity lookup`
+### `didtool trust lookup`
 
 ```
-didtool business-entity lookup --did <did-or-hash>
-                               [--trust-registry-url <url>]
-                               [--raw]
+didtool trust lookup --did <did-or-hash>
+                     [--trust-registry-url <url>]
+                     [--raw]
 ```
 
-Fetches the trust statements for a business entity DID from the SWIYU trust registry,
-decodes them, and displays the disclosed claims. **Display only** — the JWT signatures
-are not verified. For trust assertions, use `verify-trust`.
+Fetches the trust statements that the SWIYU trust registry holds for a DID, decodes
+them, and displays the disclosed claims. **Display only** — the JWT signatures are not
+verified. For trust assertions, use `verify`.
 
 #### Flags
 
 | Flag | Env var | Required | Default | Description |
 |---|---|---|---|---|
-| `--did <did-or-hash>` | — | yes | — | Subject DID. Full DID string or 12-character BLAKE3 hash; the hash form is resolved via the local key store and is convenient for looking up your *own* business entity during development. |
+| `--did <did-or-hash>` | — | yes | — | Subject DID. Full DID string or 12-character BLAKE3 hash; the hash form is resolved via the local key store and is convenient for looking up your *own* DID during development. |
 | `--trust-registry-url <url>` | `SWIYU_TRUST_REGISTRY_URL` | one of these | — | Base URL of the SWIYU trust registry (e.g. `https://trust-reg.trust-infra.swiyu-int.admin.ch`). Environment-specific (int / pre-prod / prod). At least one of the flag or the env var must be set. |
 | `--raw` | — | no | off | Emit the registry response (JSON array of SD-JWT VC strings) verbatim to stdout, pretty-printed. Useful for piping to `jq` or saving the original artifact. |
 
@@ -831,7 +832,7 @@ The split lets scripts distinguish "this entity is untrusted" (`1`) from "I coul
 (`2`). Pattern:
 
 ```sh
-if didtool business-entity lookup --did "$DID" >/dev/null 2>&1; then
+if didtool trust lookup --did "$DID" >/dev/null 2>&1; then
     echo "trusted"
 else
     case $? in
@@ -855,25 +856,25 @@ fi
 
 #### Out of scope for this version
 
-- Signature verification (deferred to `verify-trust`).
-- Revocation/status-list checks (deferred to `verify-trust`).
+- Signature verification (deferred to `verify`).
+- Revocation/status-list checks (deferred to `verify`).
 - Filtering by statement type — `identity` is hardcoded.
 - Pagination. Trust statements per entity are expected to be a small handful; no
   `?limit` / `?offset` handling.
 - Caching. Each invocation hits the registry.
 - Authentication. The endpoint is public; `SWIYU_ACCESS_TOKEN` is not used.
 
-### `didtool business-entity verify-trust`
+### `didtool trust verify`
 
 ```
-didtool business-entity verify-trust --did <did-or-hash>
-                                     [--trust-registry-url <url>]
-                                     [--trust-issuer <did>]
+didtool trust verify --did <did-or-hash>
+                     [--trust-registry-url <url>]
+                     [--trust-issuer <did>]
 ```
 
-Fetches trust statements for a business entity DID and runs full verification on each:
-issuer allowlist, signature, freshness, revocation. Reports a per-statement verdict and
-an overall trust verdict for the entity.
+Fetches trust statements for a DID and runs full verification on each: issuer
+allowlist, signature, freshness, revocation. Reports a per-statement verdict and an
+overall trust verdict for the DID.
 
 The overall verdict is **trusted** iff at least one statement passes all checks —
 matching the question "is this entity currently vouched-for by SWIYU right now?".
@@ -975,7 +976,7 @@ Markers:
 | `1` | Zero trust statements, or none of the statements pass all checks. **Semantically untrusted.** |
 | `2` | Operational error: bad config, network failure, malformed JWT, can't resolve issuer DID, can't reach status list, etc. Not a verdict — "we couldn't tell". |
 
-#### What `verify-trust` does internally
+#### What `verify` does internally
 
 1. Resolves `--did`, `--trust-registry-url`, `--trust-issuer` (flag or env).
 2. Fetches trust statements (same `lookup` code path).
@@ -996,7 +997,7 @@ by URL (one fetch each, regardless of how many statements reference them).
 
 #### Out of scope for this version
 
-- `--allow-expired` — for `verify-trust` the question being asked is "currently
+- `--allow-expired` — for `verify` the question being asked is "currently
   trusted?", so an expired statement is semantically untrusted by design. Add only if
   a debugging use case emerges.
 - A separate `--status-issuer` flag — empirically settled: SWIYU signs the status list
@@ -1048,20 +1049,20 @@ code. No stack traces or internal details are shown to the user.
 | Signature verification failed          | 1         | `error: signature verification failed`                         |
 | `iss` disagrees with expected DID      | 1         | `error: payload.iss '<iss>' does not match expected '<did>'`   |
 | `did:key` multikey not in `parameters.updateKeys` | 1 | `error: did:key multikey is not present in the latest entry's parameters.updateKeys of '<did>'` |
-| `business-entity lookup`: no statements (registry returned `[]` or `404`) | 1 | (none — empty stdout, message on stderr) |
-| `business-entity lookup`: `--trust-registry-url` and `SWIYU_TRUST_REGISTRY_URL` both unset | 2 | `error: --trust-registry-url or SWIYU_TRUST_REGISTRY_URL is required` |
-| `business-entity lookup`: trust registry HTTPS fetch failed | 2 | `error: cannot fetch '<url>': <reason>` |
-| `business-entity lookup`: trust registry returned non-`2xx`, non-`404` | 2 | `error: '<url>' returned <status>: <body>` |
-| `business-entity lookup`: response is not a JSON array of strings | 2 | `error: trust registry response is not a JSON array of JWT strings` |
-| `business-entity lookup`: trust statement is malformed | 2 | `error: trust statement #<n> is malformed: <reason>` |
-| `business-entity verify-trust`: `--trust-issuer` and `SWIYU_TRUST_ISSUER_DID` both unset | 2 | `error: --trust-issuer or SWIYU_TRUST_ISSUER_DID is required` |
-| `business-entity verify-trust`: cannot resolve issuer DID log | 2 | `error: cannot resolve issuer DID log: <reason>` |
-| `business-entity verify-trust`: status-list HTTPS fetch failed | 2 | `error: cannot fetch status list '<url>': <reason>` |
-| `business-entity verify-trust`: status-list JWT malformed | 2 | `error: status list at '<url>' is malformed: <reason>` |
-| `business-entity verify-trust`: status-list signature invalid | 2 | `error: status list signature verification failed` |
-| `business-entity verify-trust`: status-list bitstring decompression failed | 2 | `error: status list at '<url>' bitstring decompression failed: <reason>` |
-| `business-entity verify-trust`: `idx` out of range in bitstring | 2 | `error: status list idx <n> exceeds bitstring length` |
-| `business-entity verify-trust`: zero trusted statements | 1 | (none — verdict line on stdout) |
+| `trust lookup`: no statements (registry returned `[]` or `404`) | 1 | (none — empty stdout, message on stderr) |
+| `trust lookup`: `--trust-registry-url` and `SWIYU_TRUST_REGISTRY_URL` both unset | 2 | `error: --trust-registry-url or SWIYU_TRUST_REGISTRY_URL is required` |
+| `trust lookup`: trust registry HTTPS fetch failed | 2 | `error: cannot fetch '<url>': <reason>` |
+| `trust lookup`: trust registry returned non-`2xx`, non-`404` | 2 | `error: '<url>' returned <status>: <body>` |
+| `trust lookup`: response is not a JSON array of strings | 2 | `error: trust registry response is not a JSON array of JWT strings` |
+| `trust lookup`: trust statement is malformed | 2 | `error: trust statement #<n> is malformed: <reason>` |
+| `trust verify`: `--trust-issuer` and `SWIYU_TRUST_ISSUER_DID` both unset | 2 | `error: --trust-issuer or SWIYU_TRUST_ISSUER_DID is required` |
+| `trust verify`: cannot resolve issuer DID log | 2 | `error: cannot resolve issuer DID log: <reason>` |
+| `trust verify`: status-list HTTPS fetch failed | 2 | `error: cannot fetch status list '<url>': <reason>` |
+| `trust verify`: status-list JWT malformed | 2 | `error: status list at '<url>' is malformed: <reason>` |
+| `trust verify`: status-list signature invalid | 2 | `error: status list signature verification failed` |
+| `trust verify`: status-list bitstring decompression failed | 2 | `error: status list at '<url>' bitstring decompression failed: <reason>` |
+| `trust verify`: `idx` out of range in bitstring | 2 | `error: status list idx <n> exceeds bitstring length` |
+| `trust verify`: zero trusted statements | 1 | (none — verdict line on stdout) |
 | JWT expired                            | 1         | `error: JWT expired at <iso8601> (<delta> ago)`                |
 | `iat` further than 60s in the future   | 1         | `error: JWT has iat in the future (<delta> ahead)`             |
 | `--nonce` mismatch                     | 1         | `error: payload.nonce '<actual>' does not match expected '<expected>'` |
