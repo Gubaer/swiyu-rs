@@ -160,6 +160,60 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/issuers/{issuer_id}/deactivate:
+    post:
+      summary: Submit a deactivate-issuer task
+      description: |
+        Queues a `deactivate_issuer` operation task that runs
+        asynchronously. The saga signs and publishes a deactivation
+        DIDLog entry to the SWIYU Identifier Registry, flips the
+        local issuer row to `deactivated`, and bulk-cancels every
+        still-pending credential offer for that issuer (already-
+        issued, already-cancelled, and already-expired offers are
+        left alone).
+
+        **Idempotent on resubmit.** Three response shapes:
+
+        - The issuer is `active` and no `deactivate_issuer` task is
+          in flight: `201 Created`, body carries the new `task_id`.
+        - The issuer is `active` and a `deactivate_issuer` task for
+          it is already `pending` or `in_progress`: `200 OK`, body
+          carries the *existing* `task_id`. A duplicate submission
+          is treated as a poll-handle request, not an error.
+        - The issuer is already `deactivated`: `200 OK`, body
+          carries the completed task's `task_id` if findable, or
+          `task_id: null` for issuers deactivated by a path that
+          left no task row (e.g. seeded fixtures).
+
+        The body is empty by convention. Clients may send no body
+        at all, an empty body, or `{}`; all three are accepted.
+        Tenant scoping comes from the bearer token.
+      operationId: deactivateIssuer
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+      responses:
+        '200':
+          description: |
+            Idempotent re-submission. Either a `deactivate_issuer`
+            task is already in flight, or the issuer is already
+            `deactivated`. `task_id` is the existing task's id (or
+            `null` for already-deactivated issuers without a
+            traceable task row).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeactivateIssuerResponse'
+        '201':
+          description: Task accepted; saga running asynchronously.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeactivateIssuerResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/v1/operation-tasks/{task_id}:
     get:
       summary: Poll an operation task
@@ -446,6 +500,25 @@ components:
             `GET /api/v1/issuers/{issuer_id}` once the saga completes.
           example: issuer_9hXq2vRtL8pK7f
 
+    DeactivateIssuerResponse:
+      type: object
+      required: [task_id, issuer_id]
+      properties:
+        task_id:
+          type: [string, "null"]
+          description: |
+            Prefixed task identifier. `null` only when the issuer is
+            already `deactivated` and no `deactivate_issuer` task
+            row exists (e.g. seeded fixture). Otherwise carries
+            either the freshly inserted task (HTTP 201) or the
+            existing in-flight or completed task (HTTP 200).
+          example: task_9hXq2vRtL8pK7f
+        issuer_id:
+          type: string
+          description: |
+            Echo of the `issuer_id` path parameter, prefixed.
+          example: issuer_9hXq2vRtL8pK7f
+
     GetIssuerResponse:
       type: object
       required: [id, did, state, description, display_name]
@@ -503,11 +576,10 @@ components:
           example: task_9hXq2vRtL8pK7f
         task_type:
           type: string
-          enum: [create_issuer]
+          enum: [create_issuer, deactivate_issuer]
           description: |
-            The kind of operation. Currently, only `create_issuer`
-            is supported; `rotate_keys` and `deactivate_issuer`
-            follow in subsequent slices.
+            The kind of operation. `rotate_keys` follows in a
+            subsequent slice.
         state:
           type: string
           enum: [pending, in_progress, completed, failed]
@@ -524,6 +596,9 @@ components:
             the worker picks it up). For `create_issuer`, observed
             values are `allocate_did`, `generate_keys`,
             `build_initial_log`, `publish_log`, and `persist_issuer`.
+            For `deactivate_issuer`, observed values are
+            `build_deactivation_log`, `publish_log`, and
+            `mark_deactivated`.
         attempts:
           type: integer
           minimum: 0
