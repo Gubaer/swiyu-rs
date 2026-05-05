@@ -214,6 +214,74 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/issuers/{issuer_id}/rotate-keys:
+    post:
+      summary: Submit a rotate-keys task
+      description: |
+        Queues a `rotate_keys` operation task that runs
+        asynchronously. The saga generates fresh key pairs for the
+        rotated roles via the SigningEngine, builds a DIDLog
+        rotation entry whose `updateKeys` advertises the new
+        `Authorized` key and whose embedded DID document carries
+        the new `Authentication` and `Assertion` verification
+        methods, signs the entry with the **outgoing** `Authorized`
+        private key (even when `Authorized` is itself rotated),
+        publishes the entry to the SWIYU Identifier Registry, and
+        atomically swaps the issuer row's three key columns.
+        Non-rotated roles keep their existing key pair on the
+        local row; their public keys still appear in the new
+        DIDLog entry.
+
+        **Repeatable.** Unlike `deactivate`, rotation has no
+        terminal "already done" semantics — a fresh submission
+        after a previous rotation completed lands a new task.
+
+        **Idempotent on resubmit while in flight.** Response
+        shapes:
+
+        - The issuer is `active` and no `rotate_keys` task is in
+          flight: `201 Created`, body carries the new `task_id`.
+        - The issuer is `active` and a `rotate_keys` task for it
+          is already `pending` or `in_progress`: `200 OK`, body
+          carries the *existing* `task_id`. A duplicate submission
+          is treated as a poll-handle request.
+        - The issuer is already `deactivated`: `409 Conflict`.
+          Rotation makes no sense on a deactivated issuer; the
+          request is rejected rather than treated as already-
+          rotated.
+
+        Tenant scoping comes from the bearer token.
+      operationId: rotateKeys
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateKeysSubmission'
+      responses:
+        '200':
+          description: |
+            Idempotent re-submission of an already-in-flight
+            rotation. `task_id` is the existing task's id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotateKeysResponse'
+        '201':
+          description: Task accepted; saga running asynchronously.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotateKeysResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /api/v1/operation-tasks/{task_id}:
     get:
       summary: Poll an operation task
@@ -519,6 +587,47 @@ components:
             Echo of the `issuer_id` path parameter, prefixed.
           example: issuer_9hXq2vRtL8pK7f
 
+    RotateKeysSubmission:
+      type: object
+      additionalProperties: false
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [authorized, authentication, assertion, all]
+          description: |
+            Non-empty subset of `{authorized, authentication,
+            assertion}` to rotate, plus the sentinel `"all"` as
+            shorthand for the full three-role set. `"all"` may
+            appear *only* when alone; mixing it with concrete role
+            names is rejected with `invalid_input` (server-side a
+            client bug). Duplicates are tolerated and de-duplicated.
+            Server-side, `["all"]` expands to the explicit
+            three-role set before the saga starts; the persisted
+            task input never carries the sentinel.
+          example: ["authorized"]
+
+    RotateKeysResponse:
+      type: object
+      required: [task_id, issuer_id]
+      properties:
+        task_id:
+          type: string
+          description: |
+            Prefixed task identifier. Always present — every
+            rotate-keys submission produces a task. Carries either
+            the freshly inserted task (HTTP 201) or the existing
+            in-flight task (HTTP 200, poll-handle case).
+          example: task_9hXq2vRtL8pK7f
+        issuer_id:
+          type: string
+          description: |
+            Echo of the `issuer_id` path parameter, prefixed.
+          example: issuer_9hXq2vRtL8pK7f
+
     GetIssuerResponse:
       type: object
       required: [id, did, state, description, display_name]
@@ -576,10 +685,9 @@ components:
           example: task_9hXq2vRtL8pK7f
         task_type:
           type: string
-          enum: [create_issuer, deactivate_issuer]
+          enum: [create_issuer, deactivate_issuer, rotate_keys]
           description: |
-            The kind of operation. `rotate_keys` follows in a
-            subsequent slice.
+            The kind of operation.
         state:
           type: string
           enum: [pending, in_progress, completed, failed]
@@ -598,7 +706,9 @@ components:
             `build_initial_log`, `publish_log`, and `persist_issuer`.
             For `deactivate_issuer`, observed values are
             `build_deactivation_log`, `publish_log`, and
-            `mark_deactivated`.
+            `mark_deactivated`. For `rotate_keys`, observed values
+            are `generate_new_keys`, `build_rotation_log`,
+            `publish_log`, and `swap_keys`.
         attempts:
           type: integer
           minimum: 0
