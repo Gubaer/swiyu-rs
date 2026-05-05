@@ -80,7 +80,7 @@ impl DIDJwk {
     /// # Example
     ///
     /// ```
-    /// use swiyu_core::did_jwk::DIDJwk;
+    /// use swiyu_core::didjwk::DIDJwk;
     ///
     /// let did = DIDJwk::parse(
     ///     "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91\
@@ -153,7 +153,7 @@ impl DIDJwk {
     /// # Example
     ///
     /// ```
-    /// use swiyu_core::did_jwk::DIDJwk;
+    /// use swiyu_core::didjwk::DIDJwk;
     /// use swiyu_core::diddoc::PublicKeyJWK;
     ///
     /// let jwk = PublicKeyJWK::new_okp(
