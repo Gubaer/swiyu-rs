@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::engine::general_purpose::{
+    STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD,
+};
 use p256::PublicKey as P256PublicKey;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::pkcs8::DecodePublicKey;
@@ -11,7 +14,9 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, SigningEngineError};
+use super::{
+    GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngineError,
+};
 
 const VAULT_TYPE_ED25519: &str = "ed25519";
 const VAULT_TYPE_ECDSA_P256: &str = "ecdsa-p256";
@@ -19,6 +24,11 @@ const VAULT_TOKEN_HEADER: &str = "X-Vault-Token";
 // Vault stores every signing key we create at version 1; we never call rotate
 // (rotation creates a brand-new Vault key under a new UUID instead).
 const VAULT_KEY_VERSION: &str = "1";
+const VAULT_SIGNATURE_PREFIX: &str = "vault:v1:";
+// Body fragment Vault returns (HTTP 400) when sign or delete is called for a
+// key that does not exist. The integration tests guard against silent wording
+// changes; substring match is what Vault gives us.
+const VAULT_SIGN_KEY_NOT_FOUND: &str = "signing key not found";
 
 /// Configuration for the Vault Transit signing backend.
 ///
@@ -71,17 +81,22 @@ pub struct VaultSigningEngine {
     /// Built once in `new` with the configured timeout; reused across
     /// every request so reqwest can pool connections.
     client: Client,
-    /// Base URL of the Vault server. Per-request URLs are assembled by
-    /// `key_url`, which appends `/v1/{transit_path}/...` to this base.
+    /// Base URL of the Vault server. Per-request URLs are built by
+    /// appending `/v1/{transit_path}/...` to this base.
     address: Url,
     /// Vault auth token, sent verbatim in the `X-Vault-Token` header on
     /// every request. `SecretString` keeps it from leaking through
     /// `Debug` / `Display`.
     token: SecretString,
     /// Mount path of the Transit secrets engine (e.g. `transit`). Stored
-    /// verbatim from the config; `key_url` trims surrounding slashes at
-    /// request time.
+    /// verbatim from the config; URL builders trim surrounding slashes
+    /// at request time.
     transit_path: String,
+    /// Caches the algorithm of every `KeyPairId` the engine has read or
+    /// created, so `sign` can craft the right request shape without an
+    /// extra Vault round-trip. Best-effort: `lookup_algorithm` falls
+    /// through to a `GET` on miss.
+    algorithm_cache: RwLock<HashMap<KeyPairId, KeyAlgorithm>>,
 }
 
 impl VaultSigningEngine {
@@ -98,6 +113,7 @@ impl VaultSigningEngine {
             address: config.address,
             token: config.token,
             transit_path: config.transit_path,
+            algorithm_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -123,6 +139,56 @@ impl VaultSigningEngine {
 
     pub async fn get_public_key(&self, id: &KeyPairId) -> Result<RawPublicKey, SigningEngineError> {
         self.fetch_public_key(id).await
+    }
+
+    pub async fn sign(
+        &self,
+        id: &KeyPairId,
+        input: &[u8],
+    ) -> Result<Signature, SigningEngineError> {
+        let algorithm = self.lookup_algorithm(id).await?;
+        if algorithm == KeyAlgorithm::EcdsaP256 && input.len() != 32 {
+            return Err(SigningEngineError::InvalidInputLength {
+                expected: 32,
+                actual: input.len(),
+            });
+        }
+        let url = self.sign_url(id)?;
+        let body = build_sign_request(input, algorithm);
+        let response = self
+            .client
+            .post(url)
+            .header(VAULT_TOKEN_HEADER, self.token.expose_secret())
+            .json(&body)
+            .send()
+            .await
+            .map_err(reqwest_to_backend)?;
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(map_error(status, &body_text, *id, Op::Sign));
+        }
+        let response_body: SignResponse = response.json().await.map_err(reqwest_to_backend)?;
+        let bytes = parse_vault_signature(&response_body.data.signature, algorithm)?;
+        Ok(Signature { algorithm, bytes })
+    }
+
+    async fn lookup_algorithm(&self, id: &KeyPairId) -> Result<KeyAlgorithm, SigningEngineError> {
+        if let Some(algorithm) = self.cache_get(id) {
+            return Ok(algorithm);
+        }
+        let public_key = self.fetch_public_key(id).await?;
+        Ok(public_key.algorithm)
+    }
+
+    fn cache_get(&self, id: &KeyPairId) -> Option<KeyAlgorithm> {
+        // The lock is poisoned only if a writer panicked while holding it;
+        // `cache_set` does nothing but a HashMap insert, so this is unreachable.
+        self.algorithm_cache.read().unwrap().get(id).copied()
+    }
+
+    fn cache_set(&self, id: KeyPairId, algorithm: KeyAlgorithm) {
+        self.algorithm_cache.write().unwrap().insert(id, algorithm);
     }
 
     async fn create_key(
@@ -160,14 +226,9 @@ impl VaultSigningEngine {
             .await
             .map_err(reqwest_to_backend)?;
         let status = response.status();
-        if status == StatusCode::NOT_FOUND {
-            return Err(SigningEngineError::KeyNotFound(*id));
-        }
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(SigningEngineError::Backend(
-                format!("vault get-key {status}: {body}").into(),
-            ));
+            return Err(map_error(status, &body, *id, Op::Get));
         }
         let response_body: KeyReadResponse = response.json().await.map_err(reqwest_to_backend)?;
         let algorithm = parse_vault_algorithm(&response_body.data.type_)?;
@@ -184,16 +245,25 @@ impl VaultSigningEngine {
             KeyAlgorithm::Ed25519 => parse_ed25519_public_key(&version.public_key)?,
             KeyAlgorithm::EcdsaP256 => parse_ecdsa_p256_public_key_pem(&version.public_key)?,
         };
+        self.cache_set(*id, algorithm);
         Ok(RawPublicKey { algorithm, bytes })
     }
 
     fn key_url(&self, id: &KeyPairId) -> Result<Url, SigningEngineError> {
+        self.transit_url("keys", id)
+    }
+
+    fn sign_url(&self, id: &KeyPairId) -> Result<Url, SigningEngineError> {
+        self.transit_url("sign", id)
+    }
+
+    fn transit_url(&self, kind: &str, id: &KeyPairId) -> Result<Url, SigningEngineError> {
         // `Url::join` re-bases relative paths and would silently drop a
         // configured base prefix (e.g. `http://host/proxy`) when the joined
         // string starts with `/`. Build the full string explicitly.
         let base = self.address.as_str().trim_end_matches('/');
         let mount = self.transit_path.trim_matches('/');
-        let url_str = format!("{base}/v1/{mount}/keys/{id}");
+        let url_str = format!("{base}/v1/{mount}/{kind}/{id}");
         Url::parse(&url_str)
             .map_err(|e| SigningEngineError::Backend(format!("vault url parse: {e}").into()))
     }
@@ -214,6 +284,75 @@ struct KeyReadData {
 #[derive(Deserialize)]
 struct KeyVersion {
     public_key: String,
+}
+
+#[derive(Deserialize)]
+struct SignResponse {
+    data: SignData,
+}
+
+#[derive(Deserialize)]
+struct SignData {
+    signature: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Op {
+    Get,
+    Sign,
+}
+
+// Concentrates the status-to-error mapping for operations that have a
+// "key missing" failure mode. The delete path's "already gone" body
+// substrings are handled at the call site (see `delete_keypair`), not
+// here, since they map to `Ok(())`, not an error.
+fn map_error(status: StatusCode, body: &str, id: KeyPairId, op: Op) -> SigningEngineError {
+    match (op, status.as_u16()) {
+        (Op::Get, 404) => SigningEngineError::KeyNotFound(id),
+        (Op::Sign, 400) if body.contains(VAULT_SIGN_KEY_NOT_FOUND) => {
+            SigningEngineError::KeyNotFound(id)
+        }
+        _ => SigningEngineError::Backend(format!("vault {status}: {body}").into()),
+    }
+}
+
+fn build_sign_request(input: &[u8], algorithm: KeyAlgorithm) -> serde_json::Value {
+    let input_b64 = BASE64_STANDARD.encode(input);
+    match algorithm {
+        KeyAlgorithm::Ed25519 => json!({ "input": input_b64 }),
+        KeyAlgorithm::EcdsaP256 => json!({
+            "input": input_b64,
+            "prehashed": true,
+            "hash_algorithm": "sha2-256",
+            "marshaling_algorithm": "jws",
+        }),
+    }
+}
+
+// Decodes Vault's `vault:v1:<base64>` signature envelope. Ed25519 uses
+// standard base64; ECDSA P-256 with `marshaling_algorithm=jws` uses
+// base64url-no-padding. Both algorithms produce 64 raw bytes — Ed25519
+// signature, or `r ‖ s` for ECDSA.
+fn parse_vault_signature(
+    raw: &str,
+    algorithm: KeyAlgorithm,
+) -> Result<Vec<u8>, SigningEngineError> {
+    let body = raw.strip_prefix(VAULT_SIGNATURE_PREFIX).ok_or_else(|| {
+        SigningEngineError::Backend(
+            format!("vault signature missing `{VAULT_SIGNATURE_PREFIX}` prefix: {raw}").into(),
+        )
+    })?;
+    let bytes = match algorithm {
+        KeyAlgorithm::Ed25519 => BASE64_STANDARD.decode(body),
+        KeyAlgorithm::EcdsaP256 => BASE64_URL_SAFE_NO_PAD.decode(body),
+    }
+    .map_err(|e| SigningEngineError::Backend(format!("vault signature base64: {e}").into()))?;
+    if bytes.len() != 64 {
+        return Err(SigningEngineError::Backend(
+            format!("vault signature has unexpected length: {}", bytes.len()).into(),
+        ));
+    }
+    Ok(bytes)
 }
 
 fn reqwest_to_backend(error: reqwest::Error) -> SigningEngineError {
@@ -275,10 +414,21 @@ mod tests {
         include_str!("../../../tests/fixtures/vault/get_key_ecdsa_p256.json");
     const GET_KEY_NOT_FOUND_BODY: &str =
         include_str!("../../../tests/fixtures/vault/get_key_not_found.json");
+    const SIGN_ED25519_BODY: &str = include_str!("../../../tests/fixtures/vault/sign_ed25519.json");
+    const SIGN_ECDSA_BODY: &str =
+        include_str!("../../../tests/fixtures/vault/sign_ecdsa_p256.json");
+    const SIGN_KEY_NOT_FOUND_BODY: &str =
+        include_str!("../../../tests/fixtures/vault/sign_key_not_found.json");
     const SIGN_UNAUTHORIZED_BODY: &str =
         include_str!("../../../tests/fixtures/vault/sign_unauthorized.json");
 
+    // Signature strings extracted from the fixtures above; used by the
+    // pure-helper tests to avoid re-parsing the JSON envelopes.
+    const ED25519_SIGNATURE: &str = "vault:v1:IlKcyf5fLJ19yCrtmtUebOjeM4w+XTzkYP/LasXe2kxy1o08kqR8w/scCS/sEbhX+/h94OHgMwkqII734rRbBA==";
+    const ECDSA_SIGNATURE: &str = "vault:v1:nswySSQhbnd95shhno23D43A4zvz9g14fyrC3n-5rRLEe44AtFKkQA1T8jMh9ivZEIl48h_YrORix1w_PEHhWA";
+
     const KEYS_PATH_REGEX: &str = r"^/v1/transit/keys/[^/]+$";
+    const SIGN_PATH_REGEX: &str = r"^/v1/transit/sign/[^/]+$";
 
     fn engine_for(server: &MockServer) -> VaultSigningEngine {
         VaultSigningEngine::new(VaultSigningEngineConfig {
@@ -469,5 +619,313 @@ mod tests {
             VaultSigningEngineConfig::DEFAULT_REQUEST_TIMEOUT,
             Duration::from_secs(5)
         );
+    }
+
+    #[test]
+    fn parse_vault_signature_decodes_ed25519_to_64_bytes() {
+        let bytes = parse_vault_signature(ED25519_SIGNATURE, KeyAlgorithm::Ed25519).unwrap();
+        assert_eq!(bytes.len(), 64);
+    }
+
+    #[test]
+    fn parse_vault_signature_decodes_ecdsa_p256_to_64_bytes() {
+        let bytes = parse_vault_signature(ECDSA_SIGNATURE, KeyAlgorithm::EcdsaP256).unwrap();
+        assert_eq!(bytes.len(), 64);
+    }
+
+    #[test]
+    fn parse_vault_signature_rejects_missing_prefix() {
+        let raw = ED25519_SIGNATURE
+            .strip_prefix(VAULT_SIGNATURE_PREFIX)
+            .unwrap();
+        let err = parse_vault_signature(raw, KeyAlgorithm::Ed25519).unwrap_err();
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[test]
+    fn parse_vault_signature_rejects_wrong_length() {
+        // 5-byte payload, not 64.
+        let err = parse_vault_signature("vault:v1:aGVsbG8=", KeyAlgorithm::Ed25519).unwrap_err();
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[test]
+    fn parse_vault_signature_rejects_wrong_base64_flavor_for_ecdsa() {
+        // Standard base64 (with `+`/`/`/`=`) for an ECDSA signature should
+        // fail under base64url-no-pad decoding.
+        let err = parse_vault_signature(ED25519_SIGNATURE, KeyAlgorithm::EcdsaP256).unwrap_err();
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[test]
+    fn build_sign_request_for_ed25519_only_has_input() {
+        let request = build_sign_request(b"hello", KeyAlgorithm::Ed25519);
+        assert_eq!(request["input"], BASE64_STANDARD.encode(b"hello"));
+        assert!(request.get("prehashed").is_none());
+        assert!(request.get("hash_algorithm").is_none());
+        assert!(request.get("marshaling_algorithm").is_none());
+    }
+
+    #[test]
+    fn build_sign_request_for_ecdsa_p256_has_jws_marshaling() {
+        let digest = [0xa5_u8; 32];
+        let request = build_sign_request(&digest, KeyAlgorithm::EcdsaP256);
+        assert_eq!(request["input"], BASE64_STANDARD.encode(digest));
+        assert_eq!(request["prehashed"], true);
+        assert_eq!(request["hash_algorithm"], "sha2-256");
+        assert_eq!(request["marshaling_algorithm"], "jws");
+    }
+
+    #[test]
+    fn map_error_get_404_returns_key_not_found() {
+        let id = KeyPairId::generate();
+        let err = map_error(StatusCode::NOT_FOUND, r#"{"errors":[]}"#, id, Op::Get);
+        match err {
+            SigningEngineError::KeyNotFound(returned) => assert_eq!(returned, id),
+            other => panic!("expected KeyNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_error_sign_400_signing_key_not_found_returns_key_not_found() {
+        let id = KeyPairId::generate();
+        let err = map_error(
+            StatusCode::BAD_REQUEST,
+            SIGN_KEY_NOT_FOUND_BODY,
+            id,
+            Op::Sign,
+        );
+        match err {
+            SigningEngineError::KeyNotFound(returned) => assert_eq!(returned, id),
+            other => panic!("expected KeyNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_error_sign_400_unrelated_body_returns_backend() {
+        let id = KeyPairId::generate();
+        let err = map_error(
+            StatusCode::BAD_REQUEST,
+            r#"{"errors":["something else"]}"#,
+            id,
+            Op::Sign,
+        );
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[test]
+    fn map_error_403_returns_backend() {
+        let id = KeyPairId::generate();
+        let err = map_error(StatusCode::FORBIDDEN, "perm denied", id, Op::Get);
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[tokio::test]
+    async fn sign_ed25519_after_warmup_returns_64_bytes() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ED25519_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(SIGN_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(SIGN_ED25519_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        // Warm the cache so `sign` doesn't have to fetch.
+        let _ = engine.get_public_key(&id).await.unwrap();
+        let signature = engine.sign(&id, b"hello swiyu").await.unwrap();
+        assert_eq!(signature.algorithm, KeyAlgorithm::Ed25519);
+        assert_eq!(signature.bytes.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn sign_ecdsa_p256_with_32_byte_digest_returns_64_bytes() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ECDSA_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(SIGN_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(SIGN_ECDSA_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        let _ = engine.get_public_key(&id).await.unwrap();
+        let digest = [0xa5_u8; 32];
+        let signature = engine.sign(&id, &digest).await.unwrap();
+        assert_eq!(signature.algorithm, KeyAlgorithm::EcdsaP256);
+        assert_eq!(signature.bytes.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn sign_ecdsa_p256_rejects_31_byte_input() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ECDSA_BODY))
+            .mount(&server)
+            .await;
+        // Sign endpoint should never be hit — the length check fires first.
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        let _ = engine.get_public_key(&id).await.unwrap();
+        let err = engine.sign(&id, &[0x5a_u8; 31]).await.unwrap_err();
+        match err {
+            SigningEngineError::InvalidInputLength { expected, actual } => {
+                assert_eq!(expected, 32);
+                assert_eq!(actual, 31);
+            }
+            other => panic!("expected InvalidInputLength, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sign_ecdsa_p256_rejects_64_byte_input() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ECDSA_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        let _ = engine.get_public_key(&id).await.unwrap();
+        let err = engine.sign(&id, &[0x3c_u8; 64]).await.unwrap_err();
+        assert!(matches!(
+            err,
+            SigningEngineError::InvalidInputLength {
+                expected: 32,
+                actual: 64,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn sign_unknown_id_via_get_returns_key_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(404).set_body_string(GET_KEY_NOT_FOUND_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        let err = engine.sign(&id, b"any").await.unwrap_err();
+        match err {
+            SigningEngineError::KeyNotFound(returned) => assert_eq!(returned, id),
+            other => panic!("expected KeyNotFound, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sign_400_signing_key_not_found_returns_key_not_found() {
+        // Cache is warm with Ed25519 (vault deletes the key behind our back),
+        // sign POST returns 400 with the discriminating body string.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ED25519_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(SIGN_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(400).set_body_string(SIGN_KEY_NOT_FOUND_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        let _ = engine.get_public_key(&id).await.unwrap();
+        let err = engine.sign(&id, b"any").await.unwrap_err();
+        match err {
+            SigningEngineError::KeyNotFound(returned) => assert_eq!(returned, id),
+            other => panic!("expected KeyNotFound, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sign_unauthorized_returns_backend() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ED25519_BODY))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(SIGN_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(403).set_body_string(SIGN_UNAUTHORIZED_BODY))
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        let _ = engine.get_public_key(&id).await.unwrap();
+        let err = engine.sign(&id, b"any").await.unwrap_err();
+        assert!(matches!(err, SigningEngineError::Backend(_)));
+    }
+
+    #[tokio::test]
+    async fn sign_caches_algorithm_after_first_lookup() {
+        let server = MockServer::start().await;
+        // Exactly one GET should fire across two signs — the second reuses
+        // the cached algorithm. `MockServer::drop` panics on expectation
+        // mismatch, so the assertion is implicit.
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ED25519_BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(SIGN_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(SIGN_ED25519_BODY))
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let id = KeyPairId::generate();
+        let _ = engine.sign(&id, b"first").await.unwrap();
+        let _ = engine.sign(&id, b"second").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn generate_keypair_warms_algorithm_cache() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(CREATE_KEY_ED25519_BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // generate_keypair already triggered one GET; sign should hit cache.
+        Mock::given(method("GET"))
+            .and(path_regex(KEYS_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(GET_KEY_ED25519_BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(SIGN_PATH_REGEX))
+            .respond_with(ResponseTemplate::new(200).set_body_string(SIGN_ED25519_BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let engine = engine_for(&server);
+        let pair = engine.generate_keypair(KeyRole::Authorized).await.unwrap();
+        let _ = engine.sign(&pair.id, b"hello swiyu").await.unwrap();
     }
 }
