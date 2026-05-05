@@ -1,4 +1,4 @@
-pub mod build;
+pub mod entry_edits;
 pub mod scid;
 pub mod verify;
 
