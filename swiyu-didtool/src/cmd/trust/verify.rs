@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
@@ -281,7 +282,7 @@ fn load_issuer_doc<'a>(
     cache: &'a mut HashMap<String, DIDDoc>,
 ) -> Result<&'a DIDDoc, VerifyError> {
     if !cache.contains_key(iss_did) {
-        let did = DID::parse(iss_did).map_err(|e| VerifyError::IssuerResolution {
+        let did = DID::from_str(iss_did).map_err(|e| VerifyError::IssuerResolution {
             iss: iss_did.to_string(),
             reason: e.to_string(),
         })?;

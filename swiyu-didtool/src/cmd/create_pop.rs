@@ -173,12 +173,14 @@ fn write_output(jwt: &str, out: Option<&Path>, force: bool) -> Result<(), Create
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use ed25519_dalek::Verifier as _;
     use swiyu_core::did::DID;
 
     fn test_did() -> DID {
-        DID::parse("did:webvh:abc123:example.com").unwrap()
+        DID::from_str("did:webvh:abc123:example.com").unwrap()
     }
 
     fn make_store() -> (tempfile::TempDir, KeyStore, KeyStoreEntry) {

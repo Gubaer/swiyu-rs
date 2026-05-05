@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use serde_json::{Value, json};
 use tracing::debug;
@@ -118,7 +119,7 @@ pub fn cmd_update(store: &KeyStore, args: UpdateArgs) -> Result<(), UpdateError>
 
     // --- resolve DID + previous key store entry ---
     let did_str = current_did(&loaded.log).ok_or(UpdateError::DidNotInLog)?;
-    let did = DID::parse(&did_str).map_err(|e| UpdateError::Did(did_str.clone(), e))?;
+    let did = DID::from_str(&did_str).map_err(|e| UpdateError::Did(did_str.clone(), e))?;
     let entry = store
         .lookup(&did)?
         .ok_or_else(|| UpdateError::KeyStoreMiss(did_str.clone()))?;

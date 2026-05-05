@@ -8,6 +8,8 @@ pub mod trust;
 pub mod update;
 pub mod verify_pop;
 
+use std::str::FromStr;
+
 use chrono::{DateTime, SecondsFormat};
 use tracing::debug;
 
@@ -76,10 +78,10 @@ pub(crate) fn resolve_did(store: &KeyStore, target: &str) -> Result<DID, Resolve
         let entry = store
             .lookup_by_hash(target)?
             .ok_or_else(|| ResolveError::NotFound(target.to_string()))?;
-        Ok(DID::parse(entry.did())?)
+        Ok(DID::from_str(entry.did())?)
     } else {
         debug!("resolving '{target}' as DID string");
-        Ok(DID::parse(target)?)
+        Ok(DID::from_str(target)?)
     }
 }
 
@@ -95,7 +97,7 @@ pub(crate) fn resolve_entry(store: &KeyStore, target: &str) -> Result<KeyStoreEn
             .ok_or_else(|| ResolveError::NotFound(target.to_string()))
     } else {
         debug!("resolving '{target}' as DID string");
-        let did = DID::parse(target)?;
+        let did = DID::from_str(target)?;
         store
             .lookup(&did)?
             .ok_or_else(|| ResolveError::NotFound(target.to_string()))

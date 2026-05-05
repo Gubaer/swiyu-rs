@@ -120,49 +120,6 @@ impl DID {
         validate_and_build(Method::WebVh, scid, domain, path)
     }
 
-    pub fn parse(did: &str) -> DIDResult<Self> {
-        let (method, rest) = if let Some(r) = did.strip_prefix("did:tdw:") {
-            (Method::Tdw, r)
-        } else if let Some(r) = did.strip_prefix("did:webvh:") {
-            (Method::WebVh, r)
-        } else {
-            return Err(DIDError::MissingPrefix);
-        };
-
-        // Format after stripping prefix: {SCID}:{domain}[:{path_segments}]
-        // splitn(3) keeps the full path (including any embedded colons) in the third slot.
-        let mut parts = rest.splitn(3, ':');
-
-        let scid_raw = parts.next().ok_or(DIDError::MissingSCID)?;
-        let scid = if scid_raw.is_empty() {
-            None
-        } else {
-            Some(scid_raw.to_string())
-        };
-
-        let domain_str = parts
-            .next()
-            .filter(|s| !s.is_empty())
-            .ok_or(DIDError::MissingDomain)?;
-
-        if !is_valid_domain(domain_str) {
-            return Err(DIDError::InvalidDomain);
-        }
-
-        let path = match parts.next() {
-            Some(p) if !is_valid_path(p) => return Err(DIDError::InvalidPath),
-            Some(p) => Some(p.to_string()),
-            None => None,
-        };
-
-        Ok(Self {
-            method,
-            scid,
-            domain: domain_str.to_string(),
-            path,
-        })
-    }
-
     pub fn method(&self) -> &Method {
         &self.method
     }
@@ -232,7 +189,46 @@ impl FromStr for DID {
     type Err = DIDError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        DID::parse(s)
+        let (method, rest) = if let Some(r) = s.strip_prefix("did:tdw:") {
+            (Method::Tdw, r)
+        } else if let Some(r) = s.strip_prefix("did:webvh:") {
+            (Method::WebVh, r)
+        } else {
+            return Err(DIDError::MissingPrefix);
+        };
+
+        // Format after stripping prefix: {SCID}:{domain}[:{path_segments}]
+        // splitn(3) keeps the full path (including any embedded colons) in the third slot.
+        let mut parts = rest.splitn(3, ':');
+
+        let scid_raw = parts.next().ok_or(DIDError::MissingSCID)?;
+        let scid = if scid_raw.is_empty() {
+            None
+        } else {
+            Some(scid_raw.to_string())
+        };
+
+        let domain_str = parts
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or(DIDError::MissingDomain)?;
+
+        if !is_valid_domain(domain_str) {
+            return Err(DIDError::InvalidDomain);
+        }
+
+        let path = match parts.next() {
+            Some(p) if !is_valid_path(p) => return Err(DIDError::InvalidPath),
+            Some(p) => Some(p.to_string()),
+            None => None,
+        };
+
+        Ok(Self {
+            method,
+            scid,
+            domain: domain_str.to_string(),
+            path,
+        })
     }
 }
 
@@ -244,7 +240,7 @@ mod tests {
 
     #[test]
     fn tdw_parse_simple() {
-        let did = DID::parse("did:tdw:abc123:example.com").unwrap();
+        let did = DID::from_str("did:tdw:abc123:example.com").unwrap();
         assert_eq!(did.method(), &Method::Tdw);
         assert_eq!(did.scid(), Some("abc123"));
         assert_eq!(did.domain(), "example.com");
@@ -253,7 +249,7 @@ mod tests {
 
     #[test]
     fn tdw_parse_with_path() {
-        let did = DID::parse("did:tdw:abc123:example.com:dids:issuer").unwrap();
+        let did = DID::from_str("did:tdw:abc123:example.com:dids:issuer").unwrap();
         assert_eq!(did.method(), &Method::Tdw);
         assert_eq!(did.scid(), Some("abc123"));
         assert_eq!(did.domain(), "example.com");
@@ -263,7 +259,7 @@ mod tests {
     #[test]
     fn tdw_parse_with_encoded_port() {
         // Ports are percent-encoded in the domain segment per the did:tdw spec.
-        let did = DID::parse("did:tdw:abc123:example.com%3A3000:path").unwrap();
+        let did = DID::from_str("did:tdw:abc123:example.com%3A3000:path").unwrap();
         assert_eq!(did.domain(), "example.com%3A3000");
         assert_eq!(did.path(), Some("path"));
     }
@@ -281,7 +277,7 @@ mod tests {
             "did:tdw:abc123:example.com:dids:issuer",
             "did:tdw:abc123:example.com%3A3000:path",
         ] {
-            assert_eq!(DID::parse(s).unwrap().to_string(), s);
+            assert_eq!(DID::from_str(s).unwrap().to_string(), s);
         }
     }
 
@@ -289,7 +285,7 @@ mod tests {
 
     #[test]
     fn webvh_parse_simple() {
-        let did = DID::parse("did:webvh:abc123:example.com").unwrap();
+        let did = DID::from_str("did:webvh:abc123:example.com").unwrap();
         assert_eq!(did.method(), &Method::WebVh);
         assert_eq!(did.scid(), Some("abc123"));
         assert_eq!(did.domain(), "example.com");
@@ -298,7 +294,7 @@ mod tests {
 
     #[test]
     fn webvh_parse_with_path() {
-        let did = DID::parse("did:webvh:abc123:example.com:dids:issuer").unwrap();
+        let did = DID::from_str("did:webvh:abc123:example.com:dids:issuer").unwrap();
         assert_eq!(did.method(), &Method::WebVh);
         assert_eq!(did.scid(), Some("abc123"));
         assert_eq!(did.domain(), "example.com");
@@ -307,7 +303,7 @@ mod tests {
 
     #[test]
     fn webvh_parse_with_encoded_port() {
-        let did = DID::parse("did:webvh:abc123:example.com%3A3000:path").unwrap();
+        let did = DID::from_str("did:webvh:abc123:example.com%3A3000:path").unwrap();
         assert_eq!(did.domain(), "example.com%3A3000");
         assert_eq!(did.path(), Some("path"));
     }
@@ -325,7 +321,7 @@ mod tests {
             "did:webvh:abc123:example.com:dids:issuer",
             "did:webvh:abc123:example.com%3A3000:path",
         ] {
-            assert_eq!(DID::parse(s).unwrap().to_string(), s);
+            assert_eq!(DID::from_str(s).unwrap().to_string(), s);
         }
     }
 
@@ -334,7 +330,7 @@ mod tests {
     #[test]
     fn parse_wrong_method() {
         assert_eq!(
-            DID::parse("did:web:example.com").unwrap_err(),
+            DID::from_str("did:web:example.com").unwrap_err(),
             DIDError::MissingPrefix
         );
     }
@@ -342,14 +338,14 @@ mod tests {
     #[test]
     fn parse_missing_domain() {
         for prefix in ["did:tdw:abc123", "did:webvh:abc123"] {
-            assert_eq!(DID::parse(prefix).unwrap_err(), DIDError::MissingDomain);
+            assert_eq!(DID::from_str(prefix).unwrap_err(), DIDError::MissingDomain);
         }
     }
 
     #[test]
     fn parse_invalid_domain_empty_segment() {
         assert_eq!(
-            DID::parse("did:tdw:abc123:example..com").unwrap_err(),
+            DID::from_str("did:tdw:abc123:example..com").unwrap_err(),
             DIDError::InvalidDomain
         );
     }
@@ -357,7 +353,7 @@ mod tests {
     #[test]
     fn parse_invalid_domain_trailing_dot() {
         assert_eq!(
-            DID::parse("did:tdw:abc123:example.com.").unwrap_err(),
+            DID::from_str("did:tdw:abc123:example.com.").unwrap_err(),
             DIDError::InvalidDomain
         );
     }
@@ -365,7 +361,7 @@ mod tests {
     #[test]
     fn parse_invalid_path_empty_segment() {
         assert_eq!(
-            DID::parse("did:tdw:abc123:example.com:dids::issuer").unwrap_err(),
+            DID::from_str("did:tdw:abc123:example.com:dids::issuer").unwrap_err(),
             DIDError::InvalidPath
         );
     }

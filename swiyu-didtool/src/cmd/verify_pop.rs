@@ -414,7 +414,7 @@ fn resolve_via_keystore(
     kid_did: &str,
     kid: &str,
 ) -> Result<VerifyingKey, VerifyPopError> {
-    let did = DID::parse(kid_did)?;
+    let did = DID::from_str(kid_did)?;
     let entry = store
         .lookup(&did)?
         .ok_or_else(|| VerifyPopError::NotFound(kid_did.to_string()))?;
@@ -516,7 +516,7 @@ mod tests {
     use swiyu_core::didlog::LogEntryFormat;
 
     fn test_did() -> DID {
-        DID::parse("did:webvh:abc123:example.com").unwrap()
+        DID::from_str("did:webvh:abc123:example.com").unwrap()
     }
 
     fn make_store() -> (tempfile::TempDir, KeyStore, KeyStoreEntry) {

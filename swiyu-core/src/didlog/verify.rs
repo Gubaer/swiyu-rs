@@ -437,7 +437,7 @@ mod tests {
     const VALID_DID: &str = "did:tdw:QmbMyQ4rMDWZyjRkYd11hg3mfja9TiG4789jCFeYsYDktE:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:bade5c46-2adb-4aee-a6aa-a4b93d5e7f3c";
 
     fn valid_did() -> DID {
-        DID::parse(VALID_DID).expect("fixture DID parses")
+        DID::from_str(VALID_DID).expect("fixture DID parses")
     }
 
     fn load_valid() -> DIDLog {
@@ -463,7 +463,7 @@ mod tests {
     fn wrong_did_rejected() {
         let log = load_valid();
         // Different SCID (single-character mutation in the SCID portion).
-        let other = DID::parse(
+        let other = DID::from_str(
             "did:tdw:QmbMyQ4rMDWZyjRkYd11hg3mfja9TiG4789jCFeYsYDktX:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:bade5c46-2adb-4aee-a6aa-a4b93d5e7f3c"
         ).unwrap();
         let err = verify_log(&log, &other).unwrap_err();
