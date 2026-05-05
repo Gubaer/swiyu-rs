@@ -60,7 +60,7 @@ pub async fn execute_persist_issuer<S: SigningEngine>(
         }
         Err(e) => {
             return StepOutcome::Terminal {
-                error_code: error_code_for_build(&e).into(),
+                error_code: e.error_code("persist_issuer_failed").into(),
                 error_message: e.to_string(),
             };
         }
@@ -129,14 +129,5 @@ fn retry_on_db(operation: &str, message: String) -> StepOutcome {
     StepOutcome::Retry {
         error_code: "persist_issuer_failed".into(),
         error_message: format!("{operation}: {message}"),
-    }
-}
-
-fn error_code_for_build(e: &BuildError) -> &'static str {
-    match e {
-        BuildError::MissingState(_) => "missing_state",
-        BuildError::InvalidUrl(_) => "invalid_allocation_url",
-        BuildError::InvalidPublicKey { .. } => "invalid_public_key",
-        BuildError::Engine(_) => "persist_issuer_failed",
     }
 }

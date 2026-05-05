@@ -42,6 +42,23 @@ pub enum BuildError {
     Engine(#[from] SigningEngineError),
 }
 
+impl BuildError {
+    /// Maps a build-failure variant to the stable `error_code` the
+    /// step executor records on the operation task. Every variant
+    /// has a fixed code except `Engine(_)`, which carries the
+    /// calling step's name (e.g. `"build_initial_log_failed"`,
+    /// `"publish_log_failed"`) — that string is supplied by the
+    /// caller as `engine_failure_code`.
+    pub fn error_code(&self, engine_failure_code: &'static str) -> &'static str {
+        match self {
+            BuildError::MissingState(_) => "missing_state",
+            BuildError::InvalidUrl(_) => "invalid_allocation_url",
+            BuildError::InvalidPublicKey { .. } => "invalid_public_key",
+            BuildError::Engine(_) => engine_failure_code,
+        }
+    }
+}
+
 /// Returns the finalised genesis DIDLog entry as a JSON value, ready
 /// for JCS serialisation onto the registry as a single `did.jsonl`
 /// line.

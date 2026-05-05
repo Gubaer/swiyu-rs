@@ -58,7 +58,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
         Err(e) => {
             return StepOutcome::Terminal {
-                error_code: error_code_for_build(&e).into(),
+                error_code: e.error_code("publish_log_failed").into(),
                 error_message: e.to_string(),
             };
         }
@@ -85,15 +85,6 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
             error_code: "registry_rejected".into(),
             error_message: e.to_string(),
         },
-    }
-}
-
-fn error_code_for_build(e: &BuildError) -> &'static str {
-    match e {
-        BuildError::MissingState(_) => "missing_state",
-        BuildError::InvalidUrl(_) => "invalid_allocation_url",
-        BuildError::InvalidPublicKey { .. } => "invalid_public_key",
-        BuildError::Engine(_) => "publish_log_failed",
     }
 }
 

@@ -78,22 +78,9 @@ pub async fn execute_build_rotation_log<R: RegistryFacade, S: SigningEngine>(
             error_message: "signing-engine backend error".into(),
         },
         Err(e) => StepOutcome::Terminal {
-            error_code: error_code_for(&e).into(),
+            error_code: e.error_code("build_rotation_log_failed").into(),
             error_message: e.to_string(),
         },
-    }
-}
-
-fn error_code_for(e: &BuildError) -> &'static str {
-    match e {
-        BuildError::IssuerNotActive(_) => "issuer_not_active",
-        BuildError::MissingIssuerField(_) => "missing_issuer_field",
-        BuildError::EmptyLog => "registry_empty_log",
-        BuildError::AlreadyRotated => "already_rotated",
-        BuildError::PreviousStateIsPatch => "predecessor_state_is_patch",
-        BuildError::InvalidPredecessorDoc(_) => "invalid_predecessor_doc",
-        BuildError::InvalidPublicKey { .. } => "invalid_public_key",
-        BuildError::Engine(_) => "build_rotation_log_failed",
     }
 }
 

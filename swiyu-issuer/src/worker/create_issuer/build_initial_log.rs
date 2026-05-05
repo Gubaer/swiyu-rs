@@ -26,18 +26,9 @@ pub async fn execute_build_initial_log<S: SigningEngine>(
             error_message: "signing-engine backend error".into(),
         },
         Err(e) => StepOutcome::Terminal {
-            error_code: error_code_for(&e).into(),
+            error_code: e.error_code("build_initial_log_failed").into(),
             error_message: e.to_string(),
         },
-    }
-}
-
-fn error_code_for(e: &BuildError) -> &'static str {
-    match e {
-        BuildError::MissingState(_) => "missing_state",
-        BuildError::InvalidUrl(_) => "invalid_allocation_url",
-        BuildError::InvalidPublicKey { .. } => "invalid_public_key",
-        BuildError::Engine(_) => "build_initial_log_failed",
     }
 }
 

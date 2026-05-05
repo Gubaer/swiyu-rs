@@ -96,7 +96,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
         Err(e) => {
             return StepOutcome::Terminal {
-                error_code: error_code_for_build(&e).into(),
+                error_code: e.error_code("publish_log_failed").into(),
                 error_message: e.to_string(),
             };
         }
@@ -125,23 +125,6 @@ fn state_patch_log_published() -> StepResult {
     patch.insert("log_published".into(), json!(true));
     StepResult {
         state_data_patch: patch,
-    }
-}
-
-fn error_code_for_build(e: &BuildError) -> &'static str {
-    match e {
-        BuildError::IssuerNotActive(_) => "issuer_not_active",
-        BuildError::MissingIssuerField(_) => "missing_issuer_field",
-        BuildError::EmptyLog => "registry_empty_log",
-        BuildError::AlreadyDeactivated => {
-            // Handled as Done before this is reached; included for
-            // exhaustive matching.
-            "already_deactivated"
-        }
-        BuildError::PreviousStateIsPatch => "predecessor_state_is_patch",
-        BuildError::InvalidPredecessorDoc(_) => "invalid_predecessor_doc",
-        BuildError::InvalidPublicKey { .. } => "invalid_public_key",
-        BuildError::Engine(_) => "publish_log_failed",
     }
 }
 
