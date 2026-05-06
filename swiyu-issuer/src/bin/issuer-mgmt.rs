@@ -1,18 +1,12 @@
 use std::env;
 use std::net::SocketAddr;
-use std::time::Duration as StdDuration;
 
 use chrono::Duration;
 use clap::{Parser, Subcommand};
 use rand_core::OsRng;
-use reqwest::Url;
-use secrecy::SecretString;
 use sqlx::PgPool;
 use swiyu_issuer::api_management::{AppState, Config, router};
-use swiyu_issuer::domain::{
-    AnySigningEngine, ApiToken, ApiTokenSecret, DevSigningEngine, TenantId, VaultSigningEngine,
-    VaultSigningEngineConfig,
-};
+use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, TenantId, build_signing_engine_from_env};
 use swiyu_issuer::persistence;
 use swiyu_issuer::worker::Worker;
 use swiyu_registries::common::AccessToken;
@@ -91,7 +85,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 
     let registry_client =
         IdentifierRegistryClient::new(registry_url, AccessToken::new(registry_token))?;
-    let signing_engine = build_signing_engine(pool.clone())?;
+    let signing_engine = build_signing_engine_from_env(pool.clone())?;
     let worker = Worker::new(
         pool.clone(),
         registry_client,
@@ -125,40 +119,6 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn build_signing_engine(pool: PgPool) -> Result<AnySigningEngine, Box<dyn std::error::Error>> {
-    let kind = env::var("SIGNING_ENGINE").unwrap_or_else(|_| "dev".to_string());
-    match kind.as_str() {
-        "dev" => Ok(AnySigningEngine::Dev(DevSigningEngine::new(pool))),
-        "vault" => Ok(AnySigningEngine::Vault(build_vault_engine()?)),
-        other => Err(format!("SIGNING_ENGINE must be `dev` or `vault`, got `{other}`").into()),
-    }
-}
-
-fn build_vault_engine() -> Result<VaultSigningEngine, Box<dyn std::error::Error>> {
-    let address =
-        env::var("VAULT_ADDR").map_err(|_| "VAULT_ADDR must be set when SIGNING_ENGINE=vault")?;
-    let token =
-        env::var("VAULT_TOKEN").map_err(|_| "VAULT_TOKEN must be set when SIGNING_ENGINE=vault")?;
-    let transit_path = env::var("VAULT_TRANSIT_PATH")
-        .unwrap_or_else(|_| VaultSigningEngineConfig::DEFAULT_TRANSIT_PATH.to_string());
-    let request_timeout = match env::var("VAULT_REQUEST_TIMEOUT_SECS") {
-        Ok(s) => {
-            let secs = s
-                .parse::<u64>()
-                .map_err(|err| format!("VAULT_REQUEST_TIMEOUT_SECS is not a u64: {err}"))?;
-            StdDuration::from_secs(secs)
-        }
-        Err(_) => VaultSigningEngineConfig::DEFAULT_REQUEST_TIMEOUT,
-    };
-    Ok(VaultSigningEngine::new(VaultSigningEngineConfig {
-        address: Url::parse(&address)
-            .map_err(|err| format!("VAULT_ADDR is not a valid URL: {err}"))?,
-        token: SecretString::from(token),
-        transit_path,
-        request_timeout,
-    }))
 }
 
 async fn mint_token(

@@ -1,8 +1,10 @@
 use std::env;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use chrono::Duration;
 use swiyu_issuer::api_oidc::{AppState, Config, Signer, router};
+use swiyu_issuer::domain::build_signing_engine_from_env;
 use swiyu_issuer::persistence;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -30,13 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
 
-    // FIXTURE KEY WARNING: every issuer-oidc restart mints a fresh
-    // Ed25519 keypair held in process memory only. Signed credentials
-    // are wire-shape compatible but cryptographically meaningless
-    // across restarts. The follow-up "wire swiyu-didtool keystore"
-    // slice replaces this with the real assertion key from the issuer
-    // row's `signing_key_id` column. Do not promote past alpha
-    // until that lands.
+    // The SigningEngine-backed credential signing path lands in a
+    // follow-up slice; until it does, the credential handler still
+    // signs with this ephemeral fixture key.
     tracing::warn!(
         "issuer-oidc is using an EPHEMERAL FIXTURE signing key. \
          Signed credentials will not verify across restarts and the \
@@ -44,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
          Replace before any non-alpha deployment."
     );
     let signer = Signer::new_ephemeral_for_dev();
+    let engine = Arc::new(build_signing_engine_from_env(pool.clone())?);
 
     let state = AppState::new(
         pool,
@@ -53,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             c_nonce_ttl,
         },
         signer,
+        engine,
     );
     let app = router(state);
 

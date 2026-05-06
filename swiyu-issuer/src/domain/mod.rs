@@ -21,8 +21,8 @@ pub use nonce::{NonceHash, NonceSecret};
 pub use operation_task::{OperationTask, StepOutcome, StepResult, TaskState, TaskType};
 pub use pre_auth_code::PreAuthCode;
 pub use signing_engine::{
-    AnySigningEngine, DevSigningEngine, GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole,
-    RawPublicKey, Signature, SigningEngine, SigningEngineError, VaultSigningEngine,
-    VaultSigningEngineConfig,
+    AnySigningEngine, BuildError as SigningEngineBuildError, DevSigningEngine, GeneratedKeyPair,
+    KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine, SigningEngineError,
+    VaultSigningEngine, VaultSigningEngineConfig, build_from_env as build_signing_engine_from_env,
 };
 pub use tenant::Tenant;
