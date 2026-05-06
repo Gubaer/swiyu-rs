@@ -472,6 +472,103 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/issued-credentials/{credential_id}/suspend:
+    post:
+      summary: Suspend an issued credential
+      description: |
+        Marks an active issued credential `suspended`. Synchronous: the
+        local lifecycle column flips and the corresponding two-bit slot
+        on the issuer's BitstringStatusList is set to `suspended` in
+        the same transaction. Returns the updated record.
+
+        **Reversible.** A suspended credential can be unsuspended via
+        `unsuspendIssuedCredential`. Suspending an already-suspended
+        credential returns `409 Conflict`; suspending a revoked credential
+        also returns `409 Conflict` (the lifecycle is `Active <-> Suspended`,
+        with `Revoked` terminal).
+
+        Tenant scoping comes from the bearer token; the URL does not
+        carry a tenant. Cross-tenant access returns `404 Not Found`.
+        No request body.
+      operationId: suspendIssuedCredential
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Credential is now `suspended`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetIssuedCredentialResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/issued-credentials/{credential_id}/unsuspend:
+    post:
+      summary: Unsuspend an issued credential
+      description: |
+        Restores a suspended issued credential to `active`. Synchronous:
+        the local lifecycle column flips and the corresponding two-bit
+        slot on the issuer's BitstringStatusList is cleared (set to
+        `valid`) in the same transaction. Returns the updated record.
+
+        Unsuspending an already-active credential returns `409 Conflict`;
+        unsuspending a revoked credential also returns `409 Conflict`
+        (revocation is terminal).
+
+        Tenant scoping matches `suspendIssuedCredential`. No request body.
+      operationId: unsuspendIssuedCredential
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Credential is now `active`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetIssuedCredentialResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/issued-credentials/{credential_id}/revoke:
+    post:
+      summary: Revoke an issued credential
+      description: |
+        Marks an issued credential `revoked`. Synchronous: the local
+        lifecycle column flips and the corresponding two-bit slot on
+        the issuer's BitstringStatusList is set to `revoked` in the
+        same transaction. Returns the updated record.
+
+        **Terminal.** Revocation is one-way; revoking an already-revoked
+        credential returns `409 Conflict`. Revoking a suspended
+        credential is allowed and produces `revoked`.
+
+        Tenant scoping matches `suspendIssuedCredential`. No request body.
+      operationId: revokeIssuedCredential
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Credential is now `revoked`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetIssuedCredentialResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
 components:
   parameters:
     IssuerId:
@@ -499,6 +596,16 @@ components:
       in: path
       required: true
       description: Bare base58 operation-task identifier (no `task_` prefix).
+      schema:
+        type: string
+        pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'
+        example: 9hXq2vRtL8pK7f
+
+    CredentialId:
+      name: credential_id
+      in: path
+      required: true
+      description: Bare base58 issued-credential identifier (no `credential_` prefix).
       schema:
         type: string
         pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'
@@ -890,6 +997,81 @@ components:
             Opaque cursor for the next page, or `null` if the last page
             has been reached. Pass back as the `cursor` query parameter
             on the next request.
+
+    GetIssuedCredentialResponse:
+      type: object
+      required:
+        - id
+        - issuer_id
+        - credential_offer_id
+        - vct
+        - holder_key_jkt
+        - status_list_id
+        - status_list_index
+        - state
+        - expired
+        - issued_at
+        - expires_at
+      properties:
+        id:
+          type: string
+          example: credential_9hXq2vRtL8pK7f
+        issuer_id:
+          type: string
+          example: issuer_9hXq2vRtL8pK7f
+        credential_offer_id:
+          type: string
+          description: Identifier of the offer this credential was issued from.
+          example: offer_9hXq2vRtL8pK7f
+        vct:
+          type: string
+          description: SD-JWT VC type identifier (URI), copied from the offer at issuance.
+          example: urn:communal:local-residence-id
+        holder_key_jkt:
+          type: string
+          description: |
+            RFC 7638 thumbprint of the wallet's `cnf` key, base64url-encoded.
+            The full `cnf` key is not retained; the thumbprint is enough to
+            correlate later presentations or audit-trail entries with the
+            credential the wallet was issued.
+        status_list_id:
+          type: string
+          description: |
+            Identifier of the BitstringStatusList instance whose two-bit
+            slot encodes this credential's revocation/suspension state.
+            Together with `status_list_index` this is the same `(uri, idx)`
+            pair the credential's signed `status` claim references.
+          example: status_list_9hXq2vRtL8pK7f
+        status_list_index:
+          type: integer
+          minimum: 0
+          maximum: 131071
+          description: |
+            Position of this credential's two-bit slot within the
+            `status_list_id` bitstring. Allocated at issuance and never
+            reused for the row's lifetime.
+        state:
+          type: string
+          enum: [active, suspended, revoked]
+          description: |
+            Lifecycle state stored on the row. `active` and `suspended`
+            are mutually reachable; `revoked` is terminal. `expired` is
+            **not** a state — see the `expired` field below.
+        expired:
+          type: boolean
+          description: |
+            Derived view over `expires_at`. `true` iff the server's
+            current clock has passed `expires_at`. Verifiers enforce
+            expiry against the credential's signed `exp` claim, not
+            this column; this field is a convenience for management
+            UIs (per `aspect-credential-management.md` § "Expiry is a
+            view, not a state").
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
 
     ErrorBody:
       type: object

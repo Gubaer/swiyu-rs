@@ -2,6 +2,7 @@ mod auth;
 mod credential_offers;
 mod dto;
 mod error;
+mod issued_credentials;
 mod issuers;
 mod operation_tasks;
 mod schemas;
@@ -48,6 +49,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/issuers/{issuer_id}/credential-offers/{offer_id}/status",
             get(credential_offers::status),
+        )
+        .route(
+            "/api/v1/issued-credentials/{credential_id}/suspend",
+            post(issued_credentials::suspend),
+        )
+        .route(
+            "/api/v1/issued-credentials/{credential_id}/unsuspend",
+            post(issued_credentials::unsuspend),
+        )
+        .route(
+            "/api/v1/issued-credentials/{credential_id}/revoke",
+            post(issued_credentials::revoke),
         )
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

@@ -1,0 +1,520 @@
+//! Integration tests for the issued-credential lifecycle handlers
+//! (`POST /api/v1/issued-credentials/{id}/suspend|unsuspend|revoke`).
+//!
+//! Drives requests through the full management router (auth +
+//! extractors + serde + handler + persistence) using
+//! `tower::ServiceExt::oneshot` against a `sqlx::test`-managed pool.
+//! Each test inserts a synthetic credential row + a fresh status list
+//! and asserts both the HTTP response and the resulting DB state
+//! (lifecycle column, status-list bitstring slot, committed_version).
+
+use axum::body::{self, Body};
+use axum::http::{Request, StatusCode, header};
+use chrono::{Duration, Utc};
+use serde_json::Value;
+use sqlx::PgPool;
+use tower::ServiceExt;
+
+use swiyu_issuer::api_management::{AppState, Config, router};
+use swiyu_issuer::domain::{
+    ApiToken, ApiTokenSecret, BITSTRING_BYTES, CredentialOffer, INTEGRITY_HASH_LEN,
+    IssuedCredential, IssuedCredentialState, Issuer, IssuerId, IssuerState, PreAuthCode,
+    StatusListId, StatusListIndex, StatusValue, TenantId, status_list::encoding,
+};
+use swiyu_issuer::persistence;
+
+const TEST_BASE_URL: &str = "http://localhost:8080";
+
+async fn build_state(pool: PgPool) -> AppState {
+    AppState::new(
+        pool,
+        Config {
+            issuer_base_url: TEST_BASE_URL.into(),
+        },
+    )
+    .expect("AppState builds")
+}
+
+async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
+    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, NULL)")
+        .bind(tenant_id.bare())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
+    let secret = ApiTokenSecret::generate();
+    let token = ApiToken::new(tenant_id.clone(), "test-token".into(), secret.hash(), None);
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::api_tokens::insert(&mut conn, &token)
+        .await
+        .unwrap();
+    secret
+}
+
+async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
+    let issuer = Issuer {
+        id: IssuerId::generate(),
+        tenant_id: tenant_id.clone(),
+        did: "did:tdw:dev.example.com:test".into(),
+        state: Some(IssuerState::Active),
+        description: None,
+        authorized_key_id: None,
+        authentication_key_id: None,
+        assertion_key_id: None,
+        display_name: Some("Test issuer".into()),
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    };
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::issuers::insert(&mut conn, &issuer)
+        .await
+        .unwrap();
+    issuer
+}
+
+async fn provision_status_list(pool: &PgPool, issuer_id: &IssuerId) -> StatusListId {
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::status_lists::provision_for_issuer(&mut conn, issuer_id)
+        .await
+        .unwrap()
+}
+
+async fn seed_offer(pool: &PgPool, issuer: &Issuer) -> CredentialOffer {
+    let offer = CredentialOffer::new(
+        issuer.tenant_id.clone(),
+        issuer.id.clone(),
+        "vc-test".into(),
+        serde_json::json!({}),
+        PreAuthCode::generate(),
+        Utc::now() + Duration::minutes(5),
+    );
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::credential_offers::insert(&mut conn, &offer)
+        .await
+        .unwrap();
+    offer
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn seed_credential(
+    pool: &PgPool,
+    issuer: &Issuer,
+    list_id: &StatusListId,
+    list_index: u32,
+    initial_state: IssuedCredentialState,
+    initial_bit: StatusValue,
+) -> IssuedCredential {
+    let offer = seed_offer(pool, issuer).await;
+    let now = Utc::now();
+    let credential = IssuedCredential::new(
+        issuer.tenant_id.clone(),
+        issuer.id.clone(),
+        offer.id,
+        "vc-test".into(),
+        "abcDEF0123456789abcDEF0123456789abcDEF01234".into(),
+        list_id.clone(),
+        StatusListIndex::try_from(list_index).unwrap(),
+        [0u8; INTEGRITY_HASH_LEN],
+        now,
+        now + Duration::days(365),
+    );
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::issued_credentials::insert(&mut conn, &credential)
+        .await
+        .unwrap();
+    if initial_state != IssuedCredentialState::Active {
+        persistence::issued_credentials::set_state(
+            &mut conn,
+            &credential.tenant_id,
+            &credential.id,
+            initial_state,
+        )
+        .await
+        .unwrap();
+    }
+    if initial_bit != StatusValue::Valid {
+        persistence::status_lists::write_bit(
+            &mut conn,
+            list_id,
+            credential.status_list_index,
+            initial_bit,
+        )
+        .await
+        .unwrap();
+    }
+    IssuedCredential {
+        state: initial_state,
+        ..credential
+    }
+}
+
+fn post_request(uri: &str, bearer: Option<&str>) -> Request<Body> {
+    let mut builder = Request::builder().method("POST").uri(uri);
+    if let Some(b) = bearer {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
+    }
+    builder.body(Body::empty()).unwrap()
+}
+
+async fn read_body(response: axum::response::Response) -> Value {
+    let bytes = body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn fetch_state(pool: &PgPool, credential: &IssuedCredential) -> String {
+    sqlx::query_scalar("SELECT state FROM issued_credentials WHERE id = $1")
+        .bind(credential.id.bare())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn fetch_status_bit(pool: &PgPool, credential: &IssuedCredential) -> StatusValue {
+    let bitstring: Vec<u8> = sqlx::query_scalar("SELECT bitstring FROM status_lists WHERE id = $1")
+        .bind(credential.status_list_id.bare())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(bitstring.len(), BITSTRING_BYTES);
+    encoding::read_status(&bitstring, credential.status_list_index).unwrap()
+}
+
+async fn fetch_committed_version(pool: &PgPool, list_id: &StatusListId) -> i64 {
+    sqlx::query_scalar("SELECT committed_version FROM status_lists WHERE id = $1")
+        .bind(list_id.bare())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+fn lifecycle_uri(credential: &IssuedCredential, action: &str) -> String {
+    format!(
+        "/api/v1/issued-credentials/{}/{}",
+        credential.id.bare(),
+        action
+    )
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn suspend_active_flips_state_and_status_bit(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer,
+        &list_id,
+        0,
+        IssuedCredentialState::Active,
+        StatusValue::Valid,
+    )
+    .await;
+    let baseline_version = fetch_committed_version(&pool, &list_id).await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &lifecycle_uri(&credential, "suspend"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body["state"], "suspended");
+    assert_eq!(body["expired"], false);
+    assert_eq!(body["status_list_index"], 0);
+
+    assert_eq!(fetch_state(&pool, &credential).await, "suspended");
+    assert_eq!(
+        fetch_status_bit(&pool, &credential).await,
+        StatusValue::Suspended
+    );
+    assert_eq!(
+        fetch_committed_version(&pool, &list_id).await,
+        baseline_version + 1
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unsuspend_restores_active_and_clears_status_bit(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer,
+        &list_id,
+        0,
+        IssuedCredentialState::Suspended,
+        StatusValue::Suspended,
+    )
+    .await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &lifecycle_uri(&credential, "unsuspend"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body["state"], "active");
+
+    assert_eq!(fetch_state(&pool, &credential).await, "active");
+    assert_eq!(
+        fetch_status_bit(&pool, &credential).await,
+        StatusValue::Valid
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn revoke_active_flips_state_and_status_bit(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer,
+        &list_id,
+        0,
+        IssuedCredentialState::Active,
+        StatusValue::Valid,
+    )
+    .await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &lifecycle_uri(&credential, "revoke"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body(response).await;
+    assert_eq!(body["state"], "revoked");
+
+    assert_eq!(fetch_state(&pool, &credential).await, "revoked");
+    assert_eq!(
+        fetch_status_bit(&pool, &credential).await,
+        StatusValue::Revoked
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn revoke_suspended_succeeds(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer,
+        &list_id,
+        0,
+        IssuedCredentialState::Suspended,
+        StatusValue::Suspended,
+    )
+    .await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &lifecycle_uri(&credential, "revoke"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(fetch_state(&pool, &credential).await, "revoked");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn suspend_already_suspended_returns_409(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer,
+        &list_id,
+        0,
+        IssuedCredentialState::Suspended,
+        StatusValue::Suspended,
+    )
+    .await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &lifecycle_uri(&credential, "suspend"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = read_body(response).await;
+    assert_eq!(body["error"], "conflict");
+    // State + bit unchanged.
+    assert_eq!(fetch_state(&pool, &credential).await, "suspended");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unsuspend_active_returns_409(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer,
+        &list_id,
+        0,
+        IssuedCredentialState::Active,
+        StatusValue::Valid,
+    )
+    .await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &lifecycle_uri(&credential, "unsuspend"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn revoke_already_revoked_returns_409(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer,
+        &list_id,
+        0,
+        IssuedCredentialState::Revoked,
+        StatusValue::Revoked,
+    )
+    .await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &lifecycle_uri(&credential, "revoke"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lifecycle_op_against_other_tenant_returns_404(pool: PgPool) {
+    // Tenant A owns the credential. Tenant B's bearer must see 404,
+    // not 409 — same probe-prevention discipline as `find`.
+    let tenant_a = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_a).await;
+    let issuer = insert_active_issuer(&pool, &tenant_a).await;
+    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer,
+        &list_id,
+        0,
+        IssuedCredentialState::Active,
+        StatusValue::Valid,
+    )
+    .await;
+
+    let tenant_b = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_b).await;
+    let secret_b = mint_test_token(&pool, &tenant_b).await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &lifecycle_uri(&credential, "suspend"),
+            Some(&secret_b.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    // Tenant A's row stays Active; the cross-tenant call must not
+    // reach set_state.
+    assert_eq!(fetch_state(&pool, &credential).await, "active");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unknown_credential_returns_404(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+
+    let app = router(build_state(pool.clone()).await);
+    let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
+    let response = app
+        .oneshot(post_request(
+            &format!("/api/v1/issued-credentials/{}/suspend", unknown.bare()),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn missing_bearer_returns_401(pool: PgPool) {
+    let app = router(build_state(pool.clone()).await);
+    let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
+    let response = app
+        .oneshot(post_request(
+            &format!("/api/v1/issued-credentials/{}/suspend", unknown.bare()),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn malformed_credential_id_returns_400(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            "/api/v1/issued-credentials/notValid0/suspend",
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = read_body(response).await;
+    assert_eq!(body["error"], "invalid_input");
+}

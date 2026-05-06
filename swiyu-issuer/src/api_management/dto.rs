@@ -242,3 +242,35 @@ pub struct ListCredentialOffersResponse {
     pub items: Vec<GetCredentialOfferResponse>,
     pub next_cursor: Option<String>,
 }
+
+/// Response body returned by issued-credential lifecycle handlers
+/// (`suspend`, `unsuspend`, `revoke`) and by the GET endpoints (once
+/// step 1.8 lands).
+///
+/// `state` carries the lifecycle state stored on the row
+/// (`active` / `suspended` / `revoked`). `expired` is a derived view
+/// over `expires_at` per `aspect-credential-management.md` § "Expiry
+/// is a view, not a state": expiry never appears as a stored state,
+/// but the response surfaces a boolean for client convenience.
+///
+/// `holder_key_jkt` is the RFC 7638 thumbprint of the wallet's `cnf`
+/// key, base64url-encoded; included so a BA can correlate later
+/// presentations with the credential the wallet was issued.
+/// `status_list_id` and `status_list_index` are surfaced for
+/// operational transparency: they are the same `(uri, idx)` pair the
+/// `status` claim on the SD-JWT VC carries, and operators routinely
+/// need them when investigating revocation or publish-state issues.
+#[derive(Debug, Serialize)]
+pub struct GetIssuedCredentialResponse {
+    pub id: String,
+    pub issuer_id: String,
+    pub credential_offer_id: String,
+    pub vct: String,
+    pub holder_key_jkt: String,
+    pub status_list_id: String,
+    pub status_list_index: u32,
+    pub state: String,
+    pub expired: bool,
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}

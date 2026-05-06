@@ -19,6 +19,7 @@ The v0.1.0 durchstich was "a business application submits a request to create a 
 - `dto.rs` — request and response shapes for the management API.
 - `schemas.rs` — startup-time loading of the bundled JSON Schemas keyed by `vct`.
 - `credential_offers.rs` — handlers for the credential-offer endpoints (create, fetch, cancel, list, status).
+- `issued_credentials.rs` — lifecycle handlers for issued credentials (suspend, unsuspend, revoke). Added by the credential-management slice; see [`impl-credential-management.md`](impl-credential-management.md).
 
 `swiyu-issuer/src/bin/issuer-mgmt.rs` stays thin: load config → connect pool → run migrations → build `Router` → bind and serve with graceful shutdown.
 
@@ -133,6 +134,44 @@ Response (200):
 ```
 
 `state` follows the same observed-state rule as fetch and list. `issued_at` and `cancelled_at` are `null` until the offer transitions into the corresponding state.
+
+### POST /api/v1/issued-credentials/{credential_id}/{suspend|unsuspend|revoke} — lifecycle (credential-management slice)
+
+Three synchronous handlers that flip an issued credential's lifecycle column and the corresponding two-bit slot on the issuer's BitstringStatusList in one transaction. Return the updated record (same shape across all three) on `200 OK`. Tenant scoping comes from the bearer token; the URL deliberately does not carry an `issuer_id` because the credential's `id` already pins which tenant and issuer it belongs to. Cross-tenant access returns `404 Not Found`.
+
+State preconditions follow the `IssuedCredential` domain state machine:
+
+| Endpoint     | Allowed prior state(s)        | Post state  | Status-list bit |
+|--------------|-------------------------------|-------------|-----------------|
+| `suspend`    | `active`                      | `suspended` | `suspended` (1) |
+| `unsuspend`  | `suspended`                   | `active`    | `valid` (0)     |
+| `revoke`     | `active` or `suspended`       | `revoked`   | `revoked` (2)   |
+
+A precondition violation surfaces as `409 Conflict` with a body of `{"error":"conflict","details":"state transition not allowed"}`. `revoked` is terminal — there is no unrevoke.
+
+No request body. Response body:
+
+```json
+{
+  "id": "credential_…",
+  "issuer_id": "issuer_…",
+  "credential_offer_id": "offer_…",
+  "vct": "urn:communal:local-residence-id",
+  "holder_key_jkt": "abcDEF…",
+  "status_list_id": "status_list_…",
+  "status_list_index": 12,
+  "state": "suspended",
+  "expired": false,
+  "issued_at": "2026-05-06T12:34:56Z",
+  "expires_at": "2027-05-06T12:34:56Z"
+}
+```
+
+The `expired` field is a derived view over `expires_at`; expiry is never a stored state. See [`aspect-credential-management.md`](aspect-credential-management.md) § "Expiry is a view, not a state".
+
+Status Registry publication of the updated bitstring runs out of band in a background worker (phase 2 of the credential-management slice). Verifiers observe the new state at the Registry within the staleness window documented in [`aspect-credential-management.md`](aspect-credential-management.md) § "Status-list integration", once that worker is wired up. Phase 1 ships the local bookkeeping only; the management API contract is stable across phases — only the visibility-to-verifiers latency changes.
+
+Audit trail entries for these transitions are placeholders (`// TODO(audit): record …`) until the audit-module slice lands; see [`plan-credential-management.md`](../plan-credential-management.md) § 1.9.
 
 ### Operational probes
 
