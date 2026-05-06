@@ -208,6 +208,60 @@ async fn current_status_list_id_can_point_at_real_list(pool: PgPool) {
     assert_eq!(stored, list_id.bare());
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn registry_coords_default_to_null(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_tenant(&pool, &tenant_id).await;
+    let issuer_id = "1234567890abcd";
+    insert_issuer(&pool, &tenant_id, issuer_id).await;
+
+    let list_id = StatusListId::generate();
+    insert_status_list(&pool, &list_id, issuer_id, vec![0u8; BITSTRING_BYTES], 0)
+        .await
+        .unwrap();
+
+    let row: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT registry_entry_id, registry_url FROM status_lists WHERE id = $1")
+            .bind(list_id.bare())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row, (None, None));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn registry_coords_round_trip(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_tenant(&pool, &tenant_id).await;
+    let issuer_id = "1234567890abcd";
+    insert_issuer(&pool, &tenant_id, issuer_id).await;
+
+    let list_id = StatusListId::generate();
+    insert_status_list(&pool, &list_id, issuer_id, vec![0u8; BITSTRING_BYTES], 0)
+        .await
+        .unwrap();
+
+    let entry_id = "11111111-2222-3333-4444-555555555555";
+    let url = "https://status-reg.example.com/lists/abc.jwt";
+    sqlx::query(
+        "UPDATE status_lists SET registry_entry_id = $1, registry_url = $2 WHERE id = $3",
+    )
+    .bind(entry_id)
+    .bind(url)
+    .bind(list_id.bare())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let row: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT registry_entry_id, registry_url FROM status_lists WHERE id = $1")
+            .bind(list_id.bare())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row, (Some(entry_id.into()), Some(url.into())));
+}
+
 // ============================================================================
 // Persistence-function tests
 // ============================================================================

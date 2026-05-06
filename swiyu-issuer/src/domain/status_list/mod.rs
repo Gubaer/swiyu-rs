@@ -57,6 +57,14 @@ impl std::fmt::Display for StatusListIndex {
 /// difference drives the publish worker's "is this list dirty?"
 /// probe; see `aspect-credential-management.md` (Asynchronous
 /// execution / Phase 2).
+///
+/// `registry_entry_id` and `registry_url` are populated by the
+/// issuer-creation operation task once it has called
+/// `swiyu_registries::status::StatusRegistryClient::create_status_list_entry`
+/// (see `plan-credential-management.md` § "Eager registry-side
+/// provisioning at issuer-creation time"). Both stay `None` until then;
+/// a row with `registry_url = None` cannot be the source of a verifier-
+/// dereferenceable credential.
 #[derive(Debug, Clone)]
 pub struct StatusList {
     pub id: StatusListId,
@@ -79,12 +87,25 @@ pub struct StatusList {
     pub publish_attempts: u32,
 
     pub created_at: DateTime<Utc>,
+
+    /// Registry-side entry UUID returned by `create_status_list_entry`.
+    /// `None` until provisioned; the path segment of every subsequent
+    /// `update_status_list_entry` PUT.
+    pub registry_entry_id: Option<String>,
+
+    /// `statusRegistryUrl` returned alongside `registry_entry_id`. The
+    /// `uri` value embedded in every issued credential's
+    /// `status.status_list` claim, and the `sub` of the published
+    /// `statuslist+jwt`. `None` until provisioned.
+    pub registry_url: Option<String>,
 }
 
 impl StatusList {
     /// Constructs a fresh, empty status list. All bits zeroed
     /// (every entry reads as [`StatusValue::Valid`]); both version
-    /// counters start at zero.
+    /// counters start at zero; both registry coordinates start as
+    /// `None` and are filled in after the issuer-creation operation
+    /// task talks to the SWIYU Status Registry.
     pub fn new(issuer_id: IssuerId, now: DateTime<Utc>) -> Self {
         Self {
             id: StatusListId::generate(),
@@ -98,6 +119,8 @@ impl StatusList {
             next_publish_attempt_at: None,
             publish_attempts: 0,
             created_at: now,
+            registry_entry_id: None,
+            registry_url: None,
         }
     }
 
@@ -131,6 +154,13 @@ mod tests {
         assert_eq!(list.allocated_count, 0);
         assert_eq!(list.committed_version, 0);
         assert_eq!(list.published_version, 0);
+    }
+
+    #[test]
+    fn new_list_has_unallocated_registry_coords() {
+        let list = make_list();
+        assert!(list.registry_entry_id.is_none());
+        assert!(list.registry_url.is_none());
     }
 
     #[test]
