@@ -11,6 +11,7 @@
 //! verify the predecessor signature, so a minimal but well-formed
 //! TDW 0.3 entry is enough to drive the saga.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Duration as ChronoDuration, Timelike, Utc};
@@ -18,17 +19,15 @@ use rand_core::RngCore;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use swiyu_core::didlog::DIDLogEntry;
 use swiyu_issuer::domain::{
     CredentialOffer, CredentialOfferState, DevSigningEngine, Issuer, IssuerId, IssuerState,
     KeyRole, OperationTask, PreAuthCode, SigningEngine, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::{credential_offers, issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
-use swiyu_registries::common::AccessToken;
-use swiyu_registries::identifier::IdentifierRegistryClient;
+use swiyu_issuer::worker::test_support::{FetchLogCall, MockRegistry, PublishCall};
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -36,14 +35,6 @@ const FIXTURE_SCID: &str = "Qm-fixture-scid";
 
 fn fixture_did() -> String {
     format!("did:tdw:{FIXTURE_SCID}:reg.test:{REGISTRY_UUID}")
-}
-
-fn fetch_log_path() -> String {
-    format!("/api/v1/did/{REGISTRY_UUID}/did.jsonl")
-}
-
-fn publish_path() -> String {
-    format!("/api/v1/identifier/business-entities/{PARTNER_ID}/identifier-entries/{REGISTRY_UUID}")
 }
 
 fn now_micros() -> DateTime<Utc> {
@@ -89,8 +80,8 @@ async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: &st
 /// the embedded DID document (which must parse via
 /// `DIDDoc::try_from_jsonld`), so signature bytes and parameter
 /// fields beyond those are not required.
-fn fixture_genesis_jsonl() -> String {
-    let entry: Value = json!([
+fn fixture_genesis_entry() -> DIDLogEntry {
+    let value: Value = json!([
         "1-Qmfixture-genesis-version-id",
         "2026-04-01T00:00:00Z",
         {
@@ -109,9 +100,7 @@ fn fixture_genesis_jsonl() -> String {
         },
         [],
     ]);
-    let mut line = serde_json::to_string(&entry).unwrap();
-    line.push('\n');
-    line
+    DIDLogEntry::try_from(&value).expect("fixture genesis parses")
 }
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> (IssuerId, DevSigningEngine) {
@@ -203,14 +192,6 @@ fn deactivate_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
     }
 }
 
-fn build_registry_client(server: &MockServer) -> IdentifierRegistryClient {
-    IdentifierRegistryClient::with_http(
-        server.uri(),
-        AccessToken::new("test-token".into()),
-        reqwest::Client::new(),
-    )
-}
-
 async fn wait_for_task_state(
     pool: &PgPool,
     tenant_id: &TenantId,
@@ -239,22 +220,13 @@ async fn wait_for_task_state(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) {
-    let server = MockServer::start().await;
-
-    Mock::given(method("GET"))
-        .and(path(fetch_log_path()))
-        .respond_with(ResponseTemplate::new(200).set_body_string(fixture_genesis_jsonl()))
-        // Two GETs: one in build_deactivation_log, one in publish_log.
-        .expect(2)
-        .mount(&server)
-        .await;
-
-    Mock::given(method("PUT"))
-        .and(path(publish_path()))
-        .respond_with(ResponseTemplate::new(204))
-        .expect(1)
-        .mount(&server)
-        .await;
+    let registry = Arc::new(MockRegistry::new());
+    // Two fetch_log calls: one in build_deactivation_log, one in
+    // publish_log.
+    registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
+    registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
+    // One publish_log_entry call from publish_log.
+    registry.enqueue_publish(PublishCall::Ok);
 
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id, PARTNER_ID).await;
@@ -273,7 +245,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
-        build_registry_client(&server),
+        Arc::clone(&registry),
         engine,
         Box::new(ConstantRng(0)),
     )
@@ -323,18 +295,24 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     assert_eq!(loaded_issued.state, CredentialOfferState::Issued);
     assert_eq!(loaded_issued.issued_at, issued.issued_at);
 
-    // Registry got the deactivation PUT, body parses as a 5-element
-    // array whose parameters block carries `deactivated: true`.
-    let put_requests: Vec<_> = server
-        .received_requests()
-        .await
-        .expect("request recording enabled")
-        .into_iter()
-        .filter(|req| req.method == wiremock::http::Method::PUT && req.url.path() == publish_path())
-        .collect();
-    assert_eq!(put_requests.len(), 1, "expected exactly one PUT");
-    let body: Value = serde_json::from_slice(&put_requests[0].body).unwrap();
-    let arr = body.as_array().expect("entry is a JSON array");
+    // Registry got exactly one publish_log_entry call. The wire form
+    // is a single JSONL line (the deactivation entry only — the
+    // publish_log step builds the full updated log itself, but the
+    // mock records what the worker passed to publish_log_entry, which
+    // is the concatenated JSONL body). Inspect the LAST line, which
+    // is the new deactivation entry.
+    let publishes = registry.publish_invocations.lock().unwrap();
+    assert_eq!(publishes.len(), 1);
+    let (partner, identifier, body_str) = &publishes[0];
+    assert_eq!(partner, PARTNER_ID);
+    assert_eq!(identifier, REGISTRY_UUID);
+    let last_line = body_str
+        .trim_end_matches('\n')
+        .rsplit('\n')
+        .next()
+        .expect("non-empty body");
+    let entry: Value = serde_json::from_str(last_line).unwrap();
+    let arr = entry.as_array().expect("entry is a JSON array");
     assert_eq!(arr.len(), 5, "did:tdw 0.3 entries are 5-element arrays");
     assert_eq!(arr[2]["deactivated"], json!(true));
     assert_eq!(arr[2]["updateKeys"], json!([]));
