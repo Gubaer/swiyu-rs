@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::domain::{
-    AccessTokenSecret, AnySigningEngine, CredentialOfferState, IssuerId, KeyPairId, NonceSecret,
-    SigningEngine, SigningEngineError,
+    AccessTokenSecret, CredentialOfferState, IssuerId, KeyPairId, NonceSecret, SigningEngine,
+    SigningEngineError,
 };
 use crate::persistence;
 
@@ -364,12 +364,15 @@ fn invalid_proof_structure() -> OAuthError {
 /// exists.
 ///
 /// The JWS is signed with the issuer's Assertion key (P-256 / ES256)
-/// via [`AnySigningEngine::sign`]. ES256 in JWS hashes the signing
+/// via [`SigningEngine::sign`]. ES256 in JWS hashes the signing
 /// input with SHA-256 and signs the digest; both DevSigningEngine
 /// and VaultSigningEngine expect the 32-byte prehash, so we compute
 /// it here.
-async fn build_sd_jwt_vc(
-    engine: &AnySigningEngine,
+///
+/// Generic over the engine so unit tests can drive the function with
+/// a `MockSigningEngine`; production passes `&AnySigningEngine`.
+async fn build_sd_jwt_vc<S: SigningEngine>(
+    engine: &S,
     assertion_key_id: &KeyPairId,
     issuer: &crate::domain::Issuer,
     offer: &crate::domain::CredentialOffer,
@@ -522,5 +525,199 @@ mod tests {
             parse_wallet_proof(&jwt, "https://issuer.example.com", &issuer_id, now).unwrap_err(),
             OAuthError::InvalidProof { .. }
         ));
+    }
+
+    mod build_sd_jwt_vc_tests {
+        use super::*;
+
+        use chrono::Duration;
+
+        use crate::domain::{
+            CredentialOffer, Issuer, IssuerState, KeyAlgorithm, PreAuthCode, Signature, TenantId,
+        };
+        use crate::worker::test_support::{MockSigningEngine, SignCall};
+
+        const FIXTURE_DID: &str =
+            "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d";
+
+        fn fixture_issuer(assertion_key_id: KeyPairId) -> Issuer {
+            Issuer {
+                id: IssuerId::generate(),
+                tenant_id: TenantId::generate(),
+                did: FIXTURE_DID.into(),
+                state: Some(IssuerState::Active),
+                description: None,
+                authorized_key_id: None,
+                authentication_key_id: None,
+                assertion_key_id: Some(assertion_key_id),
+                display_name: None,
+                logo_uri: None,
+                locale: None,
+                created_at: Utc::now(),
+            }
+        }
+
+        fn fixture_offer(claims: Value) -> CredentialOffer {
+            CredentialOffer::new(
+                TenantId::generate(),
+                IssuerId::generate(),
+                "vc-fixture".into(),
+                claims,
+                PreAuthCode::generate(),
+                Utc::now() + Duration::minutes(5),
+            )
+        }
+
+        fn fixture_signature() -> Signature {
+            // 64 bytes — the JWS body for ES256 is raw R||S, fixed length.
+            Signature {
+                algorithm: KeyAlgorithm::EcdsaP256,
+                bytes: vec![0xAB; 64],
+            }
+        }
+
+        fn split_jws(credential: &str) -> (Value, Value, Vec<u8>) {
+            assert!(credential.ends_with('~'), "SD-JWT VC ends with `~`");
+            let core = credential.trim_end_matches('~');
+            let parts: Vec<&str> = core.split('.').collect();
+            assert_eq!(parts.len(), 3, "JWS has three segments");
+            let header: Value =
+                serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
+            let payload: Value =
+                serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
+            let signature = URL_SAFE_NO_PAD.decode(parts[2]).unwrap();
+            (header, payload, signature)
+        }
+
+        #[tokio::test]
+        async fn header_is_es256_with_assertion_kid() {
+            let engine = MockSigningEngine::new();
+            engine.enqueue_sign(SignCall::Ok(fixture_signature()));
+            let assertion_key_id = KeyPairId::generate();
+            let issuer = fixture_issuer(assertion_key_id);
+            let offer = fixture_offer(json!({}));
+
+            let credential = build_sd_jwt_vc(
+                &engine,
+                &assertion_key_id,
+                &issuer,
+                &offer,
+                &json!({}),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+
+            let (header, _, _) = split_jws(&credential);
+            assert_eq!(header["alg"], "ES256");
+            assert_eq!(header["typ"], "vc+sd-jwt");
+            assert_eq!(header["kid"], format!("{FIXTURE_DID}#assertion-key-01"));
+        }
+
+        #[tokio::test]
+        async fn payload_carries_iss_vct_cnf_and_offer_claims() {
+            let engine = MockSigningEngine::new();
+            engine.enqueue_sign(SignCall::Ok(fixture_signature()));
+            let assertion_key_id = KeyPairId::generate();
+            let issuer = fixture_issuer(assertion_key_id);
+            let offer = fixture_offer(json!({"name": "Alice", "age": 30}));
+            let cnf_jwk = json!({"kty": "EC", "crv": "P-256", "x": "abc", "y": "def"});
+            let now = Utc::now();
+
+            let credential =
+                build_sd_jwt_vc(&engine, &assertion_key_id, &issuer, &offer, &cnf_jwk, now)
+                    .await
+                    .unwrap();
+
+            let (_, payload, _) = split_jws(&credential);
+            assert_eq!(payload["iss"], FIXTURE_DID);
+            assert_eq!(payload["vct"], "vc-fixture");
+            assert_eq!(payload["iat"], now.timestamp());
+            assert_eq!(payload["cnf"]["jwk"], cnf_jwk);
+            assert_eq!(payload["name"], "Alice");
+            assert_eq!(payload["age"], 30);
+        }
+
+        #[tokio::test]
+        async fn signature_segment_is_engine_bytes_base64url_encoded() {
+            let engine = MockSigningEngine::new();
+            engine.enqueue_sign(SignCall::Ok(fixture_signature()));
+            let assertion_key_id = KeyPairId::generate();
+            let issuer = fixture_issuer(assertion_key_id);
+            let offer = fixture_offer(json!({}));
+
+            let credential = build_sd_jwt_vc(
+                &engine,
+                &assertion_key_id,
+                &issuer,
+                &offer,
+                &json!({}),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+
+            let (_, _, signature_bytes) = split_jws(&credential);
+            assert_eq!(signature_bytes, fixture_signature().bytes);
+        }
+
+        #[tokio::test]
+        async fn engine_signs_sha256_prehash_of_header_dot_payload() {
+            // ES256 in JWS = ECDSA over P-256 with SHA-256. Both
+            // signing-engine backends require the caller to prehash;
+            // verify we hand the engine the right 32 bytes.
+            let engine = MockSigningEngine::new();
+            engine.enqueue_sign(SignCall::Ok(fixture_signature()));
+            let assertion_key_id = KeyPairId::generate();
+            let issuer = fixture_issuer(assertion_key_id);
+            let offer = fixture_offer(json!({}));
+
+            let credential = build_sd_jwt_vc(
+                &engine,
+                &assertion_key_id,
+                &issuer,
+                &offer,
+                &json!({}),
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+
+            let core = credential.trim_end_matches('~');
+            let parts: Vec<&str> = core.split('.').collect();
+            let signing_input = format!("{}.{}", parts[0], parts[1]);
+            let expected_digest: Vec<u8> = Sha256::digest(signing_input.as_bytes()).to_vec();
+
+            let recorded = engine.sign_invocations.lock().unwrap();
+            assert_eq!(recorded.len(), 1);
+            let (kid, input) = &recorded[0];
+            assert_eq!(*kid, assertion_key_id);
+            assert_eq!(input, &expected_digest);
+        }
+
+        #[tokio::test]
+        async fn engine_backend_error_propagates() {
+            let engine = MockSigningEngine::new();
+            engine.enqueue_sign(SignCall::Backend("hsm offline".into()));
+            let assertion_key_id = KeyPairId::generate();
+            let issuer = fixture_issuer(assertion_key_id);
+            let offer = fixture_offer(json!({}));
+
+            let err = build_sd_jwt_vc(
+                &engine,
+                &assertion_key_id,
+                &issuer,
+                &offer,
+                &json!({}),
+                Utc::now(),
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(
+                err,
+                BuildError::Engine(SigningEngineError::Backend(_))
+            ));
+        }
     }
 }
