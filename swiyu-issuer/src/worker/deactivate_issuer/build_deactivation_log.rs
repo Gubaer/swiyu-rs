@@ -46,7 +46,7 @@ pub async fn execute_build_deactivation_log<R: RegistryFacade, S: SigningEngine>
     };
 
     let log = match registry.fetch_log(&did).await {
-        Ok(entries) => entries,
+        Ok(fetched) => fetched.entries,
         Err(e) if e.is_retryable() => {
             return StepOutcome::Retry {
                 error_code: "registry_unavailable".into(),

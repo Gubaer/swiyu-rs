@@ -25,7 +25,7 @@ use swiyu_core::did::DID;
 
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant};
 use crate::worker::deactivate_issuer::registry_identifier;
-use crate::worker::registry::RegistryFacade;
+use crate::worker::registry::{RegistryFacade, build_updated_log};
 
 use super::log_builder::{BuildError, build_rotation_entry};
 use super::state::RotateKeysStateData;
@@ -84,8 +84,8 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    let log = match registry.fetch_log(&did).await {
-        Ok(entries) => entries,
+    let fetched = match registry.fetch_log(&did).await {
+        Ok(f) => f,
         Err(e) if e.is_retryable() => {
             return StepOutcome::Retry {
                 error_code: "registry_unavailable".into(),
@@ -100,7 +100,8 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    let entry = match build_rotation_entry(issuer, new_triple, &log, engine, now).await {
+    let entry = match build_rotation_entry(issuer, new_triple, &fetched.entries, engine, now).await
+    {
         Ok(e) => e,
         // Saga resume: a previous publish already wrote the
         // rotation entry; the registry tail's updateKeys[0]
@@ -123,10 +124,15 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    let line = serde_json::to_string(&entry).expect("entry value serialises");
+    // The SWIYU registry's PUT endpoint replaces the whole log, not
+    // appends. We send the prior entries verbatim followed by the
+    // new one — see `build_updated_log` and swiyu-didtool's
+    // matching shape in `cmd/update.rs::build_updated_log`.
+    let new_line = serde_json::to_string(&entry).expect("entry value serialises");
+    let updated_log = build_updated_log(&fetched.raw, &new_line);
 
     match registry
-        .publish_log_entry(partner_id, &identifier, &line)
+        .publish_log_entry(partner_id, &identifier, &updated_log)
         .await
     {
         Ok(()) => StepOutcome::Done(state_patch_log_published()),

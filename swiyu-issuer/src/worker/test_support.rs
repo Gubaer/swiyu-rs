@@ -10,6 +10,7 @@
 use std::future::Future;
 use std::sync::Mutex;
 
+use serde_json::Value;
 use swiyu_core::did::DID;
 use swiyu_core::didlog::DIDLogEntry;
 use swiyu_registries::common::RegistryError;
@@ -20,7 +21,7 @@ use crate::domain::{
     SigningEngineError,
 };
 
-use super::registry::RegistryFacade;
+use super::registry::{FetchedLog, RegistryFacade};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllocateCall {
@@ -125,12 +126,28 @@ impl RegistryFacade for MockRegistry {
     fn fetch_log(
         &self,
         did: &DID,
-    ) -> impl Future<Output = Result<Vec<DIDLogEntry>, RegistryError>> + Send {
+    ) -> impl Future<Output = Result<FetchedLog, RegistryError>> + Send {
         self.fetch_log_invocations.lock().unwrap().push(did.clone());
         let next = self.fetch_log_queue.lock().unwrap().remove(0);
         async move {
             match next {
-                FetchLogCall::Ok(entries) => Ok(entries),
+                FetchLogCall::Ok(entries) => {
+                    // Synthesise the raw JSONL view from the parsed
+                    // entries. Byte fidelity does not matter here
+                    // because the mock's publish_log_entry accepts
+                    // anything; tests that need to verify the published
+                    // body inspect publish_invocations directly.
+                    let raw = entries
+                        .iter()
+                        .cloned()
+                        .map(|e| {
+                            serde_json::to_string(&Value::from(e))
+                                .expect("DIDLogEntry serialises to JSON")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Ok(FetchedLog { raw, entries })
+                }
                 FetchLogCall::HttpStatus { status, body } => {
                     Err(RegistryError::HttpStatus { status, body })
                 }

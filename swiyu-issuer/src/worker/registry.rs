@@ -16,6 +16,34 @@ use swiyu_core::didlog::{DIDLog, DIDLogEntry};
 use swiyu_registries::common::RegistryError;
 use swiyu_registries::identifier::{Allocation, IdentifierRegistryClient};
 
+/// A successful `fetch_log` result.
+///
+/// Pairs the raw JSONL body the registry returned with the parsed
+/// entries. Both views matter because the SWIYU registry's PUT
+/// endpoint is "replace the whole log", not "append": each
+/// publish_log step needs the parsed entries to build the next entry
+/// on top, and the raw bytes to put back the prior entries verbatim.
+/// Re-serialising the parsed entries would risk byte-level drift
+/// (key ordering, whitespace) and corrupt the entryHash chain.
+pub struct FetchedLog {
+    pub raw: String,
+    pub entries: Vec<DIDLogEntry>,
+}
+
+/// Concatenates the existing JSONL log with a single new entry line,
+/// producing the body to PUT back to the SWIYU registry. Mirrors
+/// swiyu-didtool's `build_updated_log` so both producers send the
+/// same shape: previous lines verbatim, one `\n`, the new line, and
+/// no trailing newline.
+pub fn build_updated_log(prev_raw: &str, new_line: &str) -> String {
+    let mut out = prev_raw.trim_end_matches('\n').to_string();
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(new_line);
+    out
+}
+
 /// The registry operations the worker drives across `CreateIssuer`
 /// and `DeactivateIssuer` tasks: allocate the DID space, fetch the
 /// current DIDLog tail, and publish a signed DIDLog entry.
@@ -49,7 +77,7 @@ pub trait RegistryFacade: Send + Sync {
     fn fetch_log(
         &self,
         did: &DID,
-    ) -> impl Future<Output = Result<Vec<DIDLogEntry>, RegistryError>> + Send;
+    ) -> impl Future<Output = Result<FetchedLog, RegistryError>> + Send;
 }
 
 impl RegistryFacade for IdentifierRegistryClient {
@@ -69,10 +97,11 @@ impl RegistryFacade for IdentifierRegistryClient {
         IdentifierRegistryClient::publish_log_entry(self, partner_id, identifier, entry)
     }
 
-    async fn fetch_log(&self, did: &DID) -> Result<Vec<DIDLogEntry>, RegistryError> {
-        let body = IdentifierRegistryClient::fetch_log(self, did).await?;
-        DIDLog::try_from_jsonl(&body)
+    async fn fetch_log(&self, did: &DID) -> Result<FetchedLog, RegistryError> {
+        let raw = IdentifierRegistryClient::fetch_log(self, did).await?;
+        let entries = DIDLog::try_from_jsonl(&raw)
             .map(DIDLog::into_entries)
-            .map_err(|e| RegistryError::Decode(format!("DIDLog parse: {e}")))
+            .map_err(|e| RegistryError::Decode(format!("DIDLog parse: {e}")))?;
+        Ok(FetchedLog { raw, entries })
     }
 }
