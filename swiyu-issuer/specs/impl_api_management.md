@@ -135,6 +135,35 @@ Response (200):
 
 `state` follows the same observed-state rule as fetch and list. `issued_at` and `cancelled_at` are `null` until the offer transitions into the corresponding state.
 
+### GET /api/v1/issued-credentials/{credential_id} — fetch (credential-management slice)
+
+Returns the full record for a single issued credential. Tenant scoping comes from the bearer token; cross-tenant access returns `404 Not Found` — the same status as no-such-credential, so an attacker cannot probe for the existence of credentials outside their tenant. Response shape matches the lifecycle-handler response shape (see below).
+
+The `state` field carries the stored lifecycle state (`active` / `suspended` / `revoked`). The `expired` field is a derived view computed at read time from `expires_at`; expiry is never a stored state. See [`aspect-credential-management.md`](aspect-credential-management.md) § "Expiry is a view, not a state".
+
+### GET /api/v1/issued-credentials — list (credential-management slice)
+
+Lists the tenant's issued credentials, newest first. Cursor-paginated. Pagination sorts by `(issued_at DESC, id DESC)`; the cursor encodes those two values opaquely with the same base58(`<rfc3339>|<bare-id>`) shape used by the credential-offer list endpoint.
+
+Query parameters:
+
+- `limit` — page size, 1..=100, default 25.
+- `cursor` — opaque cursor from the previous page; omitted on the first page.
+- `issuer_id` — bare base58 issuer id; filters to credentials belonging to a single issuer.
+- `state` — filter on the **stored** lifecycle state, one of `active` | `suspended` | `revoked`. The derived `expired` view is intentionally not a filter; passing `state=expired` returns `400 invalid_input`.
+- `vct` — exact-match filter on the SD-JWT VC type identifier.
+
+Response (200):
+
+```json
+{
+  "items": [ /* same shape as GET /{credential_id} */ ],
+  "next_cursor": "…"
+}
+```
+
+`next_cursor` is `null` when the last page is reached.
+
 ### POST /api/v1/issued-credentials/{credential_id}/{suspend|unsuspend|revoke} — lifecycle (credential-management slice)
 
 Three synchronous handlers that flip an issued credential's lifecycle column and the corresponding two-bit slot on the issuer's BitstringStatusList in one transaction. Return the updated record (same shape across all three) on `200 OK`. Tenant scoping comes from the bearer token; the URL deliberately does not carry an `issuer_id` because the credential's `id` already pins which tenant and issuer it belongs to. Cross-tenant access returns `404 Not Found`.

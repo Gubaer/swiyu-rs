@@ -1,5 +1,6 @@
 mod auth;
 mod credential_offers;
+mod cursor;
 mod dto;
 mod error;
 mod issued_credentials;
@@ -49,6 +50,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/issuers/{issuer_id}/credential-offers/{offer_id}/status",
             get(credential_offers::status),
+        )
+        .route("/api/v1/issued-credentials", get(issued_credentials::list))
+        .route(
+            "/api/v1/issued-credentials/{credential_id}",
+            get(issued_credentials::get),
         )
         .route(
             "/api/v1/issued-credentials/{credential_id}/suspend",

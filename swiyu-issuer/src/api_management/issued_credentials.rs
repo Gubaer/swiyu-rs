@@ -5,16 +5,124 @@
 //! (phase 2); these handlers do not block on it.
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use chrono::Utc;
 
-use crate::domain::{IssuedCredential, IssuedCredentialId, StatusValue};
+use crate::domain::{
+    IssuedCredential, IssuedCredentialId, IssuedCredentialState, IssuerId, StatusValue,
+};
 use crate::persistence;
+use crate::persistence::issued_credentials::{ListFilters, ListPageQuery};
 
 use super::AppState;
 use super::auth::TenantContext;
-use super::dto::GetIssuedCredentialResponse;
+use super::cursor;
+use super::dto::{
+    GetIssuedCredentialResponse, ListIssuedCredentialsQuery, ListIssuedCredentialsResponse,
+};
 use super::error::ApiError;
+
+/// Page size applied to `GET /api/v1/issued-credentials` when the
+/// caller omits `limit`. Sized to fit a typical operator UI page
+/// without forcing a follow-up request.
+const DEFAULT_LIST_LIMIT: u32 = 25;
+
+/// Lower bound on `limit`. Zero would return an empty page with a
+/// `next_cursor` that never advances, so the smallest legal page is
+/// one row.
+const MIN_LIST_LIMIT: u32 = 1;
+
+/// Upper bound on `limit`. Caps per-request work against the database
+/// and the JSON response size; clients that need more rows must
+/// paginate.
+const MAX_LIST_LIMIT: u32 = 100;
+
+pub async fn get(
+    State(state): State<AppState>,
+    Path(credential_id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<Json<GetIssuedCredentialResponse>, ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        credential_id = %credential_id_str,
+        "issued credential fetch requested",
+    );
+    let credential_id = parse_credential_id(&credential_id_str)?;
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let credential =
+        persistence::issued_credentials::find(&mut conn, &tenant_context.tenant_id, &credential_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+    Ok(Json(credential_to_response(credential, Utc::now())))
+}
+
+pub async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<ListIssuedCredentialsQuery>,
+    tenant_context: TenantContext,
+) -> Result<Json<ListIssuedCredentialsResponse>, ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        limit = ?query.limit,
+        cursor_present = query.cursor.is_some(),
+        issuer_id = ?query.issuer_id,
+        state = ?query.state,
+        vct = ?query.vct,
+        "issued credential list requested",
+    );
+    let limit = resolve_list_limit(query.limit)?;
+    let issuer_id = query
+        .issuer_id
+        .as_deref()
+        .map(parse_issuer_id_filter)
+        .transpose()?;
+    let state_filter = query.state.as_deref().map(parse_state_filter).transpose()?;
+    let decoded_cursor = query
+        .cursor
+        .as_deref()
+        .map(|raw| cursor::decode(raw, |bare| IssuedCredentialId::from_bare(bare).map(|_| ())))
+        .transpose()?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let page = persistence::issued_credentials::list(
+        &mut conn,
+        &tenant_context.tenant_id,
+        ListPageQuery {
+            filters: ListFilters {
+                issuer_id,
+                state: state_filter,
+                vct: query.vct,
+            },
+            cursor: decoded_cursor.map(|c| (c.timestamp, c.bare_id)),
+            limit,
+        },
+    )
+    .await?;
+
+    let next_cursor = if page.has_more {
+        page.items
+            .last()
+            .map(|c| cursor::encode(c.issued_at, c.id.bare()))
+    } else {
+        None
+    };
+
+    let now = Utc::now();
+    let items = page
+        .items
+        .into_iter()
+        .map(|c| credential_to_response(c, now))
+        .collect();
+    Ok(Json(ListIssuedCredentialsResponse { items, next_cursor }))
+}
 
 pub async fn suspend(
     State(state): State<AppState>,
@@ -145,6 +253,30 @@ fn parse_credential_id(raw: &str) -> Result<IssuedCredentialId, ApiError> {
     })
 }
 
+fn parse_issuer_id_filter(raw: &str) -> Result<IssuerId, ApiError> {
+    IssuerId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
+        details: format!("issuer_id query parameter: {err}"),
+    })
+}
+
+fn parse_state_filter(raw: &str) -> Result<IssuedCredentialState, ApiError> {
+    IssuedCredentialState::parse(raw).map_err(|err| ApiError::InvalidInput {
+        details: format!("state query parameter: {err}"),
+    })
+}
+
+fn resolve_list_limit(requested: Option<u32>) -> Result<u32, ApiError> {
+    let limit = requested.unwrap_or(DEFAULT_LIST_LIMIT);
+    if !(MIN_LIST_LIMIT..=MAX_LIST_LIMIT).contains(&limit) {
+        return Err(ApiError::InvalidInput {
+            details: format!(
+                "limit must be between {MIN_LIST_LIMIT} and {MAX_LIST_LIMIT}, got {limit}"
+            ),
+        });
+    }
+    Ok(limit)
+}
+
 fn credential_to_response(
     credential: IssuedCredential,
     now: chrono::DateTime<Utc>,
@@ -178,6 +310,57 @@ mod tests {
     fn parse_credential_id_rejects_invalid_character() {
         let err = parse_credential_id("notValid0").unwrap_err();
         assert!(matches!(err, ApiError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn resolve_list_limit_uses_default_when_unset() {
+        assert_eq!(resolve_list_limit(None).unwrap(), DEFAULT_LIST_LIMIT);
+    }
+
+    #[test]
+    fn resolve_list_limit_accepts_value_in_range() {
+        assert_eq!(resolve_list_limit(Some(50)).unwrap(), 50);
+        assert_eq!(
+            resolve_list_limit(Some(MIN_LIST_LIMIT)).unwrap(),
+            MIN_LIST_LIMIT
+        );
+        assert_eq!(
+            resolve_list_limit(Some(MAX_LIST_LIMIT)).unwrap(),
+            MAX_LIST_LIMIT
+        );
+    }
+
+    #[test]
+    fn resolve_list_limit_rejects_zero() {
+        assert!(resolve_list_limit(Some(0)).is_err());
+    }
+
+    #[test]
+    fn resolve_list_limit_rejects_above_max() {
+        assert!(resolve_list_limit(Some(MAX_LIST_LIMIT + 1)).is_err());
+    }
+
+    #[test]
+    fn parse_state_filter_accepts_known_values() {
+        assert_eq!(
+            parse_state_filter("active").unwrap(),
+            IssuedCredentialState::Active
+        );
+        assert_eq!(
+            parse_state_filter("suspended").unwrap(),
+            IssuedCredentialState::Suspended
+        );
+        assert_eq!(
+            parse_state_filter("revoked").unwrap(),
+            IssuedCredentialState::Revoked
+        );
+    }
+
+    #[test]
+    fn parse_state_filter_rejects_expired() {
+        // `expired` is a derived view, not a stored state; the list
+        // filter operates on stored values only.
+        assert!(parse_state_filter("expired").is_err());
     }
 
     #[test]

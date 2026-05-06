@@ -243,9 +243,38 @@ pub struct ListCredentialOffersResponse {
     pub next_cursor: Option<String>,
 }
 
+/// Query parameters for `GET /api/v1/issued-credentials`. All fields
+/// are optional.
+#[derive(Debug, Deserialize)]
+pub struct ListIssuedCredentialsQuery {
+    /// Page size. Bounded at the handler to `1..=100`; out-of-range
+    /// values yield `invalid_input`. Defaults to 25 when omitted.
+    pub limit: Option<u32>,
+
+    /// Opaque cursor returned as `next_cursor` from the previous
+    /// page. Omit on the first request. The handler rejects anything
+    /// it did not itself emit.
+    pub cursor: Option<String>,
+
+    /// Filter to credentials belonging to a single issuer (bare
+    /// base58 id, no `issuer_` prefix).
+    pub issuer_id: Option<String>,
+
+    /// Filter on the **stored** lifecycle state, one of `active`,
+    /// `suspended`, `revoked`. The derived `expired` view is
+    /// intentionally not a filter — it would force a server-side
+    /// projection over `expires_at` against `now()` and would not
+    /// align with any persisted value; passing `state=expired`
+    /// returns `400 invalid_input`.
+    pub state: Option<String>,
+
+    /// Exact-match filter on the SD-JWT VC type identifier (URI).
+    pub vct: Option<String>,
+}
+
 /// Response body returned by issued-credential lifecycle handlers
-/// (`suspend`, `unsuspend`, `revoke`) and by the GET endpoints (once
-/// step 1.8 lands).
+/// (`suspend`, `unsuspend`, `revoke`) and by the GET endpoints
+/// (`get` and `list`).
 ///
 /// `state` carries the lifecycle state stored on the row
 /// (`active` / `suspended` / `revoked`). `expired` is a derived view
@@ -273,4 +302,10 @@ pub struct GetIssuedCredentialResponse {
     pub expired: bool,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListIssuedCredentialsResponse {
+    pub items: Vec<GetIssuedCredentialResponse>,
+    pub next_cursor: Option<String>,
 }

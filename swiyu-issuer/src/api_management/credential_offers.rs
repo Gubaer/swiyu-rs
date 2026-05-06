@@ -283,7 +283,13 @@ pub async fn list(
     let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let limit = resolve_list_limit(query.limit)?;
     let state_filter = parse_state_filter(query.state.as_deref())?;
-    let cursor = query.cursor.as_deref().map(decode_cursor).transpose()?;
+    let decoded_cursor = query
+        .cursor
+        .as_deref()
+        .map(|raw| {
+            super::cursor::decode(raw, |bare| CredentialOfferId::from_bare(bare).map(|_| ()))
+        })
+        .transpose()?;
 
     let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
@@ -294,7 +300,7 @@ pub async fn list(
         &issuer_id,
         ListPageQuery {
             state_filter,
-            cursor: cursor.map(|c| (c.created_at, c.offer_id)),
+            cursor: decoded_cursor.map(|c| (c.timestamp, c.bare_id)),
             limit,
             now,
         },
@@ -304,7 +310,7 @@ pub async fn list(
     let next_cursor = if page.has_more {
         page.items
             .last()
-            .map(|offer| encode_cursor(offer.created_at, offer.id.bare()))
+            .map(|offer| super::cursor::encode(offer.created_at, offer.id.bare()))
     } else {
         None
     };
@@ -338,39 +344,6 @@ fn parse_state_filter(raw: Option<&str>) -> Result<Option<CredentialOfferState>,
             .map_err(|err| ApiError::InvalidInput {
                 details: format!("state query parameter: {err}"),
             }),
-    }
-}
-
-#[derive(Debug)]
-struct DecodedCursor {
-    created_at: DateTime<Utc>,
-    offer_id: String,
-}
-
-fn encode_cursor(created_at: DateTime<Utc>, offer_id_bare: &str) -> String {
-    let raw = format!("{}|{}", created_at.to_rfc3339(), offer_id_bare);
-    bs58::encode(raw.as_bytes()).into_string()
-}
-
-fn decode_cursor(raw: &str) -> Result<DecodedCursor, ApiError> {
-    let bytes = bs58::decode(raw).into_vec().map_err(|_| invalid_cursor())?;
-    let text = String::from_utf8(bytes).map_err(|_| invalid_cursor())?;
-    let (ts, id) = text.split_once('|').ok_or_else(invalid_cursor)?;
-    let created_at = DateTime::parse_from_rfc3339(ts)
-        .map_err(|_| invalid_cursor())?
-        .with_timezone(&Utc);
-    // Reject anything we did not emit ourselves; the bare id was generated
-    // by the same validator on the way out.
-    CredentialOfferId::from_bare(id).map_err(|_| invalid_cursor())?;
-    Ok(DecodedCursor {
-        created_at,
-        offer_id: id.to_string(),
-    })
-}
-
-fn invalid_cursor() -> ApiError {
-    ApiError::InvalidInput {
-        details: "cursor query parameter: malformed or not issued by this server".to_string(),
     }
 }
 
@@ -622,55 +595,6 @@ mod tests {
     #[test]
     fn parse_state_filter_rejects_unknown_value() {
         let err = parse_state_filter(Some("nope")).unwrap_err();
-        assert!(matches!(err, ApiError::InvalidInput { .. }));
-    }
-
-    #[test]
-    fn cursor_round_trips() {
-        let created_at = DateTime::parse_from_rfc3339("2026-05-01T12:34:56.789Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let bare_id = "9hXq2vRtL8pK7f";
-        let encoded = encode_cursor(created_at, bare_id);
-        let decoded = decode_cursor(&encoded).unwrap();
-        assert_eq!(decoded.created_at, created_at);
-        assert_eq!(decoded.offer_id, bare_id);
-    }
-
-    #[test]
-    fn decode_cursor_rejects_garbage_base58() {
-        // '0' is outside the bs58 alphabet.
-        let err = decode_cursor("0000").unwrap_err();
-        assert!(matches!(err, ApiError::InvalidInput { .. }));
-    }
-
-    #[test]
-    fn decode_cursor_rejects_non_utf8_payload() {
-        // Valid base58 of bytes that are not valid UTF-8.
-        let encoded = bs58::encode([0xff, 0xfe, 0xfd]).into_string();
-        let err = decode_cursor(&encoded).unwrap_err();
-        assert!(matches!(err, ApiError::InvalidInput { .. }));
-    }
-
-    #[test]
-    fn decode_cursor_rejects_missing_separator() {
-        let encoded = bs58::encode(b"no-separator-here").into_string();
-        let err = decode_cursor(&encoded).unwrap_err();
-        assert!(matches!(err, ApiError::InvalidInput { .. }));
-    }
-
-    #[test]
-    fn decode_cursor_rejects_bad_timestamp() {
-        let encoded = bs58::encode(b"not-a-timestamp|9hXq2vRtL8pK7f").into_string();
-        let err = decode_cursor(&encoded).unwrap_err();
-        assert!(matches!(err, ApiError::InvalidInput { .. }));
-    }
-
-    #[test]
-    fn decode_cursor_rejects_bad_offer_id() {
-        // 'O' is excluded from the base58 alphabet, so the offer id is invalid.
-        let encoded = bs58::encode(b"2026-05-01T12:34:56+00:00|notValOd").into_string();
-        let err = decode_cursor(&encoded).unwrap_err();
         assert!(matches!(err, ApiError::InvalidInput { .. }));
     }
 }
