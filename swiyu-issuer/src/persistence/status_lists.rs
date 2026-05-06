@@ -213,6 +213,78 @@ pub async fn write_bit(
     Ok(())
 }
 
+/// Records a successful publish round.
+///
+/// Conditional on `published_version < target_version`: a concurrent
+/// worker that already advanced the row past `target_version` makes
+/// our update a no-op (returns `Ok(false)`). On the first writer the
+/// happy path resets the publish-state columns: the lease clears,
+/// the error string clears, the attempt counter resets to zero.
+///
+/// Returns `Ok(true)` when the row was updated, `Ok(false)` when the
+/// conditional `WHERE` rejected the update.
+pub async fn record_publish_success(
+    conn: &mut PgConnection,
+    list_id: &StatusListId,
+    target_version: u64,
+    now: DateTime<Utc>,
+) -> Result<bool, PersistenceError> {
+    let target = i64::try_from(target_version).map_err(|_| PersistenceError::DataIntegrity {
+        details: format!("status_lists row {list_id}: target_version overflows i64"),
+    })?;
+    let result = sqlx::query(
+        r#"
+        UPDATE status_lists
+        SET published_version = $1,
+            last_publish_attempt_at = $2,
+            last_publish_error = NULL,
+            next_publish_attempt_at = NULL,
+            publish_attempts = 0
+        WHERE id = $3 AND published_version < $1
+        "#,
+    )
+    .bind(target)
+    .bind(now)
+    .bind(list_id.bare())
+    .execute(&mut *conn)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Records a failed publish round (retryable or terminal).
+///
+/// Used by both the retryable and terminal paths in the publish
+/// worker; they differ only in `next_attempt_at` (a short backoff vs
+/// a flat long retry). The row's `last_publish_attempt_at` and
+/// `last_publish_error` get the round's outcome; `publish_attempts`
+/// increments by one; `next_publish_attempt_at` is the timestamp at
+/// which the row becomes eligible to be re-acquired.
+pub async fn record_publish_failure(
+    conn: &mut PgConnection,
+    list_id: &StatusListId,
+    error_message: &str,
+    next_attempt_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<(), PersistenceError> {
+    sqlx::query(
+        r#"
+        UPDATE status_lists
+        SET last_publish_attempt_at = $1,
+            last_publish_error = $2,
+            next_publish_attempt_at = $3,
+            publish_attempts = publish_attempts + 1
+        WHERE id = $4
+        "#,
+    )
+    .bind(now)
+    .bind(error_message)
+    .bind(next_attempt_at)
+    .bind(list_id.bare())
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Atomically picks the oldest dirty status list and stamps it with a
 /// publish-attempt lease.
 ///

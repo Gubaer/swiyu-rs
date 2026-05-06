@@ -165,10 +165,18 @@ pub enum CreateStatusListEntryCall {
     Decode(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateStatusListEntryCall {
+    Ok,
+    HttpStatus { status: u16, body: String },
+}
+
 #[derive(Default)]
 pub struct MockStatusRegistry {
     create_queue: Mutex<Vec<CreateStatusListEntryCall>>,
+    update_queue: Mutex<Vec<UpdateStatusListEntryCall>>,
     pub create_invocations: Mutex<Vec<String>>,
+    pub update_invocations: Mutex<Vec<(String, String, String)>>,
 }
 
 impl MockStatusRegistry {
@@ -178,6 +186,10 @@ impl MockStatusRegistry {
 
     pub fn enqueue_create(&self, call: CreateStatusListEntryCall) {
         self.create_queue.lock().unwrap().push(call);
+    }
+
+    pub fn enqueue_update(&self, call: UpdateStatusListEntryCall) {
+        self.update_queue.lock().unwrap().push(call);
     }
 }
 
@@ -198,6 +210,28 @@ impl StatusRegistryFacade for MockStatusRegistry {
                     Err(RegistryError::HttpStatus { status, body })
                 }
                 CreateStatusListEntryCall::Decode(message) => Err(RegistryError::Decode(message)),
+            }
+        }
+    }
+
+    fn update_status_list_entry(
+        &self,
+        partner_id: &str,
+        entry_id: &str,
+        status_list_jwt: &str,
+    ) -> impl Future<Output = Result<(), RegistryError>> + Send {
+        self.update_invocations.lock().unwrap().push((
+            partner_id.to_string(),
+            entry_id.to_string(),
+            status_list_jwt.to_string(),
+        ));
+        let next = self.update_queue.lock().unwrap().remove(0);
+        async move {
+            match next {
+                UpdateStatusListEntryCall::Ok => Ok(()),
+                UpdateStatusListEntryCall::HttpStatus { status, body } => {
+                    Err(RegistryError::HttpStatus { status, body })
+                }
             }
         }
     }

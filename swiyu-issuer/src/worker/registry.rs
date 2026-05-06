@@ -147,6 +147,13 @@ pub trait StatusRegistryFacade: Send + Sync {
         &self,
         partner_id: &str,
     ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send;
+
+    fn update_status_list_entry(
+        &self,
+        partner_id: &str,
+        entry_id: &str,
+        status_list_jwt: &str,
+    ) -> impl Future<Output = Result<(), RegistryError>> + Send;
 }
 
 impl StatusRegistryFacade for StatusRegistryClient {
@@ -156,6 +163,15 @@ impl StatusRegistryFacade for StatusRegistryClient {
     ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send {
         StatusRegistryClient::create_status_list_entry(self, partner_id)
     }
+
+    fn update_status_list_entry(
+        &self,
+        partner_id: &str,
+        entry_id: &str,
+        status_list_jwt: &str,
+    ) -> impl Future<Output = Result<(), RegistryError>> + Send {
+        StatusRegistryClient::update_status_list_entry(self, partner_id, entry_id, status_list_jwt)
+    }
 }
 
 impl<T: StatusRegistryFacade + ?Sized> StatusRegistryFacade for Arc<T> {
@@ -164,5 +180,14 @@ impl<T: StatusRegistryFacade + ?Sized> StatusRegistryFacade for Arc<T> {
         partner_id: &str,
     ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send {
         T::create_status_list_entry(self, partner_id)
+    }
+
+    fn update_status_list_entry(
+        &self,
+        partner_id: &str,
+        entry_id: &str,
+        status_list_jwt: &str,
+    ) -> impl Future<Output = Result<(), RegistryError>> + Send {
+        T::update_status_list_entry(self, partner_id, entry_id, status_list_jwt)
     }
 }

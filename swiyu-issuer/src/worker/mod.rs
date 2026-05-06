@@ -11,8 +11,10 @@ pub mod dispatch;
 pub mod registry;
 pub mod rotate_keys;
 pub mod runner;
+pub mod status_list_publisher;
 
 pub use runner::{Worker, WorkerError};
+pub use status_list_publisher::{PublisherConfig, StatusListPublisher};
 
 // `test_support` is hand-rolled mocks for `RegistryFacade` and
 // `SigningEngine`, used by both inline executor tests and integration
