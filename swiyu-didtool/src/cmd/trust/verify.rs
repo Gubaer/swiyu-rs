@@ -113,7 +113,7 @@ struct VerifyContext {
     /// check (which both resolve their `kid` against the issuer DID's verification methods).
     issuer_docs: HashMap<String, DIDDoc>,
     /// Cache of decoded, signature-verified status lists, keyed by URL. Parsing
-    /// (decompression, slot-width validation) is done by [`StatusList::from_payload`];
+    /// (decompression, slot-width validation) is done by `StatusList::try_from`;
     /// signature verification is done locally before insertion.
     status_lists: HashMap<String, StatusList>,
 }
@@ -447,7 +447,13 @@ fn parse_and_verify_status_list(
 
     // Decode + decompress + bit-width validate via core. Errors propagate as
     // TrustError::StatusList(StatusListError) through `?`.
-    Ok(StatusList::from_payload(&payload)?)
+    let inner = payload
+        .get("status_list")
+        .ok_or_else(|| VerifyError::StatusListMalformed {
+            url: url.to_string(),
+            reason: "payload is missing the `status_list` member".to_string(),
+        })?;
+    Ok(StatusList::try_from(inner)?)
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────
