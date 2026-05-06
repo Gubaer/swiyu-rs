@@ -1,5 +1,5 @@
-# Local PostgreSQL, HashiCorp Vault, and issuer-mgmt for swiyu-issuer
-# development.
+# Local PostgreSQL, HashiCorp Vault, issuer-mgmt, and issuer-oidc for
+# swiyu-issuer development.
 #
 # Usage (run from this directory, swiyu-issuer/):
 #   docker compose up -d            # builds + starts everything
@@ -7,8 +7,11 @@
 # Or from the workspace root:
 #   docker compose -f swiyu-issuer/docker-compose.yml up -d
 #
-# `docker compose build issuer-mgmt` rebuilds only the binary image.
-# `docker compose up -d --build issuer-mgmt` rebuilds and restarts it.
+# `docker compose build <service>` rebuilds a single binary image.
+# `docker compose up -d --build <service>` rebuilds and restarts it.
+# Each service builds its own runtime stage from the same Dockerfile
+# (`runtime-mgmt`, `runtime-oidc`); the cargo-chef cook layer is
+# shared between the two so the second build is incremental.
 #
 # Compose auto-loads .env from this directory. The defaults below
 # (after the :- in each ${VAR:-default}) match those documented in
@@ -105,6 +108,7 @@ services:
     build:
       context: ..
       dockerfile: swiyu-issuer/Dockerfile
+      target: runtime-mgmt
     container_name: swiyu-issuer-mgmt
     depends_on:
       postgres:
@@ -133,6 +137,45 @@ services:
         - curl
         - -fsS
         - http://localhost:8080/healthz
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # The issuer-oidc OID4VCI endpoint. Shares the database with
+  # issuer-mgmt (offers, OIDC tokens, nonces, signing-engine keypairs
+  # all live in the same Postgres). Independent of issuer-mgmt at
+  # runtime — both are reachable directly during dev; in production a
+  # reverse proxy in front of the two presents a single ISSUER_BASE_URL.
+  issuer-oidc:
+    build:
+      context: ..
+      dockerfile: swiyu-issuer/Dockerfile
+      target: runtime-oidc
+    container_name: swiyu-issuer-oidc
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}
+      BIND_ADDR_OIDC: 0.0.0.0:8081
+      ISSUER_BASE_URL: ${ISSUER_BASE_URL:-http://localhost:8080}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-300}
+      C_NONCE_TTL_SECONDS: ${C_NONCE_TTL_SECONDS:-300}
+      SIGNING_ENGINE: ${SIGNING_ENGINE:-vault}
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+      RUST_LOG: ${RUST_LOG:-debug,sqlx=info,hyper=info,h2=info,reqwest=info,tower=info,tower_http=info}
+    ports:
+      - "${ISSUER_OIDC_HOST_PORT:-8081}:8081"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://localhost:8081/healthz
       interval: 5s
       timeout: 5s
       retries: 12
