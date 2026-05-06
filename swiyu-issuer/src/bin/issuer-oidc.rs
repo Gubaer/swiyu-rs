@@ -28,15 +28,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let c_nonce_ttl =
         read_duration_env("C_NONCE_TTL_SECONDS", Config::DEFAULT_C_NONCE_TTL_SECONDS)?;
-    let status_list_url_template = env::var("SWIYU_STATUS_LIST_URL_TEMPLATE")
-        .map_err(|_| "SWIYU_STATUS_LIST_URL_TEMPLATE must be set")?;
-    if !status_list_url_template.contains(Config::STATUS_LIST_URL_LIST_ID_PLACEHOLDER) {
-        return Err(format!(
-            "SWIYU_STATUS_LIST_URL_TEMPLATE must contain the placeholder {}",
-            Config::STATUS_LIST_URL_LIST_ID_PLACEHOLDER
-        )
-        .into());
-    }
 
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
@@ -49,7 +40,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             issuer_base_url,
             access_token_ttl,
             c_nonce_ttl,
-            status_list_url_template,
         },
         engine,
     );

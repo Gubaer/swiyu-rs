@@ -101,6 +101,44 @@ pub async fn current_for_issuer(
         .map_err(integrity_from)
 }
 
+/// Reads the issuer's current status-list together with its
+/// registry-side public URL.
+///
+/// The `registry_url` column is populated by the create_issuer worker
+/// when it allocates the entry on the SWIYU Status Registry; callers in
+/// the issuance path embed it verbatim into the credential's signed
+/// `status.status_list.uri` claim. A list whose `registry_url` is still
+/// `NULL` cannot back a publicly-resolvable credential, so the issuance
+/// handler refuses to allocate against it.
+///
+/// Returns `Ok(None)` when the issuer has no current list **or** when
+/// the issuer row does not exist; the same collapse as
+/// [`current_for_issuer`].
+pub async fn current_for_issuer_with_url(
+    conn: &mut PgConnection,
+    issuer_id: &IssuerId,
+) -> Result<Option<(StatusListId, Option<String>)>, PersistenceError> {
+    let row = sqlx::query(
+        r#"
+        SELECT s.id, s.registry_url
+        FROM issuers i
+        JOIN status_lists s ON s.id = i.current_status_list_id
+        WHERE i.id = $1
+        "#,
+    )
+    .bind(issuer_id.bare())
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let raw_id: String = row.try_get("id")?;
+    let list_id = StatusListId::from_bare(raw_id).map_err(integrity_from)?;
+    let registry_url: Option<String> = row.try_get("registry_url")?;
+    Ok(Some((list_id, registry_url)))
+}
+
 /// Atomically allocates the next free index in the list.
 ///
 /// Implemented as a single `UPDATE ... RETURNING` so concurrent

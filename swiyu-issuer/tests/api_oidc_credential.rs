@@ -26,9 +26,11 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence;
 
 const TEST_BASE_URL: &str = "http://issuer.example.com";
-const TEST_STATUS_LIST_URL_TEMPLATE: &str = "https://registry.example.invalid/sl/{list_id}";
 const FIXTURE_DID: &str =
     "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d";
+const FIXTURE_STATUS_REGISTRY_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
+const FIXTURE_STATUS_REGISTRY_URL: &str =
+    "https://registry.example.invalid/api/v1/statuslist/11111111-2222-3333-4444-555555555555.jwt";
 
 fn build_state(pool: PgPool) -> AppState {
     let engine = AnySigningEngine::Dev(DevSigningEngine::new(pool.clone()));
@@ -38,7 +40,6 @@ fn build_state(pool: PgPool) -> AppState {
             issuer_base_url: TEST_BASE_URL.into(),
             access_token_ttl: Duration::seconds(300),
             c_nonce_ttl: Duration::seconds(300),
-            status_list_url_template: TEST_STATUS_LIST_URL_TEMPLATE.into(),
         },
         Arc::new(engine),
     )
@@ -59,9 +60,11 @@ async fn insert_issuer(pool: &PgPool, issuer: &Issuer) {
         .unwrap();
 }
 
-/// Constructs a fully-onboarded issuer with a real assertion key
-/// stored in the DevSigningEngine's table — the shape produced by
-/// the create_issuer worker flow.
+/// Constructs a fully-onboarded issuer: a real assertion key stored
+/// in the DevSigningEngine's table, plus a status_lists row carrying
+/// fixture registry coordinates (entry id + public URL). Mirrors the
+/// shape produced by the create_issuer worker once both
+/// `create_status_list_entry` and `provision_status_list` have run.
 async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
     let engine = DevSigningEngine::new(pool.clone());
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
@@ -81,7 +84,22 @@ async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer 
         created_at: Utc::now(),
     };
     insert_issuer(pool, &issuer).await;
+    provision_test_status_list(pool, &issuer).await;
     issuer
+}
+
+/// Inserts a `status_lists` row for `issuer` with fixture registry
+/// coordinates and re-points `issuers.current_status_list_id` at it.
+async fn provision_test_status_list(pool: &PgPool, issuer: &Issuer) {
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::status_lists::provision_for_issuer(
+        &mut conn,
+        &issuer.id,
+        Some(FIXTURE_STATUS_REGISTRY_ENTRY_ID),
+        Some(FIXTURE_STATUS_REGISTRY_URL),
+    )
+    .await
+    .unwrap();
 }
 
 async fn create_pending_offer(pool: &PgPool, issuer: &Issuer, claims: Value) -> CredentialOffer {
@@ -402,23 +420,35 @@ async fn issuance_bumps_allocated_count_and_committed_version(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn issuance_lazy_provisions_status_list(pool: PgPool) {
-    // Before issuance the issuer has no current_status_list_id.
-    // The handler must provision one inside the issuance
-    // transaction and re-point the issuer column.
+async fn issuance_fails_when_issuer_has_no_status_list(pool: PgPool) {
+    // An issuer that has not yet completed the create_issuer worker's
+    // provision_status_list step has no current_status_list_id. The
+    // handler refuses to issue rather than lazily provisioning a
+    // list — a fresh list would still need a registry round-trip to
+    // obtain its public URL, which does not belong in the issuance
+    // hot path.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = create_onboarded_issuer(&pool, &tenant_id).await;
-    let before: Option<String> =
-        sqlx::query_scalar("SELECT current_status_list_id FROM issuers WHERE id = $1")
-            .bind(issuer.id.bare())
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert!(
-        before.is_none(),
-        "fresh issuer must start with NULL pointer"
-    );
+
+    // Build the issuer manually so that no status_list is provisioned
+    // alongside it (i.e. skip `create_onboarded_issuer`).
+    let engine = DevSigningEngine::new(pool.clone());
+    let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
+    let issuer = Issuer {
+        id: IssuerId::generate(),
+        tenant_id: tenant_id.clone(),
+        did: FIXTURE_DID.into(),
+        state: Some(IssuerState::Active),
+        description: Some("issuer without status list".into()),
+        authorized_key_id: None,
+        authentication_key_id: None,
+        assertion_key_id: Some(assertion.id),
+        display_name: Some("Test Issuer".into()),
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    };
+    insert_issuer(&pool, &issuer).await;
 
     let offer = create_pending_offer(&pool, &issuer, json!({})).await;
     let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;
@@ -435,18 +465,10 @@ async fn issuance_lazy_provisions_status_list(pool: PgPool) {
         ))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
 
-    let after: Option<String> =
-        sqlx::query_scalar("SELECT current_status_list_id FROM issuers WHERE id = $1")
-            .bind(issuer.id.bare())
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert!(
-        after.is_some(),
-        "issuance must lazily provision a status list"
-    );
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = read_body_value(response).await;
+    assert_eq!(body["error"], "server_error");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -482,13 +504,9 @@ async fn credential_payload_carries_status_claim(pool: PgPool) {
     let status = &payload["status"]["status_list"];
     assert_eq!(status["idx"], 0);
     let uri = status["uri"].as_str().expect("status_list.uri is a string");
-    assert!(
-        uri.starts_with("https://registry.example.invalid/sl/"),
-        "status uri must start with the configured template prefix: got {uri:?}"
-    );
-    assert!(
-        !uri.contains("{list_id}"),
-        "status uri placeholder must be substituted: got {uri:?}"
+    assert_eq!(
+        uri, FIXTURE_STATUS_REGISTRY_URL,
+        "status uri must be the persisted registry_url verbatim",
     );
     assert!(
         payload["exp"].as_i64().is_some(),

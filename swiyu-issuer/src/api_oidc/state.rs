@@ -22,16 +22,6 @@ pub struct Config {
     /// equal to `access_token_ttl`; rotated independently when batch
     /// credential issuance arrives.
     pub c_nonce_ttl: chrono::Duration,
-
-    /// Template for the `status_list.uri` claim embedded in every
-    /// issued credential. The literal `{list_id}` is replaced with
-    /// the list's bare base58 id at issuance time. The concrete
-    /// template comes from the SWIYU Status Registry contract, which
-    /// is not yet finalised — alpha/beta credentials may carry a URL
-    /// the verifier cannot resolve until the Registry is wired up
-    /// (phase 2). See plan-credential-management.md (Cross-phase open
-    /// questions / Status-list well-known URL format).
-    pub status_list_url_template: String,
 }
 
 impl Config {
@@ -42,10 +32,6 @@ impl Config {
     /// Default value for `c_nonce_ttl` when the binary's
     /// `C_NONCE_TTL_SECONDS` env var is unset, in seconds.
     pub const DEFAULT_C_NONCE_TTL_SECONDS: i64 = 300;
-
-    /// Placeholder used inside `status_list_url_template`; replaced
-    /// at issuance time with the credential's status-list id.
-    pub const STATUS_LIST_URL_LIST_ID_PLACEHOLDER: &'static str = "{list_id}";
 }
 
 #[derive(Clone)]

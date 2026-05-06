@@ -18,7 +18,6 @@ use crate::persistence;
 
 use super::AppState;
 use super::oauth_error::OAuthError;
-use super::state::Config;
 
 const SUPPORTED_FORMAT: &str = "vc+sd-jwt";
 const SUPPORTED_PROOF_TYPE: &str = "jwt";
@@ -195,13 +194,10 @@ pub async fn credential(
         .await
         .map_err(|err| OAuthError::Internal(Box::new(err)))?;
 
-    let (status_list_id, status_list_index) = allocate_status_slot(&mut tx, &issuer.id).await?;
+    let (status_list_id, status_list_index, status_list_registry_url) =
+        allocate_status_slot(&mut tx, &issuer.id).await?;
 
-    let status_claim = build_status_claim(
-        &state.config.status_list_url_template,
-        &status_list_id,
-        status_list_index,
-    );
+    let status_claim = build_status_claim(&status_list_registry_url, status_list_index);
     let expires_at = now + Duration::days(CREDENTIAL_VALIDITY_DAYS);
     let credential = build_sd_jwt_vc(
         state.engine.as_ref(),
@@ -265,60 +261,71 @@ pub async fn credential(
     Ok(Json(CredentialResponse { credential }))
 }
 
-/// Resolves the issuer's current status list and atomically allocates
-/// the next free index, lazily provisioning a fresh list when the
-/// issuer has never had one and auto-provisioning a successor when
-/// the current list is at capacity.
+/// Resolves the issuer's current status list, returns its public
+/// `registry_url`, and atomically allocates the next free index.
+///
+/// Refuses to issue when the issuer has no current list, when that
+/// list lacks a `registry_url`, or when it is at capacity. The first
+/// two cases mean the issuer has not been fully onboarded against the
+/// SWIYU Status Registry; the third means the operator must roll over
+/// to a new list out-of-band. None of these recover by lazy
+/// in-handler provisioning, because a freshly minted list still
+/// requires a registry round-trip to obtain its public URL — work
+/// that belongs in the create_issuer worker, not in the issuance hot
+/// path.
 async fn allocate_status_slot(
     tx: &mut sqlx::PgConnection,
     issuer_id: &IssuerId,
-) -> Result<(StatusListId, StatusListIndex), OAuthError> {
-    let list_id = match persistence::status_lists::current_for_issuer(tx, issuer_id)
-        .await
-        .map_err(map_lookup)?
+) -> Result<(StatusListId, StatusListIndex, String), OAuthError> {
+    let (list_id, registry_url) = match persistence::status_lists::current_for_issuer_with_url(
+        tx, issuer_id,
+    )
+    .await
+    .map_err(map_lookup)?
     {
-        Some(id) => id,
-        None => persistence::status_lists::provision_for_issuer(tx, issuer_id, None, None)
-            .await
-            .map_err(map_lookup)?,
+        Some((id, Some(url))) => (id, url),
+        Some((id, None)) => {
+            return Err(OAuthError::Internal(Box::new(std::io::Error::other(
+                format!(
+                    "status list {id} for issuer {issuer_id} has no registry_url; \
+                         create_issuer must complete the create_status_list_entry step before issuance"
+                ),
+            ))));
+        }
+        None => {
+            return Err(OAuthError::Internal(Box::new(std::io::Error::other(
+                format!(
+                    "issuer {issuer_id} has no current status list; \
+                         create_issuer must complete the provision_status_list step before issuance"
+                ),
+            ))));
+        }
     };
 
-    if let Some(index) = persistence::status_lists::allocate_index(tx, &list_id)
-        .await
-        .map_err(map_lookup)?
-    {
-        return Ok((list_id, index));
-    }
-
-    // The current list reported full (or vanished). Provision a
-    // fresh one and try once more; the new list starts at zero so
-    // the second allocate must succeed unless something is structurally
-    // wrong (e.g. the issuer was deleted concurrently).
-    let new_list_id = persistence::status_lists::provision_for_issuer(tx, issuer_id, None, None)
-        .await
-        .map_err(map_lookup)?;
-    let index = persistence::status_lists::allocate_index(tx, &new_list_id)
+    let index = persistence::status_lists::allocate_index(tx, &list_id)
         .await
         .map_err(map_lookup)?
         .ok_or_else(|| {
-            OAuthError::Internal(Box::new(std::io::Error::other(
-                "newly provisioned status list refused to allocate index 0",
-            )))
+            OAuthError::Internal(Box::new(std::io::Error::other(format!(
+                "status list {list_id} is at capacity; rollover to a fresh \
+                 list requires a registry round-trip and is not performed in \
+                 the issuance handler"
+            ))))
         })?;
-    Ok((new_list_id, index))
+
+    Ok((list_id, index, registry_url))
 }
 
 /// Renders the SD-JWT VC `status` claim. Wire shape per W3C Bitstring
 /// Status List + SD-JWT VC: a single `status_list` member carrying
-/// `idx` and `uri`. The SWIYU Status Registry's URL convention is
-/// not yet finalised; the template is configurable so an alpha/beta
-/// deployment can ship and the URL gets settled before phase 2.
-fn build_status_claim(url_template: &str, list_id: &StatusListId, index: StatusListIndex) -> Value {
-    let uri = url_template.replace(Config::STATUS_LIST_URL_LIST_ID_PLACEHOLDER, list_id.bare());
+/// `idx` and `uri`. The `uri` is the SWIYU Status Registry's public
+/// URL for the list, captured at registry-allocation time and
+/// persisted in `status_lists.registry_url`.
+fn build_status_claim(registry_url: &str, index: StatusListIndex) -> Value {
     json!({
         "status_list": {
             "idx": index.value(),
-            "uri": uri,
+            "uri": registry_url,
         }
     })
 }
@@ -669,30 +676,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn build_status_claim_substitutes_list_id_into_uri() {
-        let list_id = StatusListId::from_bare("9hXq2vRtL8pK7f").unwrap();
+    fn build_status_claim_uses_registry_url_verbatim() {
         let index = StatusListIndex::try_from(42u32).unwrap();
-        let claim = build_status_claim(
-            "https://registry.example.com/status/{list_id}",
-            &list_id,
-            index,
-        );
+        let registry_url = "https://status-reg.example.com/api/v1/statuslist/abc-123-uuid.jwt";
+        let claim = build_status_claim(registry_url, index);
         assert_eq!(claim["status_list"]["idx"], 42);
-        assert_eq!(
-            claim["status_list"]["uri"],
-            "https://registry.example.com/status/9hXq2vRtL8pK7f"
-        );
-    }
-
-    #[test]
-    fn build_status_claim_does_not_carry_unsubstituted_placeholder() {
-        // A misconfigured template (missing the placeholder) lets the
-        // bare URL ship as-is; the binary's startup check is the
-        // real enforcement, this asserts the renderer's behaviour.
-        let list_id = StatusListId::from_bare("9hXq2vRtL8pK7f").unwrap();
-        let index = StatusListIndex::try_from(0u32).unwrap();
-        let claim = build_status_claim("https://example.com/static", &list_id, index);
-        assert_eq!(claim["status_list"]["uri"], "https://example.com/static");
+        assert_eq!(claim["status_list"]["uri"], registry_url);
     }
 
     #[test]
