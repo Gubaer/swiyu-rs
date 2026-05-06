@@ -141,9 +141,9 @@ pub async fn suspend(
         &credential_id,
         |credential| credential.try_suspend().map_err(ApiError::from),
         StatusValue::Suspended,
+        "suspend",
     )
     .await?;
-    // TODO(audit): record IssuedCredentialSuspended event.
     Ok(Json(credential_to_response(updated, Utc::now())))
 }
 
@@ -164,9 +164,9 @@ pub async fn unsuspend(
         &credential_id,
         |credential| credential.try_unsuspend().map_err(ApiError::from),
         StatusValue::Valid,
+        "unsuspend",
     )
     .await?;
-    // TODO(audit): record IssuedCredentialUnsuspended event.
     Ok(Json(credential_to_response(updated, Utc::now())))
 }
 
@@ -187,9 +187,9 @@ pub async fn revoke(
         &credential_id,
         |credential| credential.try_revoke().map_err(ApiError::from),
         StatusValue::Revoked,
+        "revoke",
     )
     .await?;
-    // TODO(audit): record IssuedCredentialRevoked event.
     Ok(Json(credential_to_response(updated, Utc::now())))
 }
 
@@ -208,6 +208,7 @@ async fn run_lifecycle_op<F>(
     credential_id: &IssuedCredentialId,
     apply_transition: F,
     bit_value: StatusValue,
+    audit_action: &'static str,
 ) -> Result<IssuedCredential, ApiError>
 where
     F: FnOnce(&mut IssuedCredential) -> Result<(), ApiError>,
@@ -239,6 +240,14 @@ where
         bit_value,
     )
     .await?;
+    // TODO(audit): record audit entry in this transaction —
+    //   action       = audit_action ("suspend" / "unsuspend" / "revoke")
+    //   tenant_id    = tenant_context.tenant_id
+    //   issuer_id    = credential.issuer_id
+    //   target       = credential.id
+    //   details      = JSONB { "to": credential.state.as_str() }
+    // See `aspect-credential-management.md` § "Audit trail".
+    let _ = audit_action;
 
     tx.commit()
         .await

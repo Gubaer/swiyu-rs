@@ -232,6 +232,9 @@ pub async fn credential(
     persistence::issued_credentials::insert(&mut tx, &issued_credential)
         .await
         .map_err(map_lookup)?;
+    // TODO(audit): record IssuedCredentialIssued event in the same
+    // transaction (action=issue, target=issued_credential.id, details
+    // includes the originating offer_id).
 
     persistence::oidc::credential_offers::mark_issued(
         &mut tx,
