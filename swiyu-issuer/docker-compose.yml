@@ -123,6 +123,7 @@ services:
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
       SWIYU_IDENTIFIER_REGISTRY_URL: ${SWIYU_IDENTIFIER_REGISTRY_URL}
+      SWIYU_STATUS_REGISTRY_URL: ${SWIYU_STATUS_REGISTRY_URL}
       SWIYU_ACCESS_TOKEN: ${SWIYU_ACCESS_TOKEN}
       # Smoke-test friendly default: debug for our crates, info for
       # known-noisy deps (sqlx prints every prepared statement at debug;
