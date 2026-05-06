@@ -214,8 +214,7 @@ mod tests {
         // Wire format is bare; a prefixed JSON string must fail
         // deserialization so callers cannot accidentally double-up
         // the prefix on round-trips.
-        let result: Result<CredentialOfferId, _> =
-            serde_json::from_str("\"offer_9hXq2vRtL8pK7f\"");
+        let result: Result<CredentialOfferId, _> = serde_json::from_str("\"offer_9hXq2vRtL8pK7f\"");
         assert!(result.is_err());
     }
 
