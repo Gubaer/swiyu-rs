@@ -9,10 +9,8 @@
 ALTER TABLE tenants
     ADD COLUMN partner_id TEXT;
 
--- Backfill the seeded dev tenant from migration 0001 with a clearly-
--- fake placeholder. The all-zero ("nil") UUID flags the row as
--- "must be re-onboarded before any real registry call"; real SWIYU
--- partner-ids are v4 UUIDs.
+-- Backfill the seeded dev tenant from migration 0001 with the
+-- business partner id for kacon gmbh. Use during development only.
 UPDATE tenants
-SET partner_id = '00000000-0000-0000-0000-000000000000'
+SET partner_id = '4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef'
 WHERE id = '4Mk7yK5pQR7sN3';
