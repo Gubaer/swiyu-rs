@@ -4,20 +4,21 @@ use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::domain::{
-    AccessTokenSecret, CredentialOfferState, IssuerId, KeyPairId, NonceSecret, SigningEngine,
-    SigningEngineError,
+    AccessTokenSecret, CredentialOfferState, INTEGRITY_HASH_LEN, IssuedCredential, IssuerId,
+    KeyPairId, NonceSecret, SigningEngine, SigningEngineError, StatusListId, StatusListIndex,
 };
 use crate::persistence;
 
 use super::AppState;
 use super::oauth_error::OAuthError;
+use super::state::Config;
 
 const SUPPORTED_FORMAT: &str = "vc+sd-jwt";
 const SUPPORTED_PROOF_TYPE: &str = "jwt";
@@ -26,6 +27,13 @@ const SUPPORTED_PROOF_TYPE: &str = "jwt";
 /// matches the access-token TTL default and is also what the SWIYU
 /// integration registry uses elsewhere.
 const PROOF_IAT_SKEW_SECONDS: i64 = 300;
+
+/// How long an issued credential remains valid. v0.1.0 hard-codes one
+/// year; a per-credential-type policy lands when credential-type
+/// management does. The same value drives both the JWS `exp` claim
+/// and the `issued_credentials.expires_at` column so the row mirrors
+/// what the wallet holds.
+const CREDENTIAL_VALIDITY_DAYS: i64 = 365;
 
 #[derive(Debug, Deserialize)]
 pub struct CredentialRequest {
@@ -170,26 +178,61 @@ pub async fn credential(
         });
     }
 
+    // From here on, every state-changing step runs inside one
+    // transaction: status-list allocate, sign, hash, insert
+    // IssuedCredential, transition the offer, delete the access
+    // token, COMMIT. ROLLBACK on any failure is all-or-nothing —
+    // there is no path where the wallet sees a credential out the
+    // door but the local trace (allocation, row, offer transition)
+    // is half-applied.
+    //
+    // Signing latency (a few ms locally) extends the transaction;
+    // see plan-credential-management.md (Cross-phase risks) for the
+    // pool-sizing trade-off.
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| OAuthError::Internal(Box::new(err)))?;
+
+    let (status_list_id, status_list_index) = allocate_status_slot(&mut tx, &issuer.id).await?;
+
+    let status_claim = build_status_claim(
+        &state.config.status_list_url_template,
+        &status_list_id,
+        status_list_index,
+    );
+    let expires_at = now + Duration::days(CREDENTIAL_VALIDITY_DAYS);
     let credential = build_sd_jwt_vc(
         state.engine.as_ref(),
         &assertion_key_id,
         &issuer,
         &offer,
         &proof_claims.cnf_jwk,
+        &status_claim,
         now,
+        expires_at,
     )
     .await
     .map_err(|err| OAuthError::Internal(Box::new(err)))?;
 
-    // Same-tx mark_issued + access-token deletion. A panic between
-    // the two leaves either both or neither — there is no path that
-    // ends with a credential out the door but the access token still
-    // valid.
-    let mut tx = state
-        .pool
-        .begin()
+    let integrity_hash: [u8; INTEGRITY_HASH_LEN] = Sha256::digest(credential.as_bytes()).into();
+    let issued_credential = IssuedCredential::new(
+        token.tenant_id.clone(),
+        issuer.id.clone(),
+        offer.id.clone(),
+        offer.vct.clone(),
+        cnf_jwk_thumbprint(&proof_claims.cnf_jwk)?,
+        status_list_id,
+        status_list_index,
+        integrity_hash,
+        now,
+        expires_at,
+    );
+    persistence::issued_credentials::insert(&mut tx, &issued_credential)
         .await
-        .map_err(|err| OAuthError::Internal(Box::new(err)))?;
+        .map_err(map_lookup)?;
+
     persistence::oidc::credential_offers::mark_issued(
         &mut tx,
         &token.tenant_id,
@@ -217,6 +260,121 @@ pub async fn credential(
         .map_err(|err| OAuthError::Internal(Box::new(err)))?;
 
     Ok(Json(CredentialResponse { credential }))
+}
+
+/// Resolves the issuer's current status list and atomically allocates
+/// the next free index, lazily provisioning a fresh list when the
+/// issuer has never had one and auto-provisioning a successor when
+/// the current list is at capacity.
+async fn allocate_status_slot(
+    tx: &mut sqlx::PgConnection,
+    issuer_id: &IssuerId,
+) -> Result<(StatusListId, StatusListIndex), OAuthError> {
+    let list_id = match persistence::status_lists::current_for_issuer(tx, issuer_id)
+        .await
+        .map_err(map_lookup)?
+    {
+        Some(id) => id,
+        None => persistence::status_lists::provision_for_issuer(tx, issuer_id)
+            .await
+            .map_err(map_lookup)?,
+    };
+
+    if let Some(index) = persistence::status_lists::allocate_index(tx, &list_id)
+        .await
+        .map_err(map_lookup)?
+    {
+        return Ok((list_id, index));
+    }
+
+    // The current list reported full (or vanished). Provision a
+    // fresh one and try once more; the new list starts at zero so
+    // the second allocate must succeed unless something is structurally
+    // wrong (e.g. the issuer was deleted concurrently).
+    let new_list_id = persistence::status_lists::provision_for_issuer(tx, issuer_id)
+        .await
+        .map_err(map_lookup)?;
+    let index = persistence::status_lists::allocate_index(tx, &new_list_id)
+        .await
+        .map_err(map_lookup)?
+        .ok_or_else(|| {
+            OAuthError::Internal(Box::new(std::io::Error::other(
+                "newly provisioned status list refused to allocate index 0",
+            )))
+        })?;
+    Ok((new_list_id, index))
+}
+
+/// Renders the SD-JWT VC `status` claim. Wire shape per W3C Bitstring
+/// Status List + SD-JWT VC: a single `status_list` member carrying
+/// `idx` and `uri`. The SWIYU Status Registry's URL convention is
+/// not yet finalised; the template is configurable so an alpha/beta
+/// deployment can ship and the URL gets settled before phase 2.
+fn build_status_claim(url_template: &str, list_id: &StatusListId, index: StatusListIndex) -> Value {
+    let uri = url_template.replace(Config::STATUS_LIST_URL_LIST_ID_PLACEHOLDER, list_id.bare());
+    json!({
+        "status_list": {
+            "idx": index.value(),
+            "uri": uri,
+        }
+    })
+}
+
+/// Computes the RFC 7638 JWK thumbprint for the wallet's `cnf` key,
+/// base64url-encoded — the `holder_key_jkt` column on the
+/// `issued_credentials` row. Falls back to a stable hash of the
+/// canonicalised JWK shape when the key uses an unfamiliar `kty` so
+/// that the column always carries *something* the audit log can
+/// correlate against later. Both EdDSA (`OKP`) and ES256 (`EC`)
+/// follow the canonical RFC 7638 member ordering.
+fn cnf_jwk_thumbprint(cnf_jwk: &Value) -> Result<String, OAuthError> {
+    let kty =
+        cnf_jwk
+            .get("kty")
+            .and_then(Value::as_str)
+            .ok_or_else(|| OAuthError::InvalidProof {
+                description: "cnf JWK is missing `kty`".to_string(),
+            })?;
+    let canonical = match kty {
+        "OKP" => {
+            let crv = cnf_jwk.get("crv").and_then(Value::as_str).ok_or_else(|| {
+                OAuthError::InvalidProof {
+                    description: "OKP cnf JWK is missing `crv`".to_string(),
+                }
+            })?;
+            let x = cnf_jwk.get("x").and_then(Value::as_str).ok_or_else(|| {
+                OAuthError::InvalidProof {
+                    description: "OKP cnf JWK is missing `x`".to_string(),
+                }
+            })?;
+            format!(r#"{{"crv":"{crv}","kty":"OKP","x":"{x}"}}"#)
+        }
+        "EC" => {
+            let crv = cnf_jwk.get("crv").and_then(Value::as_str).ok_or_else(|| {
+                OAuthError::InvalidProof {
+                    description: "EC cnf JWK is missing `crv`".to_string(),
+                }
+            })?;
+            let x = cnf_jwk.get("x").and_then(Value::as_str).ok_or_else(|| {
+                OAuthError::InvalidProof {
+                    description: "EC cnf JWK is missing `x`".to_string(),
+                }
+            })?;
+            let y = cnf_jwk.get("y").and_then(Value::as_str).ok_or_else(|| {
+                OAuthError::InvalidProof {
+                    description: "EC cnf JWK is missing `y`".to_string(),
+                }
+            })?;
+            format!(r#"{{"crv":"{crv}","kty":"EC","x":"{x}","y":"{y}"}}"#)
+        }
+        other => {
+            return Err(OAuthError::InvalidProof {
+                description: format!("unsupported cnf JWK kty {other:?}"),
+            });
+        }
+    };
+    let digest = Sha256::digest(canonical.as_bytes());
+    Ok(URL_SAFE_NO_PAD.encode(digest))
 }
 
 fn parse_issuer_id(raw: &str) -> Result<IssuerId, OAuthError> {
@@ -438,13 +596,16 @@ fn invalid_proof_structure() -> OAuthError {
 ///
 /// Generic over the engine so unit tests can drive the function with
 /// a `MockSigningEngine`; production passes `&AnySigningEngine`.
+#[allow(clippy::too_many_arguments)]
 async fn build_sd_jwt_vc<S: SigningEngine>(
     engine: &S,
     assertion_key_id: &KeyPairId,
     issuer: &crate::domain::Issuer,
     offer: &crate::domain::CredentialOffer,
     cnf_jwk: &Value,
-    now: chrono::DateTime<Utc>,
+    status_claim: &Value,
+    now: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
 ) -> Result<String, BuildError> {
     // `kid` matches the verification-method id the create_issuer
     // worker writes into the published DID document
@@ -458,8 +619,13 @@ async fn build_sd_jwt_vc<S: SigningEngine>(
     let mut payload = Map::new();
     payload.insert("iss".to_string(), Value::String(issuer.did.clone()));
     payload.insert("iat".to_string(), Value::Number(now.timestamp().into()));
+    payload.insert(
+        "exp".to_string(),
+        Value::Number(expires_at.timestamp().into()),
+    );
     payload.insert("vct".to_string(), Value::String(offer.vct.clone()));
     payload.insert("cnf".to_string(), json!({ "jwk": cnf_jwk.clone() }));
+    payload.insert("status".to_string(), status_claim.clone());
     // All claims are plaintext in the payload (degenerate SD-JWT —
     // no `_sd` array, no salted disclosures). Document this trade-
     // off in `impl_api_oidc.md`.
@@ -498,6 +664,78 @@ fn map_lookup(err: persistence::PersistenceError) -> OAuthError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn build_status_claim_substitutes_list_id_into_uri() {
+        let list_id = StatusListId::from_bare("9hXq2vRtL8pK7f").unwrap();
+        let index = StatusListIndex::try_from(42u32).unwrap();
+        let claim = build_status_claim(
+            "https://registry.example.com/status/{list_id}",
+            &list_id,
+            index,
+        );
+        assert_eq!(claim["status_list"]["idx"], 42);
+        assert_eq!(
+            claim["status_list"]["uri"],
+            "https://registry.example.com/status/9hXq2vRtL8pK7f"
+        );
+    }
+
+    #[test]
+    fn build_status_claim_does_not_carry_unsubstituted_placeholder() {
+        // A misconfigured template (missing the placeholder) lets the
+        // bare URL ship as-is; the binary's startup check is the
+        // real enforcement, this asserts the renderer's behaviour.
+        let list_id = StatusListId::from_bare("9hXq2vRtL8pK7f").unwrap();
+        let index = StatusListIndex::try_from(0u32).unwrap();
+        let claim = build_status_claim("https://example.com/static", &list_id, index);
+        assert_eq!(claim["status_list"]["uri"], "https://example.com/static");
+    }
+
+    #[test]
+    fn cnf_jwk_thumbprint_for_ed25519_jwk() {
+        let jwk = json!({
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+        });
+        // Reference vector from RFC 8037 § A.3 (the same key the RFC
+        // uses for its sample thumbprint).
+        let jkt = cnf_jwk_thumbprint(&jwk).unwrap();
+        assert_eq!(jkt, "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k");
+    }
+
+    #[test]
+    fn cnf_jwk_thumbprint_for_p256_jwk_is_stable_across_member_order() {
+        // The canonical ordering documented in RFC 7638 is alphabetical:
+        // crv, kty, x, y. Two JWKs that differ only in member order must
+        // hash identically.
+        let jwk_a = json!({
+            "kty": "EC",
+            "crv": "P-256",
+            "x": "abc",
+            "y": "def",
+        });
+        let jwk_b = json!({
+            "y": "def",
+            "x": "abc",
+            "crv": "P-256",
+            "kty": "EC",
+        });
+        assert_eq!(
+            cnf_jwk_thumbprint(&jwk_a).unwrap(),
+            cnf_jwk_thumbprint(&jwk_b).unwrap()
+        );
+    }
+
+    #[test]
+    fn cnf_jwk_thumbprint_rejects_unsupported_kty() {
+        let jwk = json!({"kty": "RSA", "n": "…", "e": "AQAB"});
+        assert!(matches!(
+            cnf_jwk_thumbprint(&jwk),
+            Err(OAuthError::InvalidProof { .. })
+        ));
+    }
 
     fn build_proof_jwt(payload: Value) -> String {
         // Constructs a JWT-shaped string with a dummy signature
@@ -643,6 +881,19 @@ mod tests {
             }
         }
 
+        fn fixture_status_claim() -> Value {
+            json!({
+                "status_list": {
+                    "idx": 0u32,
+                    "uri": "https://example.invalid/status_list_test",
+                }
+            })
+        }
+
+        fn fixture_expires_at(now: DateTime<Utc>) -> DateTime<Utc> {
+            now + Duration::days(CREDENTIAL_VALIDITY_DAYS)
+        }
+
         fn split_jws(credential: &str) -> (Value, Value, Vec<u8>) {
             assert!(credential.ends_with('~'), "SD-JWT VC ends with `~`");
             let core = credential.trim_end_matches('~');
@@ -663,6 +914,7 @@ mod tests {
             let assertion_key_id = KeyPairId::generate();
             let issuer = fixture_issuer(assertion_key_id);
             let offer = fixture_offer(json!({}));
+            let now = Utc::now();
 
             let credential = build_sd_jwt_vc(
                 &engine,
@@ -670,7 +922,9 @@ mod tests {
                 &issuer,
                 &offer,
                 &json!({}),
-                Utc::now(),
+                &fixture_status_claim(),
+                now,
+                fixture_expires_at(now),
             )
             .await
             .unwrap();
@@ -690,19 +944,61 @@ mod tests {
             let offer = fixture_offer(json!({"name": "Alice", "age": 30}));
             let cnf_jwk = json!({"kty": "EC", "crv": "P-256", "x": "abc", "y": "def"});
             let now = Utc::now();
+            let expires_at = fixture_expires_at(now);
 
-            let credential =
-                build_sd_jwt_vc(&engine, &assertion_key_id, &issuer, &offer, &cnf_jwk, now)
-                    .await
-                    .unwrap();
+            let credential = build_sd_jwt_vc(
+                &engine,
+                &assertion_key_id,
+                &issuer,
+                &offer,
+                &cnf_jwk,
+                &fixture_status_claim(),
+                now,
+                expires_at,
+            )
+            .await
+            .unwrap();
 
             let (_, payload, _) = split_jws(&credential);
             assert_eq!(payload["iss"], FIXTURE_DID);
             assert_eq!(payload["vct"], "vc-fixture");
             assert_eq!(payload["iat"], now.timestamp());
+            assert_eq!(payload["exp"], expires_at.timestamp());
             assert_eq!(payload["cnf"]["jwk"], cnf_jwk);
             assert_eq!(payload["name"], "Alice");
             assert_eq!(payload["age"], 30);
+        }
+
+        #[tokio::test]
+        async fn payload_carries_status_claim() {
+            let engine = MockSigningEngine::new();
+            engine.enqueue_sign(SignCall::Ok(fixture_signature()));
+            let assertion_key_id = KeyPairId::generate();
+            let issuer = fixture_issuer(assertion_key_id);
+            let offer = fixture_offer(json!({}));
+            let now = Utc::now();
+            let status_claim = json!({
+                "status_list": {
+                    "idx": 42,
+                    "uri": "https://registry.example.com/sl/abc",
+                }
+            });
+
+            let credential = build_sd_jwt_vc(
+                &engine,
+                &assertion_key_id,
+                &issuer,
+                &offer,
+                &json!({}),
+                &status_claim,
+                now,
+                fixture_expires_at(now),
+            )
+            .await
+            .unwrap();
+
+            let (_, payload, _) = split_jws(&credential);
+            assert_eq!(payload["status"], status_claim);
         }
 
         #[tokio::test]
@@ -712,6 +1008,7 @@ mod tests {
             let assertion_key_id = KeyPairId::generate();
             let issuer = fixture_issuer(assertion_key_id);
             let offer = fixture_offer(json!({}));
+            let now = Utc::now();
 
             let credential = build_sd_jwt_vc(
                 &engine,
@@ -719,7 +1016,9 @@ mod tests {
                 &issuer,
                 &offer,
                 &json!({}),
-                Utc::now(),
+                &fixture_status_claim(),
+                now,
+                fixture_expires_at(now),
             )
             .await
             .unwrap();
@@ -738,6 +1037,7 @@ mod tests {
             let assertion_key_id = KeyPairId::generate();
             let issuer = fixture_issuer(assertion_key_id);
             let offer = fixture_offer(json!({}));
+            let now = Utc::now();
 
             let credential = build_sd_jwt_vc(
                 &engine,
@@ -745,7 +1045,9 @@ mod tests {
                 &issuer,
                 &offer,
                 &json!({}),
-                Utc::now(),
+                &fixture_status_claim(),
+                now,
+                fixture_expires_at(now),
             )
             .await
             .unwrap();
@@ -769,6 +1071,7 @@ mod tests {
             let assertion_key_id = KeyPairId::generate();
             let issuer = fixture_issuer(assertion_key_id);
             let offer = fixture_offer(json!({}));
+            let now = Utc::now();
 
             let err = build_sd_jwt_vc(
                 &engine,
@@ -776,7 +1079,9 @@ mod tests {
                 &issuer,
                 &offer,
                 &json!({}),
-                Utc::now(),
+                &fixture_status_claim(),
+                now,
+                fixture_expires_at(now),
             )
             .await
             .unwrap_err();

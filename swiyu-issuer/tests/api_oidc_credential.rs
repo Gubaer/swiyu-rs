@@ -26,6 +26,7 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence;
 
 const TEST_BASE_URL: &str = "http://issuer.example.com";
+const TEST_STATUS_LIST_URL_TEMPLATE: &str = "https://registry.example.invalid/sl/{list_id}";
 const FIXTURE_DID: &str =
     "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d";
 
@@ -37,6 +38,7 @@ fn build_state(pool: PgPool) -> AppState {
             issuer_base_url: TEST_BASE_URL.into(),
             access_token_ttl: Duration::seconds(300),
             c_nonce_ttl: Duration::seconds(300),
+            status_list_url_template: TEST_STATUS_LIST_URL_TEMPLATE.into(),
         },
         Arc::new(engine),
     )
@@ -315,6 +317,183 @@ async fn unknown_bearer_returns_invalid_token(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = read_body_value(response).await;
     assert_eq!(body["error"], "invalid_token");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn issuance_inserts_issued_credential_row(pool: PgPool) {
+    // Drives /credential end-to-end and asserts that the
+    // local issuer-side trace landed: an `issued_credentials`
+    // row exists for the offer with the expected `(status_list,
+    // index, vct, state, integrity_hash)` shape.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = create_onboarded_issuer(&pool, &tenant_id).await;
+    let offer = create_pending_offer(&pool, &issuer, json!({"name": "Alice"})).await;
+    let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;
+    let nonce = mint_nonce(&pool, &issuer, &offer).await;
+
+    let app = router(build_state(pool.clone()));
+    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
+
+    let response = app
+        .oneshot(post_credential(
+            &issuer.id,
+            access_token.as_str(),
+            credential_request_body("vc-test", &proof_jwt),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body_value(response).await;
+    let credential = body["credential"].as_str().unwrap().to_string();
+
+    let stored: (String, String, i32, String, String, Vec<u8>) = sqlx::query_as(
+        "SELECT vct, state, status_list_index, status_list_id, credential_offer_id, integrity_hash \
+         FROM issued_credentials WHERE credential_offer_id = $1",
+    )
+    .bind(offer.id.bare())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored.0, "vc-test");
+    assert_eq!(stored.1, "active");
+    assert_eq!(stored.2, 0, "first issuance must allocate index 0");
+    assert_eq!(stored.4, offer.id.bare());
+    use sha2::{Digest, Sha256};
+    let expected_hash: Vec<u8> = Sha256::digest(credential.as_bytes()).to_vec();
+    assert_eq!(stored.5, expected_hash);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn issuance_bumps_allocated_count_and_committed_version(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = create_onboarded_issuer(&pool, &tenant_id).await;
+    let offer = create_pending_offer(&pool, &issuer, json!({})).await;
+    let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;
+    let nonce = mint_nonce(&pool, &issuer, &offer).await;
+
+    let app = router(build_state(pool.clone()));
+    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
+    let response = app
+        .oneshot(post_credential(
+            &issuer.id,
+            access_token.as_str(),
+            credential_request_body("vc-test", &proof_jwt),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let (allocated_count, committed_version): (i32, i64) = sqlx::query_as(
+        "SELECT s.allocated_count, s.committed_version \
+         FROM status_lists s \
+         JOIN issuers i ON i.current_status_list_id = s.id \
+         WHERE i.id = $1",
+    )
+    .bind(issuer.id.bare())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(allocated_count, 1);
+    assert_eq!(committed_version, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn issuance_lazy_provisions_status_list(pool: PgPool) {
+    // Before issuance the issuer has no current_status_list_id.
+    // The handler must provision one inside the issuance
+    // transaction and re-point the issuer column.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = create_onboarded_issuer(&pool, &tenant_id).await;
+    let before: Option<String> =
+        sqlx::query_scalar("SELECT current_status_list_id FROM issuers WHERE id = $1")
+            .bind(issuer.id.bare())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        before.is_none(),
+        "fresh issuer must start with NULL pointer"
+    );
+
+    let offer = create_pending_offer(&pool, &issuer, json!({})).await;
+    let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;
+    let nonce = mint_nonce(&pool, &issuer, &offer).await;
+
+    let app = router(build_state(pool.clone()));
+    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
+    let response = app
+        .oneshot(post_credential(
+            &issuer.id,
+            access_token.as_str(),
+            credential_request_body("vc-test", &proof_jwt),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let after: Option<String> =
+        sqlx::query_scalar("SELECT current_status_list_id FROM issuers WHERE id = $1")
+            .bind(issuer.id.bare())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        after.is_some(),
+        "issuance must lazily provision a status list"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn credential_payload_carries_status_claim(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = create_onboarded_issuer(&pool, &tenant_id).await;
+    let offer = create_pending_offer(&pool, &issuer, json!({})).await;
+    let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;
+    let nonce = mint_nonce(&pool, &issuer, &offer).await;
+
+    let app = router(build_state(pool.clone()));
+    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
+
+    let response = app
+        .oneshot(post_credential(
+            &issuer.id,
+            access_token.as_str(),
+            credential_request_body("vc-test", &proof_jwt),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_body_value(response).await;
+    let credential = body["credential"].as_str().unwrap();
+
+    let core = credential.trim_end_matches('~');
+    let parts: Vec<&str> = core.split('.').collect();
+    let payload: Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
+
+    let status = &payload["status"]["status_list"];
+    assert_eq!(status["idx"], 0);
+    let uri = status["uri"].as_str().expect("status_list.uri is a string");
+    assert!(
+        uri.starts_with("https://registry.example.invalid/sl/"),
+        "status uri must start with the configured template prefix: got {uri:?}"
+    );
+    assert!(
+        !uri.contains("{list_id}"),
+        "status uri placeholder must be substituted: got {uri:?}"
+    );
+    assert!(
+        payload["exp"].as_i64().is_some(),
+        "credential payload must carry an exp claim"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
