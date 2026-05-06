@@ -3,13 +3,13 @@ use std::str::FromStr;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use ed25519_dalek::Verifier as _;
 use serde_json::Value;
 use tracing::debug;
 
 use swiyu_core::did::{DID, DIDError};
-use swiyu_core::diddoc::{DIDDoc, DIDDocError, PublicKey, PublicKeyJWK, PublicKeyMultibase};
+use swiyu_core::diddoc::{DIDDoc, DIDDocError, PublicKey, PublicKeyMultibase};
 use swiyu_core::didlog::{DIDDocState, DIDLog};
+use swiyu_core::jws::{JwsVerifyError, VerifyingKey};
 
 use crate::cmd::didlog::{LogError, current_did, load_log};
 use crate::cmd::iso8601;
@@ -82,6 +82,22 @@ pub enum VerifyPopError {
     KeyStore(#[from] KeyStoreError),
     #[error(transparent)]
     Log(#[from] LogError),
+}
+
+impl From<JwsVerifyError> for VerifyPopError {
+    fn from(e: JwsVerifyError) -> Self {
+        match e {
+            JwsVerifyError::UnsupportedAlg(alg) => VerifyPopError::UnsupportedAlg(alg),
+            JwsVerifyError::AlgKeyMismatch { alg, jwk_alg } => VerifyPopError::AlgKeyMismatch {
+                alg,
+                key_type: jwk_alg.to_string(),
+            },
+            JwsVerifyError::MalformedJwk(msg) => VerifyPopError::JwtMalformed(msg),
+            JwsVerifyError::InvalidSignatureLength { .. } | JwsVerifyError::SignatureMismatch => {
+                VerifyPopError::SignatureInvalid
+            }
+        }
+    }
 }
 
 pub fn cmd_verify_pop(store: &KeyStore, args: VerifyPopArgs) -> Result<(), VerifyPopError> {
@@ -259,40 +275,6 @@ fn parse_kid(kid: &str) -> Result<KidShape, VerifyPopError> {
     }
 }
 
-enum VerifyingKey {
-    Eddsa(ed25519_dalek::VerifyingKey),
-    Ecdsa(p256::ecdsa::VerifyingKey),
-}
-
-impl VerifyingKey {
-    fn alg(&self) -> &'static str {
-        match self {
-            Self::Eddsa(_) => "EdDSA",
-            Self::Ecdsa(_) => "ES256",
-        }
-    }
-
-    fn verify(&self, msg: &[u8], sig: &[u8]) -> Result<(), VerifyPopError> {
-        match self {
-            Self::Eddsa(k) => {
-                let sig_arr: [u8; 64] = sig
-                    .try_into()
-                    .map_err(|_| VerifyPopError::SignatureInvalid)?;
-                let signature = ed25519_dalek::Signature::from_bytes(&sig_arr);
-                k.verify(msg, &signature)
-                    .map_err(|_| VerifyPopError::SignatureInvalid)
-            }
-            Self::Ecdsa(k) => {
-                use p256::ecdsa::signature::Verifier;
-                let signature = p256::ecdsa::Signature::from_slice(sig)
-                    .map_err(|_| VerifyPopError::SignatureInvalid)?;
-                k.verify(msg, &signature)
-                    .map_err(|_| VerifyPopError::SignatureInvalid)
-            }
-        }
-    }
-}
-
 struct Context {
     key: VerifyingKey,
     /// Some(did) → `payload.iss` must equal this; None → iss is informational.
@@ -372,7 +354,7 @@ fn decode_multikey(s: &str) -> Result<VerifyingKey, VerifyPopError> {
             let key_bytes: [u8; 32] = bytes[2..].try_into().expect("checked length above");
             let vk = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes)
                 .map_err(|e| VerifyPopError::Multikey(format!("invalid Ed25519 key: {e}")))?;
-            Ok(VerifyingKey::Eddsa(vk))
+            Ok(VerifyingKey::Ed25519(vk))
         }
         _ => Err(VerifyPopError::UnsupportedAlg(format!(
             "did:key multicodec {:#04x}{:02x}",
@@ -404,7 +386,7 @@ fn find_vm_key_in_log(log: &DIDLog, kid: &str) -> Result<VerifyingKey, VerifyPop
         .find(|vm| vm.id() == kid)
         .ok_or_else(|| VerifyPopError::VerificationMethodMissing(kid.to_string()))?;
     match vm.public_key() {
-        PublicKey::Jwk(jwk) => jwk_to_verifying_key(jwk),
+        PublicKey::Jwk(jwk) => Ok(VerifyingKey::try_from(jwk.as_ref())?),
         PublicKey::Multibase(_) => Err(VerifyPopError::UnsupportedKeyMaterial),
     }
 }
@@ -427,37 +409,7 @@ fn resolve_via_keystore(
     };
     debug!("resolving kid via keystore role {:?}", role);
     let signing_key = entry.load_ecdsa(role, None)?;
-    Ok(VerifyingKey::Ecdsa(*signing_key.verifying_key()))
-}
-
-fn jwk_to_verifying_key(jwk: &PublicKeyJWK) -> Result<VerifyingKey, VerifyPopError> {
-    match jwk {
-        PublicKeyJWK::OKP(k) if k.crv() == "Ed25519" => {
-            let x_bytes = URL_SAFE_NO_PAD
-                .decode(k.x())
-                .map_err(|e| VerifyPopError::JwtMalformed(format!("JWK 'x' not base64url: {e}")))?;
-            let arr: [u8; 32] = x_bytes.try_into().map_err(|v: Vec<u8>| {
-                VerifyPopError::JwtMalformed(format!(
-                    "Ed25519 'x' must be 32 bytes, got {}",
-                    v.len()
-                ))
-            })?;
-            let vk = ed25519_dalek::VerifyingKey::from_bytes(&arr).map_err(|e| {
-                VerifyPopError::JwtMalformed(format!("invalid Ed25519 public key: {e}"))
-            })?;
-            Ok(VerifyingKey::Eddsa(vk))
-        }
-        PublicKeyJWK::EC(k) if k.crv() == "P-256" => {
-            let vk = p256::ecdsa::VerifyingKey::try_from(k)
-                .map_err(|e| VerifyPopError::JwtMalformed(e.to_string()))?;
-            Ok(VerifyingKey::Ecdsa(vk))
-        }
-        other => Err(VerifyPopError::UnsupportedAlg(format!(
-            "{}/{}",
-            other.kty(),
-            other.crv().unwrap_or("?")
-        ))),
-    }
+    Ok(VerifyingKey::EcdsaP256(*signing_key.verifying_key()))
 }
 
 fn current_unix_seconds() -> u64 {

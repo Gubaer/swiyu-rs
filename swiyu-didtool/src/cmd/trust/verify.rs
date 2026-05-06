@@ -7,8 +7,9 @@ use serde_json::Value;
 use tracing::debug;
 
 use swiyu_core::did::DID;
-use swiyu_core::diddoc::{DIDDoc, PublicKey, PublicKeyJWK};
+use swiyu_core::diddoc::{DIDDoc, PublicKey};
 use swiyu_core::didlog::{DIDDocState, DIDLog};
+use swiyu_core::jws::{JwsVerifyError, VerifyingKey};
 use swiyu_core::statuslist::{StatusList, StatusValue};
 use swiyu_core::truststatement::TrustStatement;
 
@@ -226,17 +227,11 @@ fn verify_signature(stmt: &TrustStatement, ctx: &mut VerifyContext) -> Result<Ch
         Err(reason) => return Ok(Check::Fail(reason)),
     };
 
-    let signature = match p256::ecdsa::Signature::from_slice(&stmt.signature) {
-        Ok(s) => s,
-        Err(_) => {
-            return Ok(Check::Fail(
-                "signature bytes are not a valid ES256 signature".into(),
-            ));
-        }
-    };
-    use p256::ecdsa::signature::Verifier;
-    match vk.verify(stmt.signing_input.as_bytes(), &signature) {
+    match vk.verify(stmt.signing_input.as_bytes(), &stmt.signature) {
         Ok(()) => Ok(Check::Ok(format!("valid (kid: {})", stmt.kid))),
+        Err(JwsVerifyError::InvalidSignatureLength { .. }) => Ok(Check::Fail(
+            "signature bytes are not a valid ES256 signature".into(),
+        )),
         Err(_) => Ok(Check::Fail("signature does not verify".into())),
     }
 }
@@ -323,7 +318,7 @@ fn load_issuer_doc<'a>(
     Ok(cache.get(iss_did).expect("just inserted"))
 }
 
-fn find_verifying_key(doc: &DIDDoc, kid: &str) -> Result<p256::ecdsa::VerifyingKey, String> {
+fn find_verifying_key(doc: &DIDDoc, kid: &str) -> Result<VerifyingKey, String> {
     let vm = doc
         .verification_method()
         .iter()
@@ -335,11 +330,11 @@ fn find_verifying_key(doc: &DIDDoc, kid: &str) -> Result<p256::ecdsa::VerifyingK
             return Err("verification method publicKey is not a JWK".into());
         }
     };
-    let ec = match jwk.as_ref() {
-        PublicKeyJWK::EC(k) => k,
-        other => return Err(format!("expected EC JWK, got {}", other.kty())),
-    };
-    p256::ecdsa::VerifyingKey::try_from(ec).map_err(|e| e.to_string())
+    let key = VerifyingKey::try_from(jwk.as_ref()).map_err(|e| e.to_string())?;
+    if key.alg() != "ES256" {
+        return Err(format!("expected ES256 key, got {}", key.alg()));
+    }
+    Ok(key)
 }
 
 fn load_status_list<'a>(
@@ -446,11 +441,8 @@ fn parse_and_verify_status_list(
         url: url.to_string(),
         reason: format!("issuer key resolution: {reason}"),
     })?;
-    let sig = p256::ecdsa::Signature::from_slice(&signature)
-        .map_err(|_| VerifyError::StatusListSignatureInvalid)?;
     let signing_input = format!("{}.{}", segs[0], segs[1]);
-    use p256::ecdsa::signature::Verifier;
-    vk.verify(signing_input.as_bytes(), &sig)
+    vk.verify(signing_input.as_bytes(), &signature)
         .map_err(|_| VerifyError::StatusListSignatureInvalid)?;
 
     // Decode + decompress + bit-width validate via core. Errors propagate as
