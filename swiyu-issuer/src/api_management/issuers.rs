@@ -97,8 +97,8 @@ pub async fn create(
     Ok((
         StatusCode::CREATED,
         Json(CreateIssuerResponse {
-            task_id: task_id.to_string(),
-            issuer_id: issuer_id.to_string(),
+            task_id: task_id.bare().to_string(),
+            issuer_id: issuer_id.bare().to_string(),
         }),
     ))
 }
@@ -182,8 +182,8 @@ pub async fn deactivate(
         (IssuerState::Deactivated, Some(task)) => Ok((
             StatusCode::OK,
             Json(DeactivateIssuerResponse {
-                task_id: Some(task.id.to_string()),
-                issuer_id: issuer_id.to_string(),
+                task_id: Some(task.id.bare().to_string()),
+                issuer_id: issuer_id.bare().to_string(),
             }),
         )),
         // Already deactivated, no task row (directly-mutated fixture).
@@ -191,7 +191,7 @@ pub async fn deactivate(
             StatusCode::OK,
             Json(DeactivateIssuerResponse {
                 task_id: None,
-                issuer_id: issuer_id.to_string(),
+                issuer_id: issuer_id.bare().to_string(),
             }),
         )),
         // Active and a deactivation task is already in flight — return
@@ -204,8 +204,8 @@ pub async fn deactivate(
             Ok((
                 StatusCode::OK,
                 Json(DeactivateIssuerResponse {
-                    task_id: Some(task.id.to_string()),
-                    issuer_id: issuer_id.to_string(),
+                    task_id: Some(task.id.bare().to_string()),
+                    issuer_id: issuer_id.bare().to_string(),
                 }),
             ))
         }
@@ -238,8 +238,8 @@ pub async fn deactivate(
             Ok((
                 StatusCode::CREATED,
                 Json(DeactivateIssuerResponse {
-                    task_id: Some(task_id.to_string()),
-                    issuer_id: issuer_id.to_string(),
+                    task_id: Some(task_id.bare().to_string()),
+                    issuer_id: issuer_id.bare().to_string(),
                 }),
             ))
         }
@@ -310,8 +310,8 @@ pub async fn rotate_keys(
         return Ok((
             StatusCode::OK,
             Json(RotateKeysResponse {
-                task_id: existing.id.to_string(),
-                issuer_id: issuer_id.to_string(),
+                task_id: existing.id.bare().to_string(),
+                issuer_id: issuer_id.bare().to_string(),
             }),
         ));
     }
@@ -343,8 +343,8 @@ pub async fn rotate_keys(
     Ok((
         StatusCode::CREATED,
         Json(RotateKeysResponse {
-            task_id: task_id.to_string(),
-            issuer_id: issuer_id.to_string(),
+            task_id: task_id.bare().to_string(),
+            issuer_id: issuer_id.bare().to_string(),
         }),
     ))
 }
@@ -460,7 +460,7 @@ fn issuer_to_response(issuer: Issuer) -> Result<GetIssuerResponse, ApiError> {
         .ok_or_else(|| internal("display_name"))?;
 
     Ok(GetIssuerResponse {
-        id: issuer.id.to_string(),
+        id: issuer.id.bare().to_string(),
         did: issuer.did,
         state: state.as_str().to_string(),
         description,

@@ -44,7 +44,7 @@ pub async fn get(
 
 fn task_to_response(task: OperationTask) -> GetOperationTaskResponse {
     GetOperationTaskResponse {
-        id: task.id.to_string(),
+        id: task.id.bare().to_string(),
         task_type: task.task_type.as_str().to_string(),
         state: task.state.as_str().to_string(),
         step: task.step,

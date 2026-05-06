@@ -86,7 +86,7 @@ pub async fn create(
     let deeplink = build_offer_deeplink(&state.config.issuer_base_url, &offer.issuer_id, &offer.id);
 
     let response = CreateCredentialOfferResponse {
-        id: offer.id.to_string(),
+        id: offer.id.bare().to_string(),
         pre_auth_code: pre_auth_code.into_inner(),
         offer_deeplink: deeplink,
         expires_at,
@@ -389,8 +389,8 @@ fn parse_offer_id(raw: &str) -> Result<CredentialOfferId, ApiError> {
 fn offer_to_response(offer: CredentialOffer, now: DateTime<Utc>) -> GetCredentialOfferResponse {
     let observed = offer.observed_state(now);
     GetCredentialOfferResponse {
-        id: offer.id.to_string(),
-        issuer_id: offer.issuer_id.to_string(),
+        id: offer.id.bare().to_string(),
+        issuer_id: offer.issuer_id.bare().to_string(),
         vct: offer.vct,
         claims: offer.claims,
         state: observed.as_str().to_string(),
@@ -404,7 +404,7 @@ fn offer_to_response(offer: CredentialOffer, now: DateTime<Utc>) -> GetCredentia
 fn offer_to_status_response(offer: &CredentialOffer, now: DateTime<Utc>) -> OfferStatusResponse {
     let observed = offer.observed_state(now);
     OfferStatusResponse {
-        id: offer.id.to_string(),
+        id: offer.id.bare().to_string(),
         state: observed.as_str().to_string(),
         expires_at: offer.expires_at,
         issued_at: offer.issued_at,
@@ -474,7 +474,7 @@ mod tests {
         assert_eq!(response.state, "pending");
         assert!(response.issued_at.is_none());
         assert!(response.cancelled_at.is_none());
-        assert_eq!(response.id, offer.id.to_string());
+        assert_eq!(response.id, offer.id.bare());
     }
 
     #[test]

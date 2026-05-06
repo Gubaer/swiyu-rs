@@ -127,16 +127,23 @@ macro_rules! define_id {
             }
         }
 
+        // Wire format is the bare base58 (no prefix). The `Display`
+        // form (with prefix, e.g. `task_…`) is reserved for logs and
+        // human-readable contexts; it must not leak into JSON bodies
+        // or URLs. Keeping these two forms separate lets the
+        // dev-facing API stay copy-paste-able (every id field on the
+        // wire is the same bare string the URL takes) while logs
+        // remain self-describing.
         impl Serialize for $name {
             fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.collect_str(self)
+                serializer.serialize_str(&self.0)
             }
         }
 
         impl<'de> Deserialize<'de> for $name {
             fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 let s = String::deserialize(deserializer)?;
-                Self::from_str(&s).map_err(serde::de::Error::custom)
+                Self::from_bare(s).map_err(serde::de::Error::custom)
             }
         }
     };
@@ -193,13 +200,23 @@ mod tests {
     }
 
     #[test]
-    fn serde_round_trip_uses_prefixed_form() {
+    fn serde_round_trip_uses_bare_form() {
         let id = CredentialOfferId::from_bare("9hXq2vRtL8pK7f").unwrap();
         let json = serde_json::to_string(&id).unwrap();
-        assert_eq!(json, "\"offer_9hXq2vRtL8pK7f\"");
+        assert_eq!(json, "\"9hXq2vRtL8pK7f\"");
 
         let parsed: CredentialOfferId = serde_json::from_str(&json).unwrap();
         assert_eq!(id, parsed);
+    }
+
+    #[test]
+    fn deserialize_rejects_prefixed_form() {
+        // Wire format is bare; a prefixed JSON string must fail
+        // deserialization so callers cannot accidentally double-up
+        // the prefix on round-trips.
+        let result: Result<CredentialOfferId, _> =
+            serde_json::from_str("\"offer_9hXq2vRtL8pK7f\"");
+        assert!(result.is_err());
     }
 
     #[test]
