@@ -2,6 +2,7 @@ pub mod did;
 pub mod diddoc;
 pub mod didjwk;
 pub mod didlog;
+pub mod jws;
 pub mod key_role;
 pub mod proof;
 pub mod statuslist;
