@@ -117,6 +117,8 @@ mod tests {
                 assertion: fixture_kid(0x33),
             }),
             log_published,
+            status_list_registry_entry_id: None,
+            status_list_registry_url: None,
         }
     }
 

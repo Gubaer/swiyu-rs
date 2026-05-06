@@ -16,6 +16,7 @@ use swiyu_core::did::DID;
 use swiyu_core::didlog::{DIDLog, DIDLogEntry};
 use swiyu_registries::common::RegistryError;
 use swiyu_registries::identifier::{Allocation, IdentifierRegistryClient};
+use swiyu_registries::status::{StatusListEntry, StatusRegistryClient};
 
 /// A successful `fetch_log` result.
 ///
@@ -133,5 +134,35 @@ impl<T: RegistryFacade + ?Sized> RegistryFacade for Arc<T> {
         did: &DID,
     ) -> impl Future<Output = Result<FetchedLog, RegistryError>> + Send {
         T::fetch_log(self, did)
+    }
+}
+
+/// SWIYU Status Registry operations the worker drives across
+/// `CreateIssuer` (allocate the issuer's first registry-side entry) and
+/// the phase-2 publish loop (PUT signed status-list JWTs). Mirrors
+/// [`RegistryFacade`] so step executors can be unit-tested against an
+/// in-memory mock without pulling wiremock into scope.
+pub trait StatusRegistryFacade: Send + Sync {
+    fn create_status_list_entry(
+        &self,
+        partner_id: &str,
+    ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send;
+}
+
+impl StatusRegistryFacade for StatusRegistryClient {
+    fn create_status_list_entry(
+        &self,
+        partner_id: &str,
+    ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send {
+        StatusRegistryClient::create_status_list_entry(self, partner_id)
+    }
+}
+
+impl<T: StatusRegistryFacade + ?Sized> StatusRegistryFacade for Arc<T> {
+    fn create_status_list_entry(
+        &self,
+        partner_id: &str,
+    ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send {
+        T::create_status_list_entry(self, partner_id)
     }
 }

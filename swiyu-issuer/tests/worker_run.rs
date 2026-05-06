@@ -19,9 +19,22 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence::{issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
-    AllocateCall, GenerateKeypairCall, GetPublicKeyCall, MockRegistry, MockSigningEngine,
-    PublishCall, SignCall,
+    AllocateCall, CreateStatusListEntryCall, GenerateKeypairCall, GetPublicKeyCall, MockRegistry,
+    MockSigningEngine, MockStatusRegistry, PublishCall, SignCall,
 };
+use swiyu_registries::status::StatusListEntry;
+
+const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
+const STATUS_REGISTRY_URL: &str = "https://status-reg.example.com/lists/abc.jwt";
+
+fn status_registry_with_one_ok() -> MockStatusRegistry {
+    let r = MockStatusRegistry::new();
+    r.enqueue_create(CreateStatusListEntryCall::Ok(StatusListEntry {
+        id: STATUS_ENTRY_ID.into(),
+        registry_url: STATUS_REGISTRY_URL.into(),
+    }));
+    r
+}
 
 // Postgres TIMESTAMPTZ stores microseconds; truncate so a roundtrip
 // compares equal.
@@ -212,10 +225,17 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let registry = MockRegistry::new();
     let engine = MockSigningEngine::new();
     load_happy_path_mocks(&registry, &engine);
+    let status_registry = status_registry_with_one_ok();
 
     let shutdown = CancellationToken::new();
-    let worker = Worker::new(pool.clone(), registry, engine, Box::new(ConstantRng(0)))
-        .with_poll_interval(Duration::from_millis(20));
+    let worker = Worker::new(
+        pool.clone(),
+        registry,
+        engine,
+        status_registry,
+        Box::new(ConstantRng(0)),
+    )
+    .with_poll_interval(Duration::from_millis(20));
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
     let final_task = wait_for_task_state(
@@ -251,9 +271,16 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
 async fn shutdown_exits_idle_loop(pool: PgPool) {
     let registry = MockRegistry::new();
     let engine = MockSigningEngine::new();
+    let status_registry = MockStatusRegistry::new();
     let shutdown = CancellationToken::new();
-    let worker = Worker::new(pool.clone(), registry, engine, Box::new(ConstantRng(0)))
-        .with_poll_interval(Duration::from_millis(20));
+    let worker = Worker::new(
+        pool.clone(),
+        registry,
+        engine,
+        status_registry,
+        Box::new(ConstantRng(0)),
+    )
+    .with_poll_interval(Duration::from_millis(20));
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
     // Let the loop poll a couple of times against an empty queue.

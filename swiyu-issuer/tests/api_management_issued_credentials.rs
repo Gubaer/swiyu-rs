@@ -78,7 +78,7 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
 
 async fn provision_status_list(pool: &PgPool, issuer_id: &IssuerId) -> StatusListId {
     let mut conn = pool.acquire().await.unwrap();
-    persistence::status_lists::provision_for_issuer(&mut conn, issuer_id)
+    persistence::status_lists::provision_for_issuer(&mut conn, issuer_id, None, None)
         .await
         .unwrap()
 }

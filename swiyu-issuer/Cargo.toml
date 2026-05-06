@@ -6,7 +6,7 @@ license = "MIT"
 
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
-swiyu-registries = { path = "../swiyu-registries" }
+swiyu-registries = { path = "../swiyu-registries", features = ["status"] }
 axum = "0.8"
 base64 = "0.22"
 bs58 = "0.5"

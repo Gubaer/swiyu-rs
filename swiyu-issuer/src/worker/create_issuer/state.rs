@@ -34,10 +34,12 @@ pub struct CreateIssuerInput {
 /// Every field is optional. The worker reads this on resume and skips
 /// the step that produced the field if the field is already populated
 /// (`assigned_did_url` after `allocate_did`, `key_ids` after
-/// `generate_keys`, `log_published` after `publish_log`).
-/// `build_initial_log` and `persist_issuer` are idempotent without
-/// state-data records: the former is deterministic, the latter checks
-/// the `issuers` row directly.
+/// `generate_keys`, `log_published` after `publish_log`,
+/// `status_list_registry_entry_id` after `create_status_list_entry`).
+/// `build_initial_log`, `persist_issuer`, and `provision_status_list`
+/// are idempotent without state-data records: the first is
+/// deterministic, the second checks the `issuers` row directly, the
+/// third reads back `issuers.current_status_list_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CreateIssuerStateData {
     /// Registry-published DIDLog URL (e.g.
@@ -63,6 +65,20 @@ pub struct CreateIssuerStateData {
     /// rather than a server-supplied identifier.
     #[serde(default, skip_serializing_if = "is_false")]
     pub log_published: bool,
+
+    /// Registry-side status-list entry UUID returned by
+    /// `create_status_list_entry`. Idempotency marker for that step on
+    /// retry: when present the registry call is skipped and only the
+    /// DB-side provisioning runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_list_registry_entry_id: Option<String>,
+
+    /// `statusRegistryUrl` returned alongside
+    /// `status_list_registry_entry_id`. Stored on the issuer's
+    /// `status_lists` row by `provision_status_list` and embedded as
+    /// `status.status_list.uri` on every issued credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_list_registry_url: Option<String>,
 }
 
 /// The three `KeyPairId`s an issuer holds: one Ed25519 (`Authorized`)
@@ -141,6 +157,8 @@ mod tests {
         assert!(state.assigned_identifier.is_none());
         assert!(state.key_ids.is_none());
         assert!(!state.log_published);
+        assert!(state.status_list_registry_entry_id.is_none());
+        assert!(state.status_list_registry_url.is_none());
     }
 
     #[test]
@@ -172,6 +190,8 @@ mod tests {
             assigned_identifier: Some("abc".into()),
             key_ids: Some(fixture_key_triple()),
             log_published: true,
+            status_list_registry_entry_id: Some("11111111-2222-3333-4444-555555555555".into()),
+            status_list_registry_url: Some("https://status-reg.example.com/lists/abc.jwt".into()),
         };
         let value = serde_json::to_value(&original).unwrap();
         let parsed: CreateIssuerStateData = serde_json::from_value(value).unwrap();

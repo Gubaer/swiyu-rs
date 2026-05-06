@@ -20,24 +20,35 @@ use super::helpers::integrity_from;
 /// issuance flow runs this inside the same transaction as the offer
 /// transition.
 ///
+/// `registry_entry_id` and `registry_url` may be `None` (the row stays
+/// in the *unallocated-on-registry* state until the worker fills them
+/// in) or `Some` (the issuer-creation worker has already obtained them
+/// from `create_status_list_entry` and persists them alongside the
+/// row). See `plan-credential-management.md` § "Eager registry-side
+/// provisioning at issuer-creation time".
+///
 /// Returns the id of the newly provisioned list. The function does
 /// **not** check the issuer exists; the FK on `status_lists.
 /// issuer_id` rejects an unknown issuer at insert time.
 pub async fn provision_for_issuer(
     conn: &mut PgConnection,
     issuer_id: &IssuerId,
+    registry_entry_id: Option<&str>,
+    registry_url: Option<&str>,
 ) -> Result<StatusListId, PersistenceError> {
     let new_id = StatusListId::generate();
 
     sqlx::query(
         r#"
-        INSERT INTO status_lists (id, issuer_id, bitstring)
-        VALUES ($1, $2, $3)
+        INSERT INTO status_lists (id, issuer_id, bitstring, registry_entry_id, registry_url)
+        VALUES ($1, $2, $3, $4, $5)
         "#,
     )
     .bind(new_id.bare())
     .bind(issuer_id.bare())
     .bind(vec![0u8; BITSTRING_BYTES])
+    .bind(registry_entry_id)
+    .bind(registry_url)
     .execute(&mut *conn)
     .await?;
 

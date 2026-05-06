@@ -278,7 +278,7 @@ async fn allocate_status_slot(
         .map_err(map_lookup)?
     {
         Some(id) => id,
-        None => persistence::status_lists::provision_for_issuer(tx, issuer_id)
+        None => persistence::status_lists::provision_for_issuer(tx, issuer_id, None, None)
             .await
             .map_err(map_lookup)?,
     };
@@ -294,7 +294,7 @@ async fn allocate_status_slot(
     // fresh one and try once more; the new list starts at zero so
     // the second allocate must succeed unless something is structurally
     // wrong (e.g. the issuer was deleted concurrently).
-    let new_list_id = persistence::status_lists::provision_for_issuer(tx, issuer_id)
+    let new_list_id = persistence::status_lists::provision_for_issuer(tx, issuer_id, None, None)
         .await
         .map_err(map_lookup)?;
     let index = persistence::status_lists::allocate_index(tx, &new_list_id)

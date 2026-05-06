@@ -243,15 +243,13 @@ async fn registry_coords_round_trip(pool: PgPool) {
 
     let entry_id = "11111111-2222-3333-4444-555555555555";
     let url = "https://status-reg.example.com/lists/abc.jwt";
-    sqlx::query(
-        "UPDATE status_lists SET registry_entry_id = $1, registry_url = $2 WHERE id = $3",
-    )
-    .bind(entry_id)
-    .bind(url)
-    .bind(list_id.bare())
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE status_lists SET registry_entry_id = $1, registry_url = $2 WHERE id = $3")
+        .bind(entry_id)
+        .bind(url)
+        .bind(list_id.bare())
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let row: (Option<String>, Option<String>) =
         sqlx::query_as("SELECT registry_entry_id, registry_url FROM status_lists WHERE id = $1")
@@ -327,7 +325,7 @@ async fn provision_for_issuer_inserts_zeroed_row(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
 
-    let new_id = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let new_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
 
@@ -343,7 +341,7 @@ async fn provision_for_issuer_repoints_pointer(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
 
-    let new_id = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let new_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
     let current = status_lists::current_for_issuer(&mut conn, &issuer_id)
@@ -359,10 +357,10 @@ async fn provision_for_issuer_called_twice_repoints_each_time(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
 
-    let first = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let first = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
-    let second = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let second = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
     assert_ne!(first, second);
@@ -377,7 +375,7 @@ async fn provision_for_issuer_called_twice_repoints_each_time(pool: PgPool) {
 async fn allocate_index_returns_zero_first(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
-    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
 
@@ -392,7 +390,7 @@ async fn allocate_index_returns_zero_first(pool: PgPool) {
 async fn allocate_index_hands_out_adjacent_indices(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
-    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
 
@@ -411,7 +409,7 @@ async fn allocate_index_hands_out_adjacent_indices(pool: PgPool) {
 async fn allocate_index_bumps_committed_version(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
-    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
     assert_eq!(fetch_committed_version(&pool, &list_id).await, 0);
@@ -479,7 +477,7 @@ async fn concurrent_allocators_get_distinct_indices(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let list_id = {
         let mut conn = pool.acquire().await.unwrap();
-        status_lists::provision_for_issuer(&mut conn, &issuer_id)
+        status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
             .await
             .unwrap()
     };
@@ -517,7 +515,7 @@ async fn concurrent_allocators_get_distinct_indices(pool: PgPool) {
 async fn write_bit_flips_target_slot(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
-    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
 
@@ -527,17 +525,11 @@ async fn write_bit_flips_target_slot(pool: PgPool) {
         .unwrap();
 
     let bitstring = fetch_bitstring(&pool, &list_id).await;
-    assert_eq!(
-        read_slot(&bitstring, target),
-        StatusValue::Revoked
-    );
+    assert_eq!(read_slot(&bitstring, target), StatusValue::Revoked);
     // Neighbouring slots stay zero (Valid).
     for other in [0u32, 1, 2, 3, 4, 5, 6, 8, 9] {
         let idx = StatusListIndex::try_from(other).unwrap();
-        assert_eq!(
-            read_slot(&bitstring, idx),
-            StatusValue::Valid
-        );
+        assert_eq!(read_slot(&bitstring, idx), StatusValue::Valid);
     }
 }
 
@@ -545,7 +537,7 @@ async fn write_bit_flips_target_slot(pool: PgPool) {
 async fn write_bit_round_trips_each_value(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
-    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
 
@@ -567,7 +559,7 @@ async fn write_bit_round_trips_each_value(pool: PgPool) {
 async fn write_bit_bumps_committed_version(pool: PgPool) {
     let issuer_id = seeded_issuer(&pool).await;
     let mut conn = pool.acquire().await.unwrap();
-    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id)
+    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
         .await
         .unwrap();
 

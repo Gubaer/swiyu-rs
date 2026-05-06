@@ -27,7 +27,9 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence::{credential_offers, issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
-use swiyu_issuer::worker::test_support::{FetchLogCall, MockRegistry, PublishCall};
+use swiyu_issuer::worker::test_support::{
+    FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
+};
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -247,6 +249,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
         pool.clone(),
         Arc::clone(&registry),
         engine,
+        MockStatusRegistry::new(),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));

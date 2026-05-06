@@ -15,13 +15,14 @@ use swiyu_core::did::DID;
 use swiyu_core::didlog::DIDLogEntry;
 use swiyu_registries::common::RegistryError;
 use swiyu_registries::identifier::Allocation;
+use swiyu_registries::status::StatusListEntry;
 
 use crate::domain::{
     GeneratedKeyPair, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine,
     SigningEngineError,
 };
 
-use super::registry::{FetchedLog, RegistryFacade};
+use super::registry::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllocateCall {
@@ -152,6 +153,51 @@ impl RegistryFacade for MockRegistry {
                     Err(RegistryError::HttpStatus { status, body })
                 }
                 FetchLogCall::Decode(message) => Err(RegistryError::Decode(message)),
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreateStatusListEntryCall {
+    Ok(StatusListEntry),
+    HttpStatus { status: u16, body: String },
+    Decode(String),
+}
+
+#[derive(Default)]
+pub struct MockStatusRegistry {
+    create_queue: Mutex<Vec<CreateStatusListEntryCall>>,
+    pub create_invocations: Mutex<Vec<String>>,
+}
+
+impl MockStatusRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn enqueue_create(&self, call: CreateStatusListEntryCall) {
+        self.create_queue.lock().unwrap().push(call);
+    }
+}
+
+impl StatusRegistryFacade for MockStatusRegistry {
+    fn create_status_list_entry(
+        &self,
+        partner_id: &str,
+    ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send {
+        self.create_invocations
+            .lock()
+            .unwrap()
+            .push(partner_id.to_string());
+        let next = self.create_queue.lock().unwrap().remove(0);
+        async move {
+            match next {
+                CreateStatusListEntryCall::Ok(entry) => Ok(entry),
+                CreateStatusListEntryCall::HttpStatus { status, body } => {
+                    Err(RegistryError::HttpStatus { status, body })
+                }
+                CreateStatusListEntryCall::Decode(message) => Err(RegistryError::Decode(message)),
             }
         }
     }

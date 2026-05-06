@@ -25,8 +25,22 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence::{issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
+use swiyu_issuer::worker::test_support::{CreateStatusListEntryCall, MockStatusRegistry};
 use swiyu_registries::common::AccessToken;
 use swiyu_registries::identifier::IdentifierRegistryClient;
+use swiyu_registries::status::StatusListEntry;
+
+const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
+const STATUS_REGISTRY_URL: &str = "https://status-reg.test/lists/abc.jwt";
+
+fn status_registry_with_one_ok() -> MockStatusRegistry {
+    let r = MockStatusRegistry::new();
+    r.enqueue_create(CreateStatusListEntryCall::Ok(StatusListEntry {
+        id: STATUS_ENTRY_ID.into(),
+        registry_url: STATUS_REGISTRY_URL.into(),
+    }));
+    r
+}
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -176,6 +190,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
         pool.clone(),
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
+        status_registry_with_one_ok(),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -266,6 +281,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
         pool.clone(),
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
+        status_registry_with_one_ok(),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -335,6 +351,7 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
         pool.clone(),
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
+        status_registry_with_one_ok(),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));

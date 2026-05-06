@@ -11,6 +11,7 @@ use swiyu_issuer::persistence;
 use swiyu_issuer::worker::Worker;
 use swiyu_registries::common::AccessToken;
 use swiyu_registries::identifier::IdentifierRegistryClient;
+use swiyu_registries::status::StatusRegistryClient;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
@@ -74,6 +75,8 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         env::var("ISSUER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let registry_url = env::var("SWIYU_IDENTIFIER_REGISTRY_URL")
         .map_err(|_| "SWIYU_IDENTIFIER_REGISTRY_URL must be set")?;
+    let status_registry_url = env::var("SWIYU_STATUS_REGISTRY_URL")
+        .map_err(|_| "SWIYU_STATUS_REGISTRY_URL must be set")?;
     let registry_token =
         env::var("SWIYU_ACCESS_TOKEN").map_err(|_| "SWIYU_ACCESS_TOKEN must be set")?;
 
@@ -84,12 +87,15 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(state);
 
     let registry_client =
-        IdentifierRegistryClient::new(registry_url, AccessToken::new(registry_token))?;
+        IdentifierRegistryClient::new(registry_url, AccessToken::new(registry_token.clone()))?;
+    let status_registry_client =
+        StatusRegistryClient::new(status_registry_url, AccessToken::new(registry_token))?;
     let signing_engine = build_signing_engine_from_env(pool.clone())?;
     let worker = Worker::new(
         pool.clone(),
         registry_client,
         signing_engine,
+        status_registry_client,
         Box::new(OsRng),
     );
 

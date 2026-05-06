@@ -20,8 +20,8 @@ use crate::persistence::{self, PersistenceError};
 
 use super::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, execute_allocate_did, execute_build_initial_log,
-    execute_generate_keys, execute_persist_issuer,
-    execute_publish_log as execute_create_publish_log,
+    execute_create_status_list_entry, execute_generate_keys, execute_persist_issuer,
+    execute_provision_status_list, execute_publish_log as execute_create_publish_log,
 };
 use super::deactivate_issuer::{
     DeactivateIssuerInput, DeactivateIssuerStateData,
@@ -30,7 +30,7 @@ use super::deactivate_issuer::{
     publish_log::execute_publish_log as execute_deactivate_publish_log,
 };
 use super::dispatch::apply_outcome;
-use super::registry::RegistryFacade;
+use super::registry::{RegistryFacade, StatusRegistryFacade};
 use super::rotate_keys::{
     RotateKeysInput, RotateKeysStateData, build_rotation_log::execute_build_rotation_log,
     generate_new_keys::execute_generate_new_keys,
@@ -78,24 +78,33 @@ impl Default for WorkerConfig {
 /// `RngCore` so callers can inject a deterministic implementation in
 /// tests without making the whole struct generic over a third
 /// parameter.
-pub struct Worker<R, S> {
+pub struct Worker<R, S, C> {
     pool: PgPool,
     registry: R,
     engine: S,
+    status_registry: C,
     rng: Box<dyn RngCore + Send + Sync>,
     config: WorkerConfig,
 }
 
-impl<R, S> Worker<R, S>
+impl<R, S, C> Worker<R, S, C>
 where
     R: RegistryFacade + 'static,
     S: SigningEngine + 'static,
+    C: StatusRegistryFacade + 'static,
 {
-    pub fn new(pool: PgPool, registry: R, engine: S, rng: Box<dyn RngCore + Send + Sync>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        registry: R,
+        engine: S,
+        status_registry: C,
+        rng: Box<dyn RngCore + Send + Sync>,
+    ) -> Self {
         Self {
             pool,
             registry,
             engine,
+            status_registry,
             rng,
             config: WorkerConfig::default(),
         }
@@ -208,6 +217,21 @@ where
                         entry_now,
                     )
                     .await,
+                    Some("create_status_list_entry"),
+                )
+            }
+            "create_status_list_entry" => (
+                execute_create_status_list_entry(&tenant, &state, &self.status_registry).await,
+                Some("provision_status_list"),
+            ),
+            "provision_status_list" => {
+                let issuer_id = task.result_issuer_id.as_ref().ok_or_else(|| {
+                    WorkerError::Decode(
+                        "task.result_issuer_id is None at provision_status_list".into(),
+                    )
+                })?;
+                (
+                    execute_provision_status_list(&self.pool, issuer_id, &state).await,
                     None,
                 )
             }
