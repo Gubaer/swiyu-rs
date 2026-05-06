@@ -151,6 +151,7 @@ pub async fn credential(
         &issuer_id,
         now,
     )?;
+    proof_claims.verify_signature()?;
 
     // Atomically consume the nonce. Returns the offer_id it was
     // bound to; that must match the access-token's offer or we
@@ -255,19 +256,30 @@ struct ProofClaims {
     /// The wallet's public key (`jwk` member of the proof JWT
     /// header). Embedded as `cnf.jwk` in the issued credential.
     cnf_jwk: Value,
+    /// JWS `alg` from the proof header. [`Self::verify_signature`]
+    /// dispatches on this; only `EdDSA` and `ES256` are accepted.
+    alg: String,
+    /// `<header_b64>.<payload_b64>` — the bytes the wallet signed.
+    signing_input: String,
+    /// Raw signature bytes (decoded from the JWT's third segment):
+    /// 64 bytes for both EdDSA (Ed25519) and ES256 (raw R||S).
+    signature: Vec<u8>,
 }
 
-/// Parses the wallet's proof JWT.
+/// Parses the wallet's proof JWT — structural validation only.
 ///
-/// **Does NOT verify the JWT signature** at v0.1.x — see
-/// `impl_api_oidc.md` for the deferred slice that wires up real
-/// JWS verification. Validates only the claims that are required
-/// to bind the credential to the wallet at issuance time:
+/// Validates the claims that are required to bind the credential to
+/// the wallet at issuance time:
 ///
 /// - JWT structure (three base64url-encoded segments).
 /// - Header carries a `jwk` (the wallet's public key) and `alg`.
 /// - Body has `aud` matching the issuer URL, `iat` within
 ///   `PROOF_IAT_SKEW_SECONDS` of `now`, and a `nonce`.
+///
+/// Cryptographic verification of the signature lives in
+/// [`ProofClaims::verify_signature`]; the handler calls both in
+/// sequence so "shape valid" and "cryptographically valid" remain
+/// independently testable failure modes.
 fn parse_wallet_proof(
     jwt: &str,
     issuer_base_url: &str,
@@ -277,7 +289,7 @@ fn parse_wallet_proof(
     let mut parts = jwt.split('.');
     let header_b64 = parts.next().ok_or_else(invalid_proof_structure)?;
     let payload_b64 = parts.next().ok_or_else(invalid_proof_structure)?;
-    let _signature_b64 = parts.next().ok_or_else(invalid_proof_structure)?;
+    let signature_b64 = parts.next().ok_or_else(invalid_proof_structure)?;
     if parts.next().is_some() {
         return Err(invalid_proof_structure());
     }
@@ -288,11 +300,22 @@ fn parse_wallet_proof(
     let payload_bytes = URL_SAFE_NO_PAD
         .decode(payload_b64)
         .map_err(|_| invalid_proof_structure())?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(signature_b64)
+        .map_err(|_| invalid_proof_structure())?;
 
     let header: Value =
         serde_json::from_slice(&header_bytes).map_err(|_| invalid_proof_structure())?;
     let payload: Value =
         serde_json::from_slice(&payload_bytes).map_err(|_| invalid_proof_structure())?;
+
+    let alg = header
+        .get("alg")
+        .and_then(Value::as_str)
+        .ok_or_else(|| OAuthError::InvalidProof {
+            description: "proof JWT header is missing `alg`".to_string(),
+        })?
+        .to_string();
 
     let cnf_jwk = header
         .get("jwk")
@@ -345,7 +368,133 @@ fn parse_wallet_proof(
         })?
         .to_string();
 
-    Ok(ProofClaims { nonce, cnf_jwk })
+    let signing_input = format!("{header_b64}.{payload_b64}");
+
+    Ok(ProofClaims {
+        nonce,
+        cnf_jwk,
+        alg,
+        signing_input,
+        signature,
+    })
+}
+
+impl ProofClaims {
+    /// Cryptographically verifies the wallet proof JWT's signature
+    /// against the public key the proof's header carries (`jwk`).
+    ///
+    /// Without this the wallet's possession-of-key claim is
+    /// unprovable: anyone holding the pre-auth code could mint a
+    /// credential bound to a public key they do not control.
+    /// Supports the two algorithms SD-JWT VC wallets actually use:
+    ///
+    /// - `ES256` — ECDSA over P-256 with SHA-256, IEEE-P1363 (raw
+    ///   R||S) signature encoding (the JWS form).
+    /// - `EdDSA` — Ed25519, 64-byte signature.
+    ///
+    /// All failure modes (unsupported alg, malformed jwk, signature
+    /// mismatch) collapse to `InvalidProof` with a description that
+    /// names the failure.
+    fn verify_signature(&self) -> Result<(), OAuthError> {
+        match self.alg.as_str() {
+            "EdDSA" => verify_proof_ed25519(&self.cnf_jwk, &self.signing_input, &self.signature),
+            "ES256" => verify_proof_es256(&self.cnf_jwk, &self.signing_input, &self.signature),
+            other => Err(OAuthError::InvalidProof {
+                description: format!(
+                    "unsupported proof alg {other:?}, expected one of \"ES256\" or \"EdDSA\""
+                ),
+            }),
+        }
+    }
+}
+
+fn verify_proof_ed25519(
+    jwk: &Value,
+    signing_input: &str,
+    signature: &[u8],
+) -> Result<(), OAuthError> {
+    use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
+
+    require_jwk_field(jwk, "kty", "OKP")?;
+    require_jwk_field(jwk, "crv", "Ed25519")?;
+
+    let x = decode_jwk_b64(jwk, "x")?;
+    let x_array: [u8; 32] = x.try_into().map_err(|_| OAuthError::InvalidProof {
+        description: "jwk `x` must decode to 32 bytes for Ed25519".into(),
+    })?;
+    let pk = VerifyingKey::from_bytes(&x_array).map_err(|e| OAuthError::InvalidProof {
+        description: format!("jwk `x` is not a valid Ed25519 public key: {e}"),
+    })?;
+
+    let sig_array: [u8; 64] = signature.try_into().map_err(|_| OAuthError::InvalidProof {
+        description: "EdDSA signature must be 64 bytes".into(),
+    })?;
+    let sig = Signature::from_bytes(&sig_array);
+
+    pk.verify(signing_input.as_bytes(), &sig)
+        .map_err(|_| OAuthError::InvalidProof {
+            description: "signature did not verify".into(),
+        })
+}
+
+fn verify_proof_es256(
+    jwk: &Value,
+    signing_input: &str,
+    signature: &[u8],
+) -> Result<(), OAuthError> {
+    use p256::ecdsa::signature::Verifier;
+    use p256::ecdsa::{Signature, VerifyingKey};
+
+    require_jwk_field(jwk, "kty", "EC")?;
+    require_jwk_field(jwk, "crv", "P-256")?;
+
+    let x = decode_jwk_b64(jwk, "x")?;
+    let y = decode_jwk_b64(jwk, "y")?;
+    if x.len() != 32 || y.len() != 32 {
+        return Err(OAuthError::InvalidProof {
+            description: "jwk `x` and `y` must each decode to 32 bytes for P-256".into(),
+        });
+    }
+    let mut sec1 = Vec::with_capacity(65);
+    sec1.push(0x04);
+    sec1.extend_from_slice(&x);
+    sec1.extend_from_slice(&y);
+    let pk = VerifyingKey::from_sec1_bytes(&sec1).map_err(|e| OAuthError::InvalidProof {
+        description: format!("jwk does not represent a valid P-256 public key: {e}"),
+    })?;
+
+    let sig = Signature::from_slice(signature).map_err(|e| OAuthError::InvalidProof {
+        description: format!("ES256 signature is not a valid P-256 ECDSA signature: {e}"),
+    })?;
+
+    pk.verify(signing_input.as_bytes(), &sig)
+        .map_err(|_| OAuthError::InvalidProof {
+            description: "signature did not verify".into(),
+        })
+}
+
+fn require_jwk_field(jwk: &Value, field: &str, expected: &str) -> Result<(), OAuthError> {
+    let actual = jwk.get(field).and_then(Value::as_str);
+    if actual != Some(expected) {
+        return Err(OAuthError::InvalidProof {
+            description: format!("proof jwk: expected {field}={expected:?}, got {actual:?}"),
+        });
+    }
+    Ok(())
+}
+
+fn decode_jwk_b64(jwk: &Value, field: &str) -> Result<Vec<u8>, OAuthError> {
+    let v = jwk
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| OAuthError::InvalidProof {
+            description: format!("jwk missing `{field}`"),
+        })?;
+    URL_SAFE_NO_PAD
+        .decode(v)
+        .map_err(|_| OAuthError::InvalidProof {
+            description: format!("jwk `{field}` is not valid base64url"),
+        })
 }
 
 fn invalid_proof_structure() -> OAuthError {
@@ -717,6 +866,151 @@ mod tests {
             assert!(matches!(
                 err,
                 BuildError::Engine(SigningEngineError::Backend(_))
+            ));
+        }
+    }
+
+    mod verify_signature_tests {
+        use super::*;
+
+        use ed25519_dalek::SigningKey as Ed25519SigningKey;
+        use p256::ecdsa::SigningKey as EcdsaSigningKey;
+        use p256::ecdsa::signature::Signer as _;
+        use rand_core::OsRng;
+
+        const SIGNING_INPUT: &str = "header_b64.payload_b64";
+
+        fn ed25519_proof(signing_input: &str) -> ProofClaims {
+            let signing_key = Ed25519SigningKey::generate(&mut OsRng);
+            let verifying_key = signing_key.verifying_key();
+            let x_b64 = URL_SAFE_NO_PAD.encode(verifying_key.to_bytes());
+            let cnf_jwk = json!({
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": x_b64,
+            });
+            let signature = signing_key
+                .sign(signing_input.as_bytes())
+                .to_bytes()
+                .to_vec();
+            ProofClaims {
+                nonce: "n".into(),
+                cnf_jwk,
+                alg: "EdDSA".into(),
+                signing_input: signing_input.into(),
+                signature,
+            }
+        }
+
+        fn es256_proof(signing_input: &str) -> ProofClaims {
+            let signing_key = EcdsaSigningKey::random(&mut OsRng);
+            let verifying_key = signing_key.verifying_key();
+            let encoded = verifying_key.to_encoded_point(false);
+            let pk_bytes = encoded.as_bytes();
+            // SEC1 uncompressed: 0x04 || x(32) || y(32).
+            let x_b64 = URL_SAFE_NO_PAD.encode(&pk_bytes[1..33]);
+            let y_b64 = URL_SAFE_NO_PAD.encode(&pk_bytes[33..65]);
+            let cnf_jwk = json!({
+                "kty": "EC",
+                "crv": "P-256",
+                "x": x_b64,
+                "y": y_b64,
+            });
+            let signature: p256::ecdsa::Signature = signing_key.sign(signing_input.as_bytes());
+            ProofClaims {
+                nonce: "n".into(),
+                cnf_jwk,
+                alg: "ES256".into(),
+                signing_input: signing_input.into(),
+                signature: signature.to_bytes().to_vec(),
+            }
+        }
+
+        #[test]
+        fn ed25519_happy_path_verifies() {
+            let proof = ed25519_proof(SIGNING_INPUT);
+            assert!(proof.verify_signature().is_ok());
+        }
+
+        #[test]
+        fn es256_happy_path_verifies() {
+            let proof = es256_proof(SIGNING_INPUT);
+            assert!(proof.verify_signature().is_ok());
+        }
+
+        #[test]
+        fn ed25519_rejects_signature_over_different_input() {
+            let mut proof = ed25519_proof(SIGNING_INPUT);
+            // Change the signing_input *after* signing — the signature
+            // is still well-formed but no longer matches the bytes
+            // verify_signature will hash.
+            proof.signing_input = "tampered".into();
+            assert!(matches!(
+                proof.verify_signature(),
+                Err(OAuthError::InvalidProof { .. })
+            ));
+        }
+
+        #[test]
+        fn es256_rejects_signature_over_different_input() {
+            let mut proof = es256_proof(SIGNING_INPUT);
+            proof.signing_input = "tampered".into();
+            assert!(matches!(
+                proof.verify_signature(),
+                Err(OAuthError::InvalidProof { .. })
+            ));
+        }
+
+        #[test]
+        fn rejects_unsupported_alg() {
+            let mut proof = ed25519_proof(SIGNING_INPUT);
+            proof.alg = "RS256".into();
+            let err = proof.verify_signature().unwrap_err();
+            match err {
+                OAuthError::InvalidProof { description } => {
+                    assert!(description.contains("RS256"), "{description}");
+                }
+                other => panic!("expected InvalidProof, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn ed25519_rejects_jwk_with_wrong_kty() {
+            let mut proof = ed25519_proof(SIGNING_INPUT);
+            proof.cnf_jwk["kty"] = json!("EC");
+            assert!(matches!(
+                proof.verify_signature(),
+                Err(OAuthError::InvalidProof { .. })
+            ));
+        }
+
+        #[test]
+        fn ed25519_rejects_missing_x() {
+            let mut proof = ed25519_proof(SIGNING_INPUT);
+            proof.cnf_jwk.as_object_mut().unwrap().remove("x");
+            assert!(matches!(
+                proof.verify_signature(),
+                Err(OAuthError::InvalidProof { .. })
+            ));
+        }
+
+        #[test]
+        fn ed25519_rejects_signature_of_wrong_length() {
+            let mut proof = ed25519_proof(SIGNING_INPUT);
+            proof.signature.truncate(63);
+            assert!(matches!(
+                proof.verify_signature(),
+                Err(OAuthError::InvalidProof { .. })
+            ));
+        }
+
+        #[test]
+        fn es256_rejects_jwk_with_wrong_crv() {
+            let mut proof = es256_proof(SIGNING_INPUT);
+            proof.cnf_jwk["crv"] = json!("P-384");
+            assert!(matches!(
+                proof.verify_signature(),
+                Err(OAuthError::InvalidProof { .. })
             ));
         }
     }

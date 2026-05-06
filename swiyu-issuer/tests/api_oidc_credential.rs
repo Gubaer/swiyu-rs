@@ -134,18 +134,24 @@ async fn mint_nonce(pool: &PgPool, issuer: &Issuer, offer: &CredentialOffer) -> 
     secret
 }
 
-/// Builds a wallet proof JWT shaped to satisfy `parse_wallet_proof`.
-/// The credential handler does not verify the signature at v0.1.x,
-/// so the third segment can be arbitrary.
+/// Builds a wallet proof JWT signed with a fresh Ed25519 keypair.
+/// The header carries the matching `jwk`; the JWS verifies cleanly
+/// against `verify_wallet_proof_signature` in the credential handler.
 fn build_proof_jwt(audience: &str, nonce: &str) -> String {
+    use ed25519_dalek::{Signer, SigningKey};
+    use rand_core::OsRng;
+
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let verifying_key = signing_key.verifying_key();
+    let x_b64 = URL_SAFE_NO_PAD.encode(verifying_key.to_bytes());
+
     let header = json!({
-        "alg": "ES256",
+        "alg": "EdDSA",
         "typ": "openid4vci-proof+jwt",
         "jwk": {
-            "kty": "EC",
-            "crv": "P-256",
-            "x": "fixture-x",
-            "y": "fixture-y",
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": x_b64,
         },
     });
     let payload = json!({
@@ -155,7 +161,9 @@ fn build_proof_jwt(audience: &str, nonce: &str) -> String {
     });
     let h = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
     let p = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
-    let s = URL_SAFE_NO_PAD.encode(b"fixture-signature");
+    let signing_input = format!("{h}.{p}");
+    let signature = signing_key.sign(signing_input.as_bytes());
+    let s = URL_SAFE_NO_PAD.encode(signature.to_bytes());
     format!("{h}.{p}.{s}")
 }
 
