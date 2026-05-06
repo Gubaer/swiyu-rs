@@ -135,9 +135,10 @@ async fn fresh_deactivation_returns_201_and_inserts_task(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::CREATED);
 
     let body = read_body(response).await;
-    assert_eq!(body["issuer_id"], issuer_id.to_string());
+    assert_eq!(body["issuer_id"], issuer_id.bare());
     let task_id_str = body["task_id"].as_str().expect("task_id is a string");
-    let task_id: TaskId = task_id_str.parse().expect("task_id parses");
+    let task_id =
+        TaskId::from_bare(task_id_str.to_string()).expect("task_id parses as bare base58");
 
     let mut conn = pool.acquire().await.unwrap();
     let task = persistence::operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
@@ -171,8 +172,8 @@ async fn already_pending_returns_200_and_same_task_id(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = read_body(response).await;
-    assert_eq!(body["task_id"], existing_task.to_string());
-    assert_eq!(body["issuer_id"], issuer_id.to_string());
+    assert_eq!(body["task_id"], existing_task.bare());
+    assert_eq!(body["issuer_id"], issuer_id.bare());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -195,7 +196,7 @@ async fn already_in_progress_returns_200_and_same_task_id(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = read_body(response).await;
-    assert_eq!(body["task_id"], existing_task.to_string());
+    assert_eq!(body["task_id"], existing_task.bare());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -227,8 +228,8 @@ async fn already_deactivated_with_traceable_task_returns_200_and_completed_task_
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = read_body(response).await;
-    assert_eq!(body["task_id"], completed_task.to_string());
-    assert_eq!(body["issuer_id"], issuer_id.to_string());
+    assert_eq!(body["task_id"], completed_task.bare());
+    assert_eq!(body["issuer_id"], issuer_id.bare());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -260,7 +261,7 @@ async fn already_deactivated_without_task_returns_200_and_null_task_id(pool: PgP
 
     let body = read_body(response).await;
     assert_eq!(body["task_id"], Value::Null);
-    assert_eq!(body["issuer_id"], issuer_id.to_string());
+    assert_eq!(body["issuer_id"], issuer_id.bare());
 }
 
 #[sqlx::test(migrations = "./migrations")]

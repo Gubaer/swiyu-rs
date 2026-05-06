@@ -88,11 +88,10 @@ async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
     let body = read_body(response).await;
     let task_id_str = body["task_id"].as_str().expect("task_id is a string");
     let issuer_id_str = body["issuer_id"].as_str().expect("issuer_id is a string");
-    assert!(task_id_str.starts_with("task_"));
-    assert!(issuer_id_str.starts_with("issuer_"));
 
-    let task_id: TaskId = task_id_str.parse().expect("task_id parses");
-    let issuer_id: IssuerId = issuer_id_str.parse().expect("issuer_id parses");
+    let task_id = TaskId::from_bare(task_id_str.to_string()).expect("task_id parses as bare");
+    let issuer_id =
+        IssuerId::from_bare(issuer_id_str.to_string()).expect("issuer_id parses as bare");
 
     let mut conn = pool.acquire().await.unwrap();
     let task = persistence::operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
@@ -128,7 +127,7 @@ async fn trims_whitespace_in_input_fields(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::CREATED);
 
     let body = read_body(response).await;
-    let task_id: TaskId = body["task_id"].as_str().unwrap().parse().unwrap();
+    let task_id = TaskId::from_bare(body["task_id"].as_str().unwrap().to_string()).unwrap();
     let mut conn = pool.acquire().await.unwrap();
     let task = persistence::operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
         .await
@@ -157,9 +156,9 @@ async fn missing_fields_apply_defaults(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::CREATED);
 
     let body = read_body(response).await;
-    let task_id: TaskId = body["task_id"].as_str().unwrap().parse().unwrap();
+    let task_id = TaskId::from_bare(body["task_id"].as_str().unwrap().to_string()).unwrap();
     let issuer_id_str = body["issuer_id"].as_str().unwrap();
-    let issuer_id: IssuerId = issuer_id_str.parse().unwrap();
+    let issuer_id = IssuerId::from_bare(issuer_id_str.to_string()).unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     let task = persistence::operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
@@ -192,8 +191,8 @@ async fn blank_fields_apply_defaults(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::CREATED);
 
     let body = read_body(response).await;
-    let task_id: TaskId = body["task_id"].as_str().unwrap().parse().unwrap();
-    let issuer_id: IssuerId = body["issuer_id"].as_str().unwrap().parse().unwrap();
+    let task_id = TaskId::from_bare(body["task_id"].as_str().unwrap().to_string()).unwrap();
+    let issuer_id = IssuerId::from_bare(body["issuer_id"].as_str().unwrap().to_string()).unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     let task = persistence::operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)

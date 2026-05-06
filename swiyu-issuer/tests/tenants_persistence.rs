@@ -68,7 +68,10 @@ async fn find_by_id_returns_none_for_unknown_tenant(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn seeded_dev_tenant_carries_placeholder_partner_id(pool: PgPool) {
+async fn seeded_dev_tenant_carries_kacon_partner_id(pool: PgPool) {
+    // The seeded dev tenant carries the kacon gmbh business partner
+    // id — the consolidated baseline migration (swiyu-issuer/migrations/
+    // 20260430_000001_init.sql) writes it.
     let tenant_id = TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
@@ -79,6 +82,6 @@ async fn seeded_dev_tenant_carries_placeholder_partner_id(pool: PgPool) {
 
     assert_eq!(
         tenant.partner_id.as_deref(),
-        Some("00000000-0000-0000-0000-000000000000"),
+        Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"),
     );
 }

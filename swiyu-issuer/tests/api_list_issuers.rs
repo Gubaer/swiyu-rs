@@ -136,10 +136,10 @@ async fn single_page_returns_target_shape_dtos(pool: PgPool) {
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 2);
     // Newest first.
-    assert_eq!(items[0]["id"], newer.id.to_string());
+    assert_eq!(items[0]["id"], newer.id.bare());
     assert_eq!(items[0]["display_name"], "Newer");
     assert_eq!(items[0]["state"], "active");
-    assert_eq!(items[1]["id"], older.id.to_string());
+    assert_eq!(items[1]["id"], older.id.bare());
     assert_eq!(items[1]["display_name"], "Older");
     assert!(body["next_cursor"].is_null());
 
@@ -182,8 +182,8 @@ async fn multi_page_advances_via_cursor(pool: PgPool) {
     let page1 = read_body(page1_response).await;
     let items1 = page1["items"].as_array().unwrap();
     assert_eq!(items1.len(), 2);
-    assert_eq!(items1[0]["id"], newest.id.to_string());
-    assert_eq!(items1[1]["id"], middle.id.to_string());
+    assert_eq!(items1[0]["id"], newest.id.bare());
+    assert_eq!(items1[1]["id"], middle.id.bare());
     let cursor = page1["next_cursor"].as_str().unwrap().to_string();
 
     // Page 2: same limit, cursor advances → just oldest, no further cursor.
@@ -198,7 +198,7 @@ async fn multi_page_advances_via_cursor(pool: PgPool) {
     let page2 = read_body(page2_response).await;
     let items2 = page2["items"].as_array().unwrap();
     assert_eq!(items2.len(), 1);
-    assert_eq!(items2[0]["id"], oldest.id.to_string());
+    assert_eq!(items2[0]["id"], oldest.id.bare());
     assert!(page2["next_cursor"].is_null());
 }
 

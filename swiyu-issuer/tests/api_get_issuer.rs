@@ -111,7 +111,7 @@ async fn happy_path_returns_target_shape_dto(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = read_body(response).await;
-    assert_eq!(body["id"], issuer.id.to_string());
+    assert_eq!(body["id"], issuer.id.bare());
     assert_eq!(body["did"], "did:tdw:example.com:9hXq2vRtL8pK7f");
     assert_eq!(body["state"], "active");
     assert_eq!(body["description"], "Cantonal driver-licence issuer");

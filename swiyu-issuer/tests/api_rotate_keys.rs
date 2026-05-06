@@ -141,9 +141,10 @@ async fn fresh_rotation_returns_201_and_inserts_task(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::CREATED);
 
     let body = read_body(response).await;
-    assert_eq!(body["issuer_id"], issuer_id.to_string());
+    assert_eq!(body["issuer_id"], issuer_id.bare());
     let task_id_str = body["task_id"].as_str().expect("task_id is a string");
-    let task_id: TaskId = task_id_str.parse().expect("task_id parses");
+    let task_id =
+        TaskId::from_bare(task_id_str.to_string()).expect("task_id parses as bare base58");
 
     let mut conn = pool.acquire().await.unwrap();
     let task = persistence::operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
@@ -180,7 +181,7 @@ async fn all_sentinel_expands_server_side(pool: PgPool) {
 
     let body = read_body(response).await;
     let task_id_str = body["task_id"].as_str().unwrap();
-    let task_id: TaskId = task_id_str.parse().unwrap();
+    let task_id = TaskId::from_bare(task_id_str.to_string()).unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     let task = persistence::operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
@@ -212,8 +213,8 @@ async fn in_flight_task_returns_200_and_same_task_id(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = read_body(response).await;
-    assert_eq!(body["task_id"], existing_task.to_string());
-    assert_eq!(body["issuer_id"], issuer_id.to_string());
+    assert_eq!(body["task_id"], existing_task.bare());
+    assert_eq!(body["issuer_id"], issuer_id.bare());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -239,7 +240,7 @@ async fn prior_completed_task_falls_through_to_fresh_201(pool: PgPool) {
 
     let body = read_body(response).await;
     let task_id_str = body["task_id"].as_str().unwrap();
-    let new_task_id: TaskId = task_id_str.parse().unwrap();
+    let new_task_id = TaskId::from_bare(task_id_str.to_string()).unwrap();
     assert_ne!(new_task_id, prior_task);
 }
 

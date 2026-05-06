@@ -110,7 +110,7 @@ async fn happy_path_returns_target_shape(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = read_body(response).await;
-    assert_eq!(body["id"], task.id.to_string());
+    assert_eq!(body["id"], task.id.bare());
     assert_eq!(body["task_type"], "create_issuer");
     assert_eq!(body["state"], "pending");
     assert!(body["step"].is_null());
