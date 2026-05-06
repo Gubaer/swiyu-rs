@@ -188,11 +188,15 @@ paths:
         disclosures, just a trailing `~`. Selective disclosure
         lands in a follow-up slice.
 
-        **NOTE:** v0.1.x signs with an ephemeral fixture key
-        generated at `issuer-oidc` startup. Signed credentials are
-        wire-shape compatible but do not verify across restarts;
-        the issuer's published DID document does not advertise the
-        public key. Real keystore integration is a follow-up slice.
+        The JWS is signed with the issuer's `Assertion` key (P-256
+        / ES256) through the configured `SigningEngine`. The JWS
+        `kid` is `{did}#assertion-key-01`, which the issuer's
+        published DID document advertises as its `assertionMethod`
+        verification method, so credentials verify across restarts
+        and across deployments. Issuers that lack an Assertion key
+        (the seeded dev fixture row, or any issuer not yet
+        onboarded through the management API) cannot issue
+        credentials and return `invalid_request`.
       operationId: postCredential
       parameters:
         - $ref: '#/components/parameters/IssuerId'
@@ -213,8 +217,9 @@ paths:
                 $ref: '#/components/schemas/CredentialResponse'
         '400':
           description: |
-            Body is malformed, format/vct mismatch, or the wallet
-            proof failed to parse / didn't bind to a live nonce.
+            Body is malformed, format/vct mismatch, the wallet
+            proof failed to parse / didn't bind to a live nonce, or
+            the issuer has no Assertion key configured.
           content:
             application/json:
               schema:
