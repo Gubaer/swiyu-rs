@@ -1,8 +1,9 @@
 //! Identifier newtypes for the issuer's domain aggregates.
 //!
-//! Three distinct types — [`TenantId`], [`IssuerId`], and
-//! [`CredentialOfferId`] — share the same underlying scheme but
-//! stay separate at the type level so a [`TenantId`] cannot
+//! Each aggregate type ([`TenantId`], [`IssuerId`],
+//! [`CredentialOfferId`], [`IssuedCredentialId`], [`StatusListId`],
+//! [`ApiTokenId`], [`TaskId`]) shares the same underlying scheme but
+//! stays separate at the type level so a [`TenantId`] cannot
 //! accidentally be passed where an [`IssuerId`] is expected.
 //!
 //! # Generation
@@ -27,8 +28,8 @@
 //! # Prefix discipline
 //!
 //! Each ID type carries a textual prefix (`tenant_`, `issuer_`,
-//! `offer_`) when serialised but stores only the bare form
-//! internally:
+//! `offer_`, `credential_`, `status_list_`, `apitok_`, `task_`)
+//! when displayed but stores only the bare form internally:
 //!
 //! - `bare()` returns the unprefixed string. Used for DB storage
 //!   and the wallet-facing offer URL, where every character
@@ -152,6 +153,8 @@ macro_rules! define_id {
 define_id!(TenantId, "tenant");
 define_id!(IssuerId, "issuer");
 define_id!(CredentialOfferId, "offer");
+define_id!(IssuedCredentialId, "credential");
+define_id!(StatusListId, "status_list");
 define_id!(ApiTokenId, "apitok");
 define_id!(TaskId, "task");
 
@@ -224,8 +227,26 @@ mod tests {
         let tenant = TenantId::from_bare(bare).unwrap();
         let issuer = IssuerId::from_bare(bare).unwrap();
         let offer = CredentialOfferId::from_bare(bare).unwrap();
+        let credential = IssuedCredentialId::from_bare(bare).unwrap();
+        let status_list = StatusListId::from_bare(bare).unwrap();
         assert_eq!(tenant.to_string(), "tenant_9hXq2vRtL8pK7f");
         assert_eq!(issuer.to_string(), "issuer_9hXq2vRtL8pK7f");
         assert_eq!(offer.to_string(), "offer_9hXq2vRtL8pK7f");
+        assert_eq!(credential.to_string(), "credential_9hXq2vRtL8pK7f");
+        assert_eq!(status_list.to_string(), "status_list_9hXq2vRtL8pK7f");
+    }
+
+    #[test]
+    fn issued_credential_id_round_trips() {
+        let id = IssuedCredentialId::generate();
+        let parsed: IssuedCredentialId = id.to_string().parse().unwrap();
+        assert_eq!(id, parsed);
+    }
+
+    #[test]
+    fn status_list_id_round_trips() {
+        let id = StatusListId::generate();
+        let parsed: StatusListId = id.to_string().parse().unwrap();
+        assert_eq!(id, parsed);
     }
 }
