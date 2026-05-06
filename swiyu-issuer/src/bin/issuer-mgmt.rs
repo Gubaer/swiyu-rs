@@ -8,7 +8,7 @@ use sqlx::PgPool;
 use swiyu_issuer::api_management::{AppState, Config, router};
 use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, TenantId, build_signing_engine_from_env};
 use swiyu_issuer::persistence;
-use swiyu_issuer::worker::Worker;
+use swiyu_issuer::worker::{StatusListPublisher, Worker};
 use swiyu_registries::common::AccessToken;
 use swiyu_registries::identifier::IdentifierRegistryClient;
 use swiyu_registries::status::StatusRegistryClient;
@@ -88,20 +88,32 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 
     let registry_client =
         IdentifierRegistryClient::new(registry_url, AccessToken::new(registry_token.clone()))?;
-    let status_registry_client =
+    let status_registry_for_worker = StatusRegistryClient::new(
+        status_registry_url.clone(),
+        AccessToken::new(registry_token.clone()),
+    )?;
+    let status_registry_for_publisher =
         StatusRegistryClient::new(status_registry_url, AccessToken::new(registry_token))?;
-    let signing_engine = build_signing_engine_from_env(pool.clone())?;
+    let signing_engine_for_worker = build_signing_engine_from_env(pool.clone())?;
+    let signing_engine_for_publisher = build_signing_engine_from_env(pool.clone())?;
     let worker = Worker::new(
         pool.clone(),
         registry_client,
-        signing_engine,
-        status_registry_client,
+        signing_engine_for_worker,
+        status_registry_for_worker,
+        Box::new(OsRng),
+    );
+    let publisher = StatusListPublisher::new(
+        pool.clone(),
+        signing_engine_for_publisher,
+        status_registry_for_publisher,
         Box::new(OsRng),
     );
 
-    // Single CancellationToken drives both axum's graceful shutdown and
-    // the worker's exit. ctrl_c / SIGTERM trips it once; both consumers
-    // observe the cancellation and drain in parallel.
+    // Single CancellationToken drives axum's graceful shutdown plus
+    // the operation-task worker and the status-list publisher.
+    // ctrl_c / SIGTERM trips it once; all three consumers observe the
+    // cancellation and drain in parallel.
     let token = CancellationToken::new();
 
     let signal_token = token.clone();
@@ -112,6 +124,8 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 
     let worker_token = token.clone();
     let worker_handle = tokio::spawn(worker.run(worker_token));
+    let publisher_token = token.clone();
+    let publisher_handle = tokio::spawn(publisher.run(publisher_token));
 
     let listener = TcpListener::bind(bind_addr).await?;
     tracing::info!(%bind_addr, "issuer-mgmt listening");
@@ -122,6 +136,9 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Err(e) = worker_handle.await {
         tracing::error!(error = ?e, "worker task ended with error");
+    }
+    if let Err(e) = publisher_handle.await {
+        tracing::error!(error = ?e, "status-list publisher task ended with error");
     }
 
     Ok(())
