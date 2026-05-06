@@ -4,6 +4,8 @@ use swiyu_core::statuslist::{SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY}
 use super::DomainError;
 use super::ids::{IssuerId, StatusListId};
 
+pub mod wrapper;
+
 pub use swiyu_core::statuslist::StatusValue;
 
 /// Length in bytes of the raw bitstring backing one status list.
