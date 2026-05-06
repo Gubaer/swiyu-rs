@@ -1,13 +1,15 @@
 -- Initial schema for swiyu-issuer.
 --
 -- This file is the consolidation of the early-development migrations
--- (originally 0001 through 0012) into a single baseline. The project
--- is still pre-production; collapsing was cheaper than carrying the
--- expand/contract history. Subsequent schema changes go in their own
--- numbered migration on top of this one.
+-- (originally 0001 through 0015 — including the status-list,
+-- issued-credentials, and registry-coordinate additions) into a
+-- single baseline. The project is still pre-production; collapsing
+-- was cheaper than carrying the expand/contract history. Subsequent
+-- schema changes go in their own numbered migration on top of this
+-- one.
 --
--- See specs/impl_persistence.md for design rationale (identifier
--- strategy, denormalisation choices, deferred constraints).
+-- See specs/impl_persistence.md and
+-- specs/impl-credential-management.md for design rationale.
 
 -- ============================================================================
 -- Tenants
@@ -35,6 +37,12 @@ CREATE TABLE tenants (
 --
 -- `created_at` drives stable ordering for the cursor-paginated GET
 -- /api/v1/issuers endpoint (created_at DESC, id DESC).
+--
+-- `current_status_list_id` is the issuer's active status list. NULL
+-- means no list has been provisioned yet; the create_issuer worker
+-- populates it as part of the provision_status_list step. The FK to
+-- status_lists(id) is added later in this migration, after that
+-- table is created.
 
 CREATE TABLE issuers (
     id TEXT PRIMARY KEY,
@@ -48,6 +56,7 @@ CREATE TABLE issuers (
     display_name TEXT,
     logo_uri TEXT,
     locale TEXT,
+    current_status_list_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -219,6 +228,134 @@ CREATE INDEX operation_tasks_dispatch
 -- and any future list-by-tenant query.
 CREATE INDEX operation_tasks_tenant
     ON operation_tasks (tenant_id, created_at DESC);
+
+-- ============================================================================
+-- Status lists (BitstringStatusList)
+-- ============================================================================
+--
+-- Each issuer owns one or more BitstringStatusList instances. A list
+-- carries a 32 KB bitstring at statusSize=2 (LIST_CAPACITY = 131 072
+-- credentials, two bits per credential encoding valid/suspended/revoked).
+--
+-- `allocated_count` is the next free index handed out by issuance;
+-- the issuance handler refuses to allocate once it reaches
+-- LIST_CAPACITY. List rollover is a worker concern: a fresh list
+-- requires a registry round-trip to obtain its public URL, and that
+-- does not belong in the issuance hot path. See
+-- aspect-credential-management.md (Bit allocation).
+--
+-- The `committed_version` / `published_version` pair drives the
+-- publish worker: when committed > published the list is "dirty"
+-- and a publish round is needed.
+--
+-- `registry_entry_id` is the entry UUID returned by
+-- `create_status_list_entry`; the path segment of every subsequent
+-- `update_status_list_entry` PUT.
+--
+-- `registry_url` is the `statusRegistryUrl` returned alongside it;
+-- the `uri` value embedded in every issued credential's
+-- `status.status_list` claim, and the `sub` of the published
+-- `statuslist+jwt`.
+--
+-- Both registry columns are nullable: a row stays in the
+-- *unallocated-on-registry* state from local insert until the
+-- create_issuer worker's create_status_list_entry step fills them in.
+
+CREATE TABLE status_lists (
+    id TEXT PRIMARY KEY,
+    issuer_id TEXT NOT NULL REFERENCES issuers(id),
+    bitstring BYTEA NOT NULL,
+    allocated_count INT NOT NULL DEFAULT 0,
+    committed_version BIGINT NOT NULL DEFAULT 0,
+    published_version BIGINT NOT NULL DEFAULT 0,
+    last_publish_attempt_at TIMESTAMPTZ,
+    last_publish_error TEXT,
+    next_publish_attempt_at TIMESTAMPTZ,
+    publish_attempts INT NOT NULL DEFAULT 0,
+    registry_entry_id TEXT,
+    registry_url TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CHECK (allocated_count <= 131072),
+    CHECK (octet_length(bitstring) = 32768)
+);
+
+CREATE INDEX status_lists_issuer ON status_lists (issuer_id);
+
+-- Publish worker's "find next runnable" probe.
+CREATE INDEX status_lists_dirty
+    ON status_lists (next_publish_attempt_at NULLS FIRST)
+    WHERE committed_version > published_version;
+
+-- Now that status_lists exists, attach the FK from issuers
+-- back to it.
+ALTER TABLE issuers
+    ADD CONSTRAINT issuers_current_status_list_id_fkey
+    FOREIGN KEY (current_status_list_id) REFERENCES status_lists(id);
+
+-- ============================================================================
+-- Issued credentials
+-- ============================================================================
+--
+-- The issuer's record of a credential it has signed. Metadata only;
+-- the signed SD-JWT VC bytes are not retained — `integrity_hash`
+-- (SHA-256 of the compact serialisation handed to the wallet) is the
+-- only trace that survives.
+--
+-- Cardinality:
+--   - `UNIQUE (credential_offer_id)` codifies the 1:{0..1} relation
+--     from `credential_offers` to `issued_credentials`: every issued
+--     credential originates from exactly one offer; an offer that is
+--     cancelled or expires before the wallet picks it up never
+--     produces a row here.
+--   - `UNIQUE (status_list_id, status_list_index)` codifies "indices
+--     are not reused" — a status-list bit is bound to one credential
+--     for the row's lifetime.
+--
+-- `vct` and `holder_key_jkt` are denormalised at issuance:
+--   - `vct` is copied from the originating CredentialType so later
+--     edits to the type row do not retroactively change what an
+--     existing credential reads as.
+--   - `holder_key_jkt` is the RFC 7638 thumbprint of the wallet's
+--     `cnf` key, base64url-encoded. The full `cnf` key is not
+--     retained; the thumbprint is enough to correlate later
+--     presentations or audit trails.
+--
+-- `state` is held as TEXT (matching the rest of the schema's
+-- enum-as-text convention). Domain values: 'active', 'suspended',
+-- 'revoked'. `expired` is *not* a state — expiry is derived at read
+-- time from `expires_at`. See aspect-credential-management.md
+-- (Lifecycle states / Expiry is a view, not a state).
+
+CREATE TABLE issued_credentials (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+    issuer_id TEXT NOT NULL REFERENCES issuers(id),
+    credential_offer_id TEXT NOT NULL REFERENCES credential_offers(id),
+    vct TEXT NOT NULL,
+    holder_key_jkt TEXT NOT NULL,
+    status_list_id TEXT NOT NULL REFERENCES status_lists(id),
+    status_list_index INT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'active',
+    integrity_hash BYTEA NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+
+    UNIQUE (status_list_id, status_list_index),
+    UNIQUE (credential_offer_id)
+);
+
+-- Tenant-scoped listing/pagination support for the management API
+-- (`GET /api/v1/issued-credentials`). The trailing `issued_at DESC`
+-- matches the default sort order.
+CREATE INDEX issued_credentials_tenant_issuer
+    ON issued_credentials (tenant_id, issuer_id, issued_at DESC);
+
+-- Holder-keyed lookup support (e.g. "what has this wallet
+-- received?"). Tenant + issuer scoped because thumbprints are not
+-- globally unique across issuers.
+CREATE INDEX issued_credentials_holder
+    ON issued_credentials (tenant_id, issuer_id, holder_key_jkt);
 
 -- ============================================================================
 -- Seed data
