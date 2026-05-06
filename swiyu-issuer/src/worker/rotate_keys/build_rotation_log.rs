@@ -16,10 +16,13 @@
 //! - signing-engine backend error → `Retry`
 //! - everything else → `Terminal`
 
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 
+use swiyu_core::did::DID;
+
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult};
-use crate::worker::deactivate_issuer::registry_identifier;
 use crate::worker::registry::RegistryFacade;
 
 use super::log_builder::{BuildError, build_rotation_entry};
@@ -42,20 +45,17 @@ pub async fn execute_build_rotation_log<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    let identifier = match registry_identifier(&issuer.did) {
-        Some(i) => i,
-        None => {
+    let did = match DID::from_str(&issuer.did) {
+        Ok(d) => d,
+        Err(e) => {
             return StepOutcome::Terminal {
                 error_code: "invalid_issuer_did".into(),
-                error_message: format!(
-                    "cannot extract registry identifier from did: {}",
-                    issuer.did
-                ),
+                error_message: format!("cannot parse issuer did {}: {e}", issuer.did),
             };
         }
     };
 
-    let log = match registry.fetch_log(&identifier).await {
+    let log = match registry.fetch_log(&did).await {
         Ok(entries) => entries,
         Err(e) if e.is_retryable() => {
             return StepOutcome::Retry {

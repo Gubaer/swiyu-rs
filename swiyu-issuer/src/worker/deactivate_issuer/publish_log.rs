@@ -18,8 +18,12 @@
 //! deactivated) would be a second place to land that branch; the
 //! concrete error shape lands during integration testing.
 
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use serde_json::{Map, json};
+
+use swiyu_core::did::DID;
 
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant};
 use crate::worker::registry::RegistryFacade;
@@ -50,7 +54,16 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    let identifier = match registry_identifier(&issuer.did) {
+    let did = match DID::from_str(&issuer.did) {
+        Ok(d) => d,
+        Err(e) => {
+            return StepOutcome::Terminal {
+                error_code: "invalid_issuer_did".into(),
+                error_message: format!("cannot parse issuer did {}: {e}", issuer.did),
+            };
+        }
+    };
+    let identifier = match registry_identifier(&did) {
         Some(i) => i,
         None => {
             return StepOutcome::Terminal {
@@ -63,7 +76,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    let log = match registry.fetch_log(&identifier).await {
+    let log = match registry.fetch_log(&did).await {
         Ok(entries) => entries,
         Err(e) if e.is_retryable() => {
             return StepOutcome::Retry {

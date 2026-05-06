@@ -18,13 +18,16 @@
 //! - everything else (issuer state, missing fields, malformed
 //!   predecessor entry, missing key, sign key-not-found) → `Terminal`
 
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
+
+use swiyu_core::did::DID;
 
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult};
 use crate::worker::registry::RegistryFacade;
 
 use super::log_builder::{BuildError, build_deactivation_entry};
-use super::registry_identifier;
 
 pub async fn execute_build_deactivation_log<R: RegistryFacade, S: SigningEngine>(
     issuer: &Issuer,
@@ -32,20 +35,17 @@ pub async fn execute_build_deactivation_log<R: RegistryFacade, S: SigningEngine>
     engine: &S,
     now: DateTime<Utc>,
 ) -> StepOutcome {
-    let identifier = match registry_identifier(&issuer.did) {
-        Some(i) => i,
-        None => {
+    let did = match DID::from_str(&issuer.did) {
+        Ok(d) => d,
+        Err(e) => {
             return StepOutcome::Terminal {
                 error_code: "invalid_issuer_did".into(),
-                error_message: format!(
-                    "cannot extract registry identifier from did: {}",
-                    issuer.did
-                ),
+                error_message: format!("cannot parse issuer did {}: {e}", issuer.did),
             };
         }
     };
 
-    let log = match registry.fetch_log(&identifier).await {
+    let log = match registry.fetch_log(&did).await {
         Ok(entries) => entries,
         Err(e) if e.is_retryable() => {
             return StepOutcome::Retry {
@@ -187,7 +187,7 @@ mod tests {
         }
         assert_eq!(
             registry.fetch_log_invocations.lock().unwrap().as_slice(),
-            &["fce949f2-32c4-4915-8b60-0ee2f705231d".to_string()],
+            &[DID::from_str(fixture_did()).unwrap()],
         );
     }
 

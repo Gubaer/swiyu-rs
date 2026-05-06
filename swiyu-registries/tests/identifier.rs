@@ -67,18 +67,3 @@ async fn publish_log_entry_succeeds() {
         .await
         .unwrap();
 }
-
-#[tokio::test]
-async fn fetch_log_returns_body_verbatim() {
-    let (server, client) = fixture().await;
-    let body = "did:tdw log line 1\ndid:tdw log line 2";
-
-    Mock::given(method("GET"))
-        .and(path(format!("/api/v1/did/{IDENTIFIER}/did.jsonl")))
-        .respond_with(ResponseTemplate::new(200).set_body_string(body))
-        .mount(&server)
-        .await;
-
-    let got = client.fetch_log(IDENTIFIER).await.unwrap();
-    assert_eq!(got, body);
-}

@@ -10,6 +10,7 @@
 use std::future::Future;
 use std::sync::Mutex;
 
+use swiyu_core::did::DID;
 use swiyu_core::didlog::DIDLogEntry;
 use swiyu_registries::common::RegistryError;
 use swiyu_registries::identifier::Allocation;
@@ -57,7 +58,7 @@ pub struct MockRegistry {
     fetch_log_queue: Mutex<Vec<FetchLogCall>>,
     pub allocate_invocations: Mutex<Vec<String>>,
     pub publish_invocations: Mutex<Vec<(String, String, String)>>,
-    pub fetch_log_invocations: Mutex<Vec<String>>,
+    pub fetch_log_invocations: Mutex<Vec<DID>>,
 }
 
 impl MockRegistry {
@@ -123,12 +124,9 @@ impl RegistryFacade for MockRegistry {
 
     fn fetch_log(
         &self,
-        identifier: &str,
+        did: &DID,
     ) -> impl Future<Output = Result<Vec<DIDLogEntry>, RegistryError>> + Send {
-        self.fetch_log_invocations
-            .lock()
-            .unwrap()
-            .push(identifier.to_string());
+        self.fetch_log_invocations.lock().unwrap().push(did.clone());
         let next = self.fetch_log_queue.lock().unwrap().remove(0);
         async move {
             match next {

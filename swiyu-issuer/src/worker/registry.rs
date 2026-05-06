@@ -11,6 +11,7 @@
 
 use std::future::Future;
 
+use swiyu_core::did::DID;
 use swiyu_core::didlog::{DIDLog, DIDLogEntry};
 use swiyu_registries::common::RegistryError;
 use swiyu_registries::identifier::{Allocation, IdentifierRegistryClient};
@@ -18,6 +19,13 @@ use swiyu_registries::identifier::{Allocation, IdentifierRegistryClient};
 /// The registry operations the worker drives across `CreateIssuer`
 /// and `DeactivateIssuer` tasks: allocate the DID space, fetch the
 /// current DIDLog tail, and publish a signed DIDLog entry.
+///
+/// `fetch_log` is keyed by DID rather than by partner-id +
+/// identifier because the public resolver lives at the URL the DID
+/// itself encodes (see [`DID::log_url`]) — on SWIYU integration that
+/// is a different host from the partner-write API. Allocate and
+/// publish stay keyed by partner-id + identifier because both target
+/// the partner-write API.
 ///
 /// Errors flow through as [`RegistryError`]; callers route between
 /// `StepOutcome::Retry` and `StepOutcome::Terminal` via
@@ -40,7 +48,7 @@ pub trait RegistryFacade: Send + Sync {
 
     fn fetch_log(
         &self,
-        identifier: &str,
+        did: &DID,
     ) -> impl Future<Output = Result<Vec<DIDLogEntry>, RegistryError>> + Send;
 }
 
@@ -61,8 +69,8 @@ impl RegistryFacade for IdentifierRegistryClient {
         IdentifierRegistryClient::publish_log_entry(self, partner_id, identifier, entry)
     }
 
-    async fn fetch_log(&self, identifier: &str) -> Result<Vec<DIDLogEntry>, RegistryError> {
-        let body = IdentifierRegistryClient::fetch_log(self, identifier).await?;
+    async fn fetch_log(&self, did: &DID) -> Result<Vec<DIDLogEntry>, RegistryError> {
+        let body = IdentifierRegistryClient::fetch_log(self, did).await?;
         DIDLog::try_from_jsonl(&body)
             .map(DIDLog::into_entries)
             .map_err(|e| RegistryError::Decode(format!("DIDLog parse: {e}")))
