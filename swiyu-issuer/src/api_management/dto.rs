@@ -243,7 +243,9 @@ pub struct ListCredentialOffersResponse {
     pub next_cursor: Option<String>,
 }
 
-/// Query parameters for `GET /api/v1/issued-credentials`. All fields
+/// Query parameters for
+/// `GET /api/v1/issuers/{issuer_id}/credentials`. The owning issuer
+/// is in the path; no `issuer_id` query parameter. All fields here
 /// are optional.
 #[derive(Debug, Deserialize)]
 pub struct ListIssuedCredentialsQuery {
@@ -255,10 +257,6 @@ pub struct ListIssuedCredentialsQuery {
     /// page. Omit on the first request. The handler rejects anything
     /// it did not itself emit.
     pub cursor: Option<String>,
-
-    /// Filter to credentials belonging to a single issuer (bare
-    /// base58 id, no `issuer_` prefix).
-    pub issuer_id: Option<String>,
 
     /// Filter on the **stored** lifecycle state, one of `active`,
     /// `suspended`, `revoked`. The derived `expired` view is

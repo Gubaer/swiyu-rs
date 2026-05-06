@@ -472,26 +472,28 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /api/v1/issued-credentials:
+  /api/v1/issuers/{issuer_id}/credentials:
     get:
-      summary: List issued credentials
+      summary: List the issuer's issued credentials
       description: |
-        Lists the tenant's issued credentials, newest first.
+        Lists credentials belonging to the named issuer, newest first.
         Cursor-paginated. Pagination sorts by `(issued_at DESC, id DESC)`;
         the cursor encodes those two values opaquely (clients must not
         parse it). `next_cursor` is `null` when the last page is
         reached.
 
-        All filters apply on stored values. The `expired` view label
-        in the response derives from `expires_at` at read time and is
+        Filters apply on stored values. The `expired` view label in
+        the response derives from `expires_at` at read time and is
         deliberately *not* a filter — it would force a server-side
         projection over `now()` and would not align with any persisted
         column.
 
-        Tenant scoping comes from the bearer token; cross-tenant rows
-        never appear in the listing.
+        Tenant scoping comes from the bearer token; an `issuer_id`
+        path segment naming an issuer the tenant does not own returns
+        `404 Not Found`.
       operationId: listIssuedCredentials
       parameters:
+        - $ref: '#/components/parameters/IssuerId'
         - name: limit
           in: query
           required: false
@@ -511,15 +513,6 @@ paths:
             not emit.
           schema:
             type: string
-        - name: issuer_id
-          in: query
-          required: false
-          description: |
-            Filter to credentials belonging to a single issuer (bare
-            base58, no `issuer_` prefix).
-          schema:
-            type: string
-            pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'
         - name: state
           in: query
           required: false
@@ -546,8 +539,10 @@ paths:
                 $ref: '#/components/schemas/ListIssuedCredentialsResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
-  /api/v1/issued-credentials/{credential_id}:
+  /api/v1/issuers/{issuer_id}/credentials/{credential_id}:
     get:
       summary: Fetch an issued credential
       description: |
@@ -557,12 +552,14 @@ paths:
         `expires_at`.
 
         Tenant scoping comes from the bearer token. Cross-tenant
-        access returns `404 Not Found` — the server does not
-        distinguish "no such credential" from "wrong tenant" on the
-        wire, so an attacker cannot probe for the existence of
-        credentials outside their tenant.
+        access (wrong tenant) and cross-issuer access (right tenant,
+        wrong issuer in the URL) both return `404 Not Found`,
+        indistinguishable from "no such credential" so an attacker
+        cannot probe for the existence of resources outside their
+        tenant or unrelated issuers.
       operationId: getIssuedCredential
       parameters:
+        - $ref: '#/components/parameters/IssuerId'
         - $ref: '#/components/parameters/CredentialId'
       responses:
         '200':
@@ -576,7 +573,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /api/v1/issued-credentials/{credential_id}/suspend:
+  /api/v1/issuers/{issuer_id}/credentials/{credential_id}/suspend:
     post:
       summary: Suspend an issued credential
       description: |
@@ -589,11 +586,12 @@ paths:
         also returns `409 Conflict` (the lifecycle is `Active <-> Suspended`,
         with `Revoked` terminal).
 
-        Tenant scoping comes from the bearer token; the URL does not
-        carry a tenant. Cross-tenant access returns `404 Not Found`.
-        No request body.
+        Tenant scoping comes from the bearer token. Cross-tenant and
+        cross-issuer access both return `404 Not Found`. No request
+        body.
       operationId: suspendIssuedCredential
       parameters:
+        - $ref: '#/components/parameters/IssuerId'
         - $ref: '#/components/parameters/CredentialId'
       responses:
         '200':
@@ -609,7 +607,7 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
-  /api/v1/issued-credentials/{credential_id}/unsuspend:
+  /api/v1/issuers/{issuer_id}/credentials/{credential_id}/unsuspend:
     post:
       summary: Unsuspend an issued credential
       description: |
@@ -623,6 +621,7 @@ paths:
         Tenant scoping matches `suspendIssuedCredential`. No request body.
       operationId: unsuspendIssuedCredential
       parameters:
+        - $ref: '#/components/parameters/IssuerId'
         - $ref: '#/components/parameters/CredentialId'
       responses:
         '200':
@@ -638,7 +637,7 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
-  /api/v1/issued-credentials/{credential_id}/revoke:
+  /api/v1/issuers/{issuer_id}/credentials/{credential_id}/revoke:
     post:
       summary: Revoke an issued credential
       description: |
@@ -652,6 +651,7 @@ paths:
         Tenant scoping matches `suspendIssuedCredential`. No request body.
       operationId: revokeIssuedCredential
       parameters:
+        - $ref: '#/components/parameters/IssuerId'
         - $ref: '#/components/parameters/CredentialId'
       responses:
         '200':

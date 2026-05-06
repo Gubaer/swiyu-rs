@@ -1,6 +1,6 @@
 //! Integration tests for the issued-credential GET endpoints
-//! (`GET /api/v1/issued-credentials/{id}` and `GET
-//! /api/v1/issued-credentials?…`).
+//! (`GET /api/v1/issuers/{issuer_id}/credentials/{credential_id}`
+//! and `GET /api/v1/issuers/{issuer_id}/credentials?…`).
 //!
 //! Drives requests through the full management router (auth +
 //! extractors + serde + handler + persistence) using
@@ -178,7 +178,11 @@ async fn get_returns_credential_with_full_shape(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issued-credentials/{}", credential.id.bare()),
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}",
+                issuer.id.bare(),
+                credential.id.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -228,7 +232,11 @@ async fn get_marks_past_expires_at_as_expired(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issued-credentials/{}", credential.id.bare()),
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}",
+                issuer.id.bare(),
+                credential.id.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -247,12 +255,54 @@ async fn get_returns_404_for_unknown_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
 
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issued-credentials/{}", unknown.bare()),
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}",
+                issuer.id.bare(),
+                unknown.bare()
+            ),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
+    // The credential exists for the tenant but under issuer A; the
+    // request names issuer B (also owned by the tenant). Must
+    // collapse to NotFound.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer_a = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer_b = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer_a.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer_a,
+        &list_id,
+        0,
+        "vc-test",
+        IssuedCredentialState::Active,
+        Utc::now(),
+    )
+    .await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(get_request(
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}",
+                issuer_b.id.bare(),
+                credential.id.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -284,7 +334,11 @@ async fn get_is_tenant_scoped(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issued-credentials/{}", credential.id.bare()),
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}",
+                issuer.id.bare(),
+                credential.id.bare()
+            ),
             Some(&secret_b.as_wire()),
         ))
         .await
@@ -295,10 +349,15 @@ async fn get_is_tenant_scoped(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn get_missing_bearer_returns_401(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
+    let issuer_id = IssuerId::generate();
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issued-credentials/{}", unknown.bare()),
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}",
+                issuer_id.bare(),
+                unknown.bare()
+            ),
             None,
         ))
         .await
@@ -333,7 +392,7 @@ async fn list_returns_credentials_newest_first(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            "/api/v1/issued-credentials",
+            &format!("/api/v1/issuers/{}/credentials", issuer.id.bare()),
             Some(&secret.as_wire()),
         ))
         .await
@@ -350,7 +409,11 @@ async fn list_returns_credentials_newest_first(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn list_filters_by_issuer_id(pool: PgPool) {
+async fn list_returns_only_url_issuers_credentials(pool: PgPool) {
+    // The URL pins which issuer's credentials the list returns. A
+    // request for issuer A's credentials must not include rows
+    // belonging to issuer B, even when both issuers are owned by
+    // the same tenant.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
@@ -382,10 +445,7 @@ async fn list_filters_by_issuer_id(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            &format!(
-                "/api/v1/issued-credentials?issuer_id={}",
-                issuer_a.id.bare()
-            ),
+            &format!("/api/v1/issuers/{}/credentials", issuer_a.id.bare()),
             Some(&secret.as_wire()),
         ))
         .await
@@ -428,7 +488,10 @@ async fn list_filters_by_state(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            "/api/v1/issued-credentials?state=revoked",
+            &format!(
+                "/api/v1/issuers/{}/credentials?state=revoked",
+                issuer.id.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -472,7 +535,10 @@ async fn list_filters_by_vct(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            "/api/v1/issued-credentials?vct=vc-other",
+            &format!(
+                "/api/v1/issuers/{}/credentials?vct=vc-other",
+                issuer.id.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -510,7 +576,7 @@ async fn list_paginates_with_cursor(pool: PgPool) {
     let first = app
         .clone()
         .oneshot(get_request(
-            "/api/v1/issued-credentials?limit=2",
+            &format!("/api/v1/issuers/{}/credentials?limit=2", issuer.id.bare()),
             Some(&secret.as_wire()),
         ))
         .await
@@ -525,7 +591,10 @@ async fn list_paginates_with_cursor(pool: PgPool) {
 
     let second = app
         .oneshot(get_request(
-            &format!("/api/v1/issued-credentials?limit=2&cursor={cursor}"),
+            &format!(
+                "/api/v1/issuers/{}/credentials?limit=2&cursor={cursor}",
+                issuer.id.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -548,7 +617,9 @@ async fn list_paginates_with_cursor(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn list_is_tenant_scoped(pool: PgPool) {
+async fn list_for_other_tenants_issuer_returns_404(pool: PgPool) {
+    // Tenant B's bearer requesting a list under tenant A's issuer
+    // gets a 404 — the URL names an issuer they do not own.
     let tenant_a = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
     let issuer = insert_active_issuer(&pool, &tenant_a).await;
@@ -571,15 +642,30 @@ async fn list_is_tenant_scoped(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            "/api/v1/issued-credentials",
+            &format!("/api/v1/issuers/{}/credentials", issuer.id.bare()),
             Some(&secret_b.as_wire()),
         ))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    let items = body["items"].as_array().unwrap();
-    assert!(items.is_empty(), "other tenant must see an empty list");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn list_for_unknown_issuer_returns_404(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let unknown_issuer = IssuerId::generate();
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(get_request(
+            &format!("/api/v1/issuers/{}/credentials", unknown_issuer.bare()),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -587,11 +673,15 @@ async fn list_rejects_invalid_state_filter(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
 
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            "/api/v1/issued-credentials?state=expired",
+            &format!(
+                "/api/v1/issuers/{}/credentials?state=expired",
+                issuer.id.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -604,11 +694,12 @@ async fn list_rejects_out_of_range_limit(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
 
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(get_request(
-            "/api/v1/issued-credentials?limit=0",
+            &format!("/api/v1/issuers/{}/credentials?limit=0", issuer.id.bare()),
             Some(&secret.as_wire()),
         ))
         .await

@@ -135,25 +135,38 @@ Response (200):
 
 `state` follows the same observed-state rule as fetch and list. `issued_at` and `cancelled_at` are `null` until the offer transitions into the corresponding state.
 
-### GET /api/v1/issued-credentials/{credential_id} — fetch (credential-management slice)
+### Issued-credential endpoints (credential-management slice)
 
-Returns the full record for a single issued credential. Tenant scoping comes from the bearer token; cross-tenant access returns `404 Not Found` — the same status as no-such-credential, so an attacker cannot probe for the existence of credentials outside their tenant. Response shape matches the lifecycle-handler response shape (see below).
+Issued credentials are nested under their owning issuer, mirroring the credential-offer URL shape established earlier in this spec. The relationship is intrinsic — every issued credential belongs to exactly one issuer — and the URL self-describes it. Concretely:
 
-The `state` field carries the stored lifecycle state (`active` / `suspended` / `revoked`). The `expired` field is a derived view computed at read time from `expires_at`; expiry is never a stored state. See [`aspect-credential-management.md`](aspect-credential-management.md) § "Expiry is a view, not a state".
+- `GET /api/v1/issuers/{issuer_id}/credentials/{credential_id}` — fetch a single credential.
+- `GET /api/v1/issuers/{issuer_id}/credentials` — list the named issuer's credentials.
+- `POST /api/v1/issuers/{issuer_id}/credentials/{credential_id}/suspend` — suspend.
+- `POST /api/v1/issuers/{issuer_id}/credentials/{credential_id}/unsuspend` — unsuspend.
+- `POST /api/v1/issuers/{issuer_id}/credentials/{credential_id}/revoke` — revoke.
 
-### GET /api/v1/issued-credentials — list (credential-management slice)
+`{issuer_id}` and `{credential_id}` are the bare base58 ids (no `issuer_` / `credential_` prefix). The handler runs the standard `require_issuer_owned_by_tenant` ownership check on `(tenant_id, issuer_id)`, then loads the credential by `(tenant_id, credential_id)`. A credential id that exists for the tenant but under a *different* issuer than the one in the URL collapses to `404 Not Found` — same probe-prevention discipline as cross-tenant access.
 
-Lists the tenant's issued credentials, newest first. Cursor-paginated. Pagination sorts by `(issued_at DESC, id DESC)`; the cursor encodes those two values opaquely with the same base58(`<rfc3339>|<bare-id>`) shape used by the credential-offer list endpoint.
+Tenant scoping comes from the bearer token. Cross-tenant access (wrong tenant) and cross-issuer access (right tenant, wrong issuer) both return `404 Not Found`, indistinguishable from no-such-credential.
+
+#### GET /api/v1/issuers/{issuer_id}/credentials/{credential_id} — fetch
+
+Returns the full record for a single issued credential. The `state` field carries the stored lifecycle state (`active` / `suspended` / `revoked`); the `expired` field is a derived view computed at read time from `expires_at`. Expiry is never a stored state — see [`aspect-credential-management.md`](aspect-credential-management.md) § "Expiry is a view, not a state".
+
+Response shape matches the lifecycle-handler response shape (see below).
+
+#### GET /api/v1/issuers/{issuer_id}/credentials — list
+
+Lists the named issuer's credentials, newest first. Cursor-paginated. Pagination sorts by `(issued_at DESC, id DESC)`; the cursor encodes those two values opaquely with the same base58(`<rfc3339>|<bare-id>`) shape used by the credential-offer list endpoint.
 
 Query parameters:
 
 - `limit` — page size, 1..=100, default 25.
 - `cursor` — opaque cursor from the previous page; omitted on the first page.
-- `issuer_id` — bare base58 issuer id; filters to credentials belonging to a single issuer.
 - `state` — filter on the **stored** lifecycle state, one of `active` | `suspended` | `revoked`. The derived `expired` view is intentionally not a filter; passing `state=expired` returns `400 invalid_input`.
 - `vct` — exact-match filter on the SD-JWT VC type identifier.
 
-Response (200):
+The issuer scoping comes from the URL path, so there is no `issuer_id` query parameter. Response (200):
 
 ```json
 {
@@ -164,9 +177,9 @@ Response (200):
 
 `next_cursor` is `null` when the last page is reached.
 
-### POST /api/v1/issued-credentials/{credential_id}/{suspend|unsuspend|revoke} — lifecycle (credential-management slice)
+#### POST /api/v1/issuers/{issuer_id}/credentials/{credential_id}/{suspend|unsuspend|revoke} — lifecycle
 
-Three synchronous handlers that flip an issued credential's lifecycle column and the corresponding two-bit slot on the issuer's BitstringStatusList in one transaction. Return the updated record (same shape across all three) on `200 OK`. Tenant scoping comes from the bearer token; the URL deliberately does not carry an `issuer_id` because the credential's `id` already pins which tenant and issuer it belongs to. Cross-tenant access returns `404 Not Found`.
+Three synchronous handlers that mark a credential `suspended`, `active`, or `revoked` respectively. Return the updated record (same shape across all three) on `200 OK`.
 
 State preconditions follow the `IssuedCredential` domain state machine:
 
@@ -177,6 +190,8 @@ State preconditions follow the `IssuedCredential` domain state machine:
 | `revoke`     | `active` or `suspended`       | `revoked`   | `revoked` (2)   |
 
 A precondition violation surfaces as `409 Conflict` with a body of `{"error":"conflict","details":"state transition not allowed"}`. `revoked` is terminal — there is no unrevoke.
+
+The local lifecycle column flip and the corresponding two-bit slot update on the issuer's BitstringStatusList land in one transaction. Status Registry publication of the updated bitstring runs out of band in a background worker (phase 2 of the credential-management slice). Verifiers observe the new state at the Registry within the staleness window documented in [`aspect-credential-management.md`](aspect-credential-management.md) § "Status-list integration", once that worker is wired up. Phase 1 ships the local bookkeeping only; the management API contract is stable across phases — only the visibility-to-verifiers latency changes.
 
 No request body. Response body:
 
@@ -197,8 +212,6 @@ No request body. Response body:
 ```
 
 The `expired` field is a derived view over `expires_at`; expiry is never a stored state. See [`aspect-credential-management.md`](aspect-credential-management.md) § "Expiry is a view, not a state".
-
-Status Registry publication of the updated bitstring runs out of band in a background worker (phase 2 of the credential-management slice). Verifiers observe the new state at the Registry within the staleness window documented in [`aspect-credential-management.md`](aspect-credential-management.md) § "Status-list integration", once that worker is wired up. Phase 1 ships the local bookkeeping only; the management API contract is stable across phases — only the visibility-to-verifiers latency changes.
 
 Audit trail entries for these transitions are placeholders (`// TODO(audit): record …`) until the audit-module slice lands; see [`plan-credential-management.md`](../plan-credential-management.md) § 1.9.
 

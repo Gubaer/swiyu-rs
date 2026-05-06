@@ -1,5 +1,5 @@
 //! Integration tests for the issued-credential lifecycle handlers
-//! (`POST /api/v1/issued-credentials/{id}/suspend|unsuspend|revoke`).
+//! (`POST /api/v1/issuers/{issuer_id}/credentials/{credential_id}/{suspend|unsuspend|revoke}`).
 //!
 //! Drives requests through the full management router (auth +
 //! extractors + serde + handler + persistence) using
@@ -194,7 +194,8 @@ async fn fetch_committed_version(pool: &PgPool, list_id: &StatusListId) -> i64 {
 
 fn lifecycle_uri(credential: &IssuedCredential, action: &str) -> String {
     format!(
-        "/api/v1/issued-credentials/{}/{}",
+        "/api/v1/issuers/{}/credentials/{}/{}",
+        credential.issuer_id.bare(),
         credential.id.bare(),
         action
     )
@@ -473,12 +474,17 @@ async fn unknown_credential_returns_404(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
 
     let app = router(build_state(pool.clone()).await);
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
         .oneshot(post_request(
-            &format!("/api/v1/issued-credentials/{}/suspend", unknown.bare()),
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}/suspend",
+                issuer.id.bare(),
+                unknown.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -487,12 +493,56 @@ async fn unknown_credential_returns_404(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
+    // The credential exists for the tenant but under issuer A; the
+    // request names issuer B (also owned by the tenant). Must
+    // collapse to NotFound without applying the transition.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer_a = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer_b = insert_active_issuer(&pool, &tenant_id).await;
+    let list_id = provision_status_list(&pool, &issuer_a.id).await;
+    let credential = seed_credential(
+        &pool,
+        &issuer_a,
+        &list_id,
+        0,
+        IssuedCredentialState::Active,
+        StatusValue::Valid,
+    )
+    .await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}/suspend",
+                issuer_b.id.bare(),
+                credential.id.bare()
+            ),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    // The original row stays Active; the cross-issuer call must not
+    // reach set_state.
+    assert_eq!(fetch_state(&pool, &credential).await, "active");
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn missing_bearer_returns_401(pool: PgPool) {
     let app = router(build_state(pool.clone()).await);
+    let issuer_id = swiyu_issuer::domain::IssuerId::generate();
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
         .oneshot(post_request(
-            &format!("/api/v1/issued-credentials/{}/suspend", unknown.bare()),
+            &format!(
+                "/api/v1/issuers/{}/credentials/{}/suspend",
+                issuer_id.bare(),
+                unknown.bare()
+            ),
             None,
         ))
         .await
@@ -505,11 +555,15 @@ async fn malformed_credential_id_returns_400(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = insert_active_issuer(&pool, &tenant_id).await;
 
     let app = router(build_state(pool.clone()).await);
     let response = app
         .oneshot(post_request(
-            "/api/v1/issued-credentials/notValid0/suspend",
+            &format!(
+                "/api/v1/issuers/{}/credentials/notValid0/suspend",
+                issuer.id.bare()
+            ),
             Some(&secret.as_wire()),
         ))
         .await
@@ -517,4 +571,21 @@ async fn malformed_credential_id_returns_400(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = read_body(response).await;
     assert_eq!(body["error"], "invalid_input");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn malformed_issuer_id_returns_400(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+
+    let app = router(build_state(pool.clone()).await);
+    let response = app
+        .oneshot(post_request(
+            "/api/v1/issuers/notValid0/credentials/9hXq2vRtL8pK7f/suspend",
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

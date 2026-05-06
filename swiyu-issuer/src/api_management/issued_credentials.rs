@@ -15,16 +15,16 @@ use crate::persistence;
 use crate::persistence::issued_credentials::{ListFilters, ListPageQuery};
 
 use super::AppState;
-use super::auth::TenantContext;
+use super::auth::{TenantContext, acquire_for_issuer, require_issuer_owned_by_tenant};
 use super::cursor;
 use super::dto::{
     GetIssuedCredentialResponse, ListIssuedCredentialsQuery, ListIssuedCredentialsResponse,
 };
 use super::error::ApiError;
 
-/// Page size applied to `GET /api/v1/issued-credentials` when the
-/// caller omits `limit`. Sized to fit a typical operator UI page
-/// without forcing a follow-up request.
+/// Page size applied to `GET /api/v1/issuers/{issuer_id}/credentials`
+/// when the caller omits `limit`. Sized to fit a typical operator UI
+/// page without forcing a follow-up request.
 const DEFAULT_LIST_LIMIT: u32 = 25;
 
 /// Lower bound on `limit`. Zero would return an empty page with a
@@ -39,47 +39,48 @@ const MAX_LIST_LIMIT: u32 = 100;
 
 pub async fn get(
     State(state): State<AppState>,
-    Path(credential_id_str): Path<String>,
+    Path((issuer_id_str, credential_id_str)): Path<(String, String)>,
     tenant_context: TenantContext,
 ) -> Result<Json<GetIssuedCredentialResponse>, ApiError> {
     tracing::debug!(
         tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
         credential_id = %credential_id_str,
         "issued credential fetch requested",
     );
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let credential_id = parse_credential_id(&credential_id_str)?;
-    let mut conn = state
-        .pool
-        .acquire()
-        .await
-        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
     let credential =
         persistence::issued_credentials::find(&mut conn, &tenant_context.tenant_id, &credential_id)
             .await?
             .ok_or(ApiError::NotFound)?;
+    if credential.issuer_id != issuer_id {
+        // Cross-issuer access (right tenant, wrong issuer) collapses
+        // to NotFound — same probe-prevention discipline as
+        // cross-tenant access.
+        return Err(ApiError::NotFound);
+    }
     Ok(Json(credential_to_response(credential, Utc::now())))
 }
 
 pub async fn list(
     State(state): State<AppState>,
+    Path(issuer_id_str): Path<String>,
     Query(query): Query<ListIssuedCredentialsQuery>,
     tenant_context: TenantContext,
 ) -> Result<Json<ListIssuedCredentialsResponse>, ApiError> {
     tracing::debug!(
         tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
         limit = ?query.limit,
         cursor_present = query.cursor.is_some(),
-        issuer_id = ?query.issuer_id,
         state = ?query.state,
         vct = ?query.vct,
         "issued credential list requested",
     );
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let limit = resolve_list_limit(query.limit)?;
-    let issuer_id = query
-        .issuer_id
-        .as_deref()
-        .map(parse_issuer_id_filter)
-        .transpose()?;
     let state_filter = query.state.as_deref().map(parse_state_filter).transpose()?;
     let decoded_cursor = query
         .cursor
@@ -87,17 +88,13 @@ pub async fn list(
         .map(|raw| cursor::decode(raw, |bare| IssuedCredentialId::from_bare(bare).map(|_| ())))
         .transpose()?;
 
-    let mut conn = state
-        .pool
-        .acquire()
-        .await
-        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
     let page = persistence::issued_credentials::list(
         &mut conn,
         &tenant_context.tenant_id,
         ListPageQuery {
             filters: ListFilters {
-                issuer_id,
+                issuer_id: Some(issuer_id),
                 state: state_filter,
                 vct: query.vct,
             },
@@ -126,18 +123,21 @@ pub async fn list(
 
 pub async fn suspend(
     State(state): State<AppState>,
-    Path(credential_id_str): Path<String>,
+    Path((issuer_id_str, credential_id_str)): Path<(String, String)>,
     tenant_context: TenantContext,
 ) -> Result<Json<GetIssuedCredentialResponse>, ApiError> {
     tracing::debug!(
         tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
         credential_id = %credential_id_str,
         "issued credential suspend requested",
     );
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let credential_id = parse_credential_id(&credential_id_str)?;
     let updated = run_lifecycle_op(
         &state,
         &tenant_context,
+        &issuer_id,
         &credential_id,
         |credential| credential.try_suspend().map_err(ApiError::from),
         StatusValue::Suspended,
@@ -149,18 +149,21 @@ pub async fn suspend(
 
 pub async fn unsuspend(
     State(state): State<AppState>,
-    Path(credential_id_str): Path<String>,
+    Path((issuer_id_str, credential_id_str)): Path<(String, String)>,
     tenant_context: TenantContext,
 ) -> Result<Json<GetIssuedCredentialResponse>, ApiError> {
     tracing::debug!(
         tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
         credential_id = %credential_id_str,
         "issued credential unsuspend requested",
     );
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let credential_id = parse_credential_id(&credential_id_str)?;
     let updated = run_lifecycle_op(
         &state,
         &tenant_context,
+        &issuer_id,
         &credential_id,
         |credential| credential.try_unsuspend().map_err(ApiError::from),
         StatusValue::Valid,
@@ -172,18 +175,21 @@ pub async fn unsuspend(
 
 pub async fn revoke(
     State(state): State<AppState>,
-    Path(credential_id_str): Path<String>,
+    Path((issuer_id_str, credential_id_str)): Path<(String, String)>,
     tenant_context: TenantContext,
 ) -> Result<Json<GetIssuedCredentialResponse>, ApiError> {
     tracing::debug!(
         tenant_id = %tenant_context.tenant_id,
+        issuer_id = %issuer_id_str,
         credential_id = %credential_id_str,
         "issued credential revoke requested",
     );
+    let issuer_id = parse_issuer_id(&issuer_id_str)?;
     let credential_id = parse_credential_id(&credential_id_str)?;
     let updated = run_lifecycle_op(
         &state,
         &tenant_context,
+        &issuer_id,
         &credential_id,
         |credential| credential.try_revoke().map_err(ApiError::from),
         StatusValue::Revoked,
@@ -205,6 +211,7 @@ pub async fn revoke(
 async fn run_lifecycle_op<F>(
     state: &AppState,
     tenant_context: &TenantContext,
+    issuer_id: &IssuerId,
     credential_id: &IssuedCredentialId,
     apply_transition: F,
     bit_value: StatusValue,
@@ -219,10 +226,21 @@ where
         .await
         .map_err(|err| ApiError::Internal(Box::new(err)))?;
 
+    // Tenant-scoped ownership of the issuer named in the URL. The
+    // existing helper is reused here inside the transaction so the
+    // check and the write share the same snapshot.
+    require_issuer_owned_by_tenant(&mut tx, &tenant_context.tenant_id, issuer_id).await?;
+
     let mut credential =
         persistence::issued_credentials::find(&mut tx, &tenant_context.tenant_id, credential_id)
             .await?
             .ok_or(ApiError::NotFound)?;
+    if &credential.issuer_id != issuer_id {
+        // Cross-issuer access (right tenant, wrong issuer) collapses
+        // to NotFound — same probe-prevention discipline as
+        // cross-tenant access.
+        return Err(ApiError::NotFound);
+    }
 
     apply_transition(&mut credential)?;
 
@@ -262,9 +280,9 @@ fn parse_credential_id(raw: &str) -> Result<IssuedCredentialId, ApiError> {
     })
 }
 
-fn parse_issuer_id_filter(raw: &str) -> Result<IssuerId, ApiError> {
+fn parse_issuer_id(raw: &str) -> Result<IssuerId, ApiError> {
     IssuerId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
-        details: format!("issuer_id query parameter: {err}"),
+        details: format!("issuer_id path parameter: {err}"),
     })
 }
 

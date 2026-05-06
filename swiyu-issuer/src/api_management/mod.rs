@@ -51,21 +51,24 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/issuers/{issuer_id}/credential-offers/{offer_id}/status",
             get(credential_offers::status),
         )
-        .route("/api/v1/issued-credentials", get(issued_credentials::list))
         .route(
-            "/api/v1/issued-credentials/{credential_id}",
+            "/api/v1/issuers/{issuer_id}/credentials",
+            get(issued_credentials::list),
+        )
+        .route(
+            "/api/v1/issuers/{issuer_id}/credentials/{credential_id}",
             get(issued_credentials::get),
         )
         .route(
-            "/api/v1/issued-credentials/{credential_id}/suspend",
+            "/api/v1/issuers/{issuer_id}/credentials/{credential_id}/suspend",
             post(issued_credentials::suspend),
         )
         .route(
-            "/api/v1/issued-credentials/{credential_id}/unsuspend",
+            "/api/v1/issuers/{issuer_id}/credentials/{credential_id}/unsuspend",
             post(issued_credentials::unsuspend),
         )
         .route(
-            "/api/v1/issued-credentials/{credential_id}/revoke",
+            "/api/v1/issuers/{issuer_id}/credentials/{credential_id}/revoke",
             post(issued_credentials::revoke),
         )
         .layer(tower_http::trace::TraceLayer::new_for_http())
