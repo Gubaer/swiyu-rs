@@ -80,8 +80,8 @@ pub struct DeactivateIssuerResponse {
 /// - `authorized_key_id` / `authentication_key_id` /
 ///   `assertion_key_id` — these are internal SigningEngine handles
 ///   the BA cannot act on, so exposing them is implementation leak.
-/// - `signing_key_id`, `logo_uri`, `locale` — legacy transitional
-///   fields, removed with the OIDC migration.
+/// - `logo_uri`, `locale` — legacy presentation metadata that the
+///   v1 surface deliberately omits.
 ///
 /// The seeded dev row from migration 0004 lacks `state` and is
 /// filtered out by the handler with a 404 — every issuer that lands

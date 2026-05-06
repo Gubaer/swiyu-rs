@@ -70,7 +70,6 @@ async fn insert_target_shape_issuer(
         authorized_key_id: Some(KeyPairId::generate()),
         authentication_key_id: Some(KeyPairId::generate()),
         assertion_key_id: Some(KeyPairId::generate()),
-        signing_key_id: None,
         display_name: Some(display_name.into()),
         logo_uri: None,
         locale: None,
@@ -149,7 +148,6 @@ async fn single_page_returns_target_shape_dtos(pool: PgPool) {
     assert!(items[0].get("authorized_key_id").is_none());
     assert!(items[0].get("authentication_key_id").is_none());
     assert!(items[0].get("assertion_key_id").is_none());
-    assert!(items[0].get("signing_key_id").is_none());
     assert!(items[0].get("logo_uri").is_none());
     assert!(items[0].get("locale").is_none());
 }

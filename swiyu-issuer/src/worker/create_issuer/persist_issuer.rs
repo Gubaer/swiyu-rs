@@ -85,7 +85,6 @@ pub async fn execute_persist_issuer<S: SigningEngine>(
         authorized_key_id: Some(key_ids.authorized),
         authentication_key_id: Some(key_ids.authentication),
         assertion_key_id: Some(key_ids.assertion),
-        signing_key_id: None,
         display_name: Some(input.display_name.clone()),
         logo_uri: None,
         locale: None,

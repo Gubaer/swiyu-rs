@@ -48,7 +48,6 @@ pub async fn find_by_id(
         SELECT id, tenant_id, did,
                state, description,
                authorized_key_id, authentication_key_id, assertion_key_id,
-               signing_key_id,
                display_name, logo_uri, locale,
                created_at
         FROM issuers
@@ -79,7 +78,6 @@ pub async fn find_by_id_for_tenant(
         SELECT id, tenant_id, did,
                state, description,
                authorized_key_id, authentication_key_id, assertion_key_id,
-               signing_key_id,
                display_name, logo_uri, locale,
                created_at
         FROM issuers
@@ -272,11 +270,10 @@ pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), Pers
             id, tenant_id, did,
             state, description,
             authorized_key_id, authentication_key_id, assertion_key_id,
-            signing_key_id,
             display_name, logo_uri, locale,
             created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         "#,
     )
     .bind(issuer.id.bare())
@@ -287,7 +284,6 @@ pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), Pers
     .bind(issuer.authorized_key_id.map(|k| *k.as_uuid()))
     .bind(issuer.authentication_key_id.map(|k| *k.as_uuid()))
     .bind(issuer.assertion_key_id.map(|k| *k.as_uuid()))
-    .bind(issuer.signing_key_id.as_deref())
     .bind(issuer.display_name.as_deref())
     .bind(issuer.logo_uri.as_deref())
     .bind(issuer.locale.as_deref())
@@ -341,7 +337,6 @@ pub async fn list(
         SELECT id, tenant_id, did,
                state, description,
                authorized_key_id, authentication_key_id, assertion_key_id,
-               signing_key_id,
                display_name, logo_uri, locale,
                created_at
         FROM issuers
@@ -381,7 +376,6 @@ fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
     let authorized_key_id: Option<Uuid> = row.try_get("authorized_key_id")?;
     let authentication_key_id: Option<Uuid> = row.try_get("authentication_key_id")?;
     let assertion_key_id: Option<Uuid> = row.try_get("assertion_key_id")?;
-    let signing_key_id: Option<String> = row.try_get("signing_key_id")?;
     let display_name: Option<String> = row.try_get("display_name")?;
     let logo_uri: Option<String> = row.try_get("logo_uri")?;
     let locale: Option<String> = row.try_get("locale")?;
@@ -399,7 +393,6 @@ fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
         authorized_key_id: authorized_key_id.map(KeyPairId::from_uuid),
         authentication_key_id: authentication_key_id.map(KeyPairId::from_uuid),
         assertion_key_id: assertion_key_id.map(KeyPairId::from_uuid),
-        signing_key_id,
         display_name,
         logo_uri,
         locale,

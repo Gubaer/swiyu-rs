@@ -137,7 +137,6 @@ mod tests {
             authorized_key_id: Some(fixture_kid(0x01)),
             authentication_key_id: Some(fixture_kid(0x02)),
             assertion_key_id: Some(fixture_kid(0x03)),
-            signing_key_id: None,
             display_name: Some("Fixture".into()),
             logo_uri: None,
             locale: None,

@@ -133,7 +133,6 @@ async fn happy_path_inserts_issuer_row(pool: PgPool) {
     assert_eq!(loaded.authorized_key_id, Some(fixture_kid(0x11)));
     assert_eq!(loaded.authentication_key_id, Some(fixture_kid(0x22)));
     assert_eq!(loaded.assertion_key_id, Some(fixture_kid(0x33)));
-    assert!(loaded.signing_key_id.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -154,7 +153,6 @@ async fn skips_when_issuer_row_already_exists(pool: PgPool) {
         authorized_key_id: Some(fixture_kid(0x11)),
         authentication_key_id: Some(fixture_kid(0x22)),
         assertion_key_id: Some(fixture_kid(0x33)),
-        signing_key_id: None,
         display_name: Some("pre-existing".into()),
         logo_uri: None,
         locale: None,

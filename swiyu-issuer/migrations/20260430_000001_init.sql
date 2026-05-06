@@ -29,13 +29,9 @@ CREATE TABLE tenants (
 -- ============================================================================
 --
 -- A SWIYU Business Partner with at least one DID covered by a Trust
--- Statement.
---
--- `signing_key_id` is the legacy keystore handle, retained for the
--- OIDC binary's credential-issuance path until it migrates to
--- SigningEngine. The three role-keyed `*_key_id` columns are
--- populated for issuers created through the issuer-management task
--- flow (see specs/aspect-key-management.md).
+-- Statement. The three role-keyed `*_key_id` columns reference key
+-- pairs in the SigningEngine (see specs/aspect-key-management.md);
+-- they are populated by the create_issuer task flow.
 --
 -- `created_at` drives stable ordering for the cursor-paginated GET
 -- /api/v1/issuers endpoint (created_at DESC, id DESC).
@@ -49,7 +45,6 @@ CREATE TABLE issuers (
     authorized_key_id UUID,
     authentication_key_id UUID,
     assertion_key_id UUID,
-    signing_key_id TEXT,
     display_name TEXT,
     logo_uri TEXT,
     locale TEXT,
@@ -254,11 +249,14 @@ CREATE INDEX operation_tasks_tenant
 INSERT INTO tenants (id, partner_id) VALUES
     ('4Mk7yK5pQR7sN3', '4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef');
 
-INSERT INTO issuers (id, tenant_id, did, signing_key_id, display_name, locale) VALUES
+-- The seeded issuer carries no SigningEngine key triple (state,
+-- authorized_key_id, assertion_key_id, ...). Use it to exercise the
+-- list/fetch endpoints; create a real issuer through the management
+-- API's create_issuer task flow before issuing credentials.
+INSERT INTO issuers (id, tenant_id, did, display_name, locale) VALUES
     ('9hXq2vRtL8pK7f',
      '4Mk7yK5pQR7sN3',
      'did:tdw:dev.example.com:9hXq2vRtL8pK7f',
-     'fixture-dev-9hXq2vRtL8pK7f',
      'Dev Issuer (seeded)',
      'en');
 

@@ -63,7 +63,6 @@ fn target_shape_issuer(tenant_id: TenantId) -> Issuer {
         authorized_key_id: Some(KeyPairId::generate()),
         authentication_key_id: Some(KeyPairId::generate()),
         assertion_key_id: Some(KeyPairId::generate()),
-        signing_key_id: None,
         display_name: Some("Canton Bern Verkehrsamt".into()),
         logo_uri: None,
         locale: None,
@@ -123,8 +122,8 @@ async fn happy_path_returns_target_shape_dto(pool: PgPool) {
     assert!(body.get("authorized_key_id").is_none());
     assert!(body.get("authentication_key_id").is_none());
     assert!(body.get("assertion_key_id").is_none());
-    // Legacy fields must not leak into the wire shape either.
-    assert!(body.get("signing_key_id").is_none());
+    // Legacy presentation fields must not leak into the wire shape
+    // either.
     assert!(body.get("logo_uri").is_none());
     assert!(body.get("locale").is_none());
 }
@@ -175,9 +174,9 @@ async fn returns_404_for_cross_tenant_issuer(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn returns_404_for_seeded_legacy_issuer(pool: PgPool) {
-    // The seeded dev issuer (migration 0001 + 0004) carries
-    // signing_key_id but no state / key triple. The handler hides
-    // such rows from the v1 surface.
+    // The seeded dev issuer (migration 0001) carries no state and no
+    // SigningEngine key triple. The handler hides such rows from the
+    // v1 surface.
     let seeded_tenant = TenantId::from_bare(SEEDED_TENANT_BARE).unwrap();
     let seeded_issuer = IssuerId::from_bare(SEEDED_ISSUER_BARE).unwrap();
     let secret = mint_test_token(&pool, &seeded_tenant).await;

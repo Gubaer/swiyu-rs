@@ -40,77 +40,52 @@ impl IssuerState {
 
 /// A registered credential-issuing entity within a tenant.
 ///
-/// **Transitional shape (v0.1.x).** The new fields below are
-/// `Option<…>` during expand-contract while the OIDC binary still
-/// signs credentials through `signing_key_id` and the legacy
-/// `swiyu-didtool` keystore. The target shape (see
-/// `aspect-issuer.md` and `impl-issuer.md`) has the new fields
-/// required, with `signing_key_id`, `logo_uri`, and `locale` removed.
-/// The seeded dev row created by migration 0004 carries the legacy
-/// fields; new issuers created through the issuer-management task
-/// flow populate the new fields and leave `signing_key_id` empty.
-///
-/// `signing_key_id` is an opaque handle into the `swiyu-didtool`
-/// keystore. The issuer binary does not interpret it; it passes the
-/// value through to the keystore when it needs to sign.
+/// The three `*_key_id` fields are `Option<…>` because the seeded
+/// dev row from the initial migration is a fixture that bypasses the
+/// issuer-management task flow — it has no SigningEngine keys.
+/// Issuers created through that flow have all three populated; the
+/// OIDC binary refuses to issue credentials when `assertion_key_id`
+/// is `None`.
 #[derive(Debug, Clone)]
 pub struct Issuer {
     pub id: IssuerId,
     pub tenant_id: TenantId,
     pub did: String,
 
-    /// Lifecycle state. `Option<…>` during v0.1.x; `None` for the
-    /// seeded dev row from migration 0004 (predates lifecycle tracking).
+    /// Lifecycle state. `None` for the seeded dev row (predates
+    /// lifecycle tracking).
     pub state: Option<IssuerState>,
 
     /// Human-readable description used in management responses.
-    /// `Option<…>` during v0.1.x; required in the target shape.
     pub description: Option<String>,
 
-    /// Current `Authorized` key pair. `None` for issuers signing
-    /// through the legacy `signing_key_id`/`swiyu-didtool` keystore;
-    /// `Some` once the issuer is on the SigningEngine.
+    /// Current `Authorized` key pair (Ed25519, signs DID-log entries).
     pub authorized_key_id: Option<KeyPairId>,
 
-    /// Current `Authentication` key pair. Same transition story as
-    /// `authorized_key_id`.
+    /// Current `Authentication` key pair (P-256, surfaced in the DID
+    /// document for wallet authentication challenges).
     pub authentication_key_id: Option<KeyPairId>,
 
-    /// Current `Assertion` key pair. Same transition story as
-    /// `authorized_key_id`.
+    /// Current `Assertion` key pair (P-256, signs issued credentials).
     pub assertion_key_id: Option<KeyPairId>,
 
-    /// Legacy: opaque handle into the `swiyu-didtool` keystore. The
-    /// OIDC binary reads this for credential signing on the seeded
-    /// dev row. `None` for issuers created through the SigningEngine
-    /// task flow, which carry their key handles in the three
-    /// `*_key_id` fields above. Removed when the OIDC binary
-    /// migrates to SigningEngine-based signing.
-    pub signing_key_id: Option<String>,
-
-    /// Display name. Currently optional; becomes required (and loses
-    /// the `Option<…>` wrapper) when the legacy migration completes.
+    /// Display name shown in management responses.
     pub display_name: Option<String>,
 
-    /// Legacy presentation metadata. The OIDC metadata handler reads
-    /// these today; both columns are dropped together with
-    /// `signing_key_id`.
+    /// Legacy presentation metadata read by the OIDC metadata handler.
     pub logo_uri: Option<String>,
     pub locale: Option<String>,
 
     /// Timestamp of the row insert. Drives stable ordering for the
-    /// cursor-paginated list endpoint. The seeded dev row from
-    /// migration 0001 backfills to migration time (per migration 0012);
-    /// real issuers carry the worker's `now` from the persist step.
+    /// cursor-paginated list endpoint.
     pub created_at: DateTime<Utc>,
 }
 
 impl Issuer {
     /// Returns the `KeyPairId` registered for the given role, if any.
     ///
-    /// Returns `None` for issuers that pre-date the SigningEngine
-    /// migration — those issuers sign through `signing_key_id` and the
-    /// legacy `swiyu-didtool` keystore.
+    /// Returns `None` for the seeded dev row, which has no
+    /// SigningEngine keys configured.
     pub fn key_id_for_role(&self, role: KeyRole) -> Option<KeyPairId> {
         match role {
             KeyRole::Authorized => self.authorized_key_id,
@@ -134,7 +109,6 @@ mod tests {
             authorized_key_id: None,
             authentication_key_id: None,
             assertion_key_id: None,
-            signing_key_id: Some("fixture".into()),
             display_name: None,
             logo_uri: None,
             locale: None,

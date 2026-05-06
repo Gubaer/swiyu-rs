@@ -33,7 +33,6 @@ async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
         authorized_key_id: Some(KeyPairId::generate()),
         authentication_key_id: Some(KeyPairId::generate()),
         assertion_key_id: Some(KeyPairId::generate()),
-        signing_key_id: None,
         display_name: Some("Fixture issuer".into()),
         logo_uri: None,
         locale: None,

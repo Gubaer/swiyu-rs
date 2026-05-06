@@ -30,7 +30,6 @@ fn legacy_shaped_issuer(tenant_id: TenantId) -> Issuer {
         authorized_key_id: None,
         authentication_key_id: None,
         assertion_key_id: None,
-        signing_key_id: Some("legacy-keystore-handle".into()),
         display_name: Some("Legacy Issuer".into()),
         logo_uri: Some("https://example.com/legacy-logo.png".into()),
         locale: Some("en".into()),
@@ -48,7 +47,6 @@ fn signing_engine_shaped_issuer(tenant_id: TenantId) -> Issuer {
         authorized_key_id: Some(KeyPairId::generate()),
         authentication_key_id: Some(KeyPairId::generate()),
         assertion_key_id: Some(KeyPairId::generate()),
-        signing_key_id: None,
         display_name: Some("Gemeinde Buchs — Einwohnerverwaltung".into()),
         logo_uri: None,
         locale: None,
@@ -78,10 +76,6 @@ async fn legacy_shaped_row_round_trips(pool: PgPool) {
     assert_eq!(loaded.authorized_key_id, None);
     assert_eq!(loaded.authentication_key_id, None);
     assert_eq!(loaded.assertion_key_id, None);
-    assert_eq!(
-        loaded.signing_key_id.as_deref(),
-        Some("legacy-keystore-handle")
-    );
     assert_eq!(loaded.display_name.as_deref(), Some("Legacy Issuer"));
 }
 
@@ -108,15 +102,15 @@ async fn signing_engine_shaped_row_round_trips(pool: PgPool) {
     assert_eq!(loaded.authorized_key_id, issuer.authorized_key_id);
     assert_eq!(loaded.authentication_key_id, issuer.authentication_key_id);
     assert_eq!(loaded.assertion_key_id, issuer.assertion_key_id);
-    assert!(loaded.signing_key_id.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn seeded_dev_row_reads_with_legacy_shape(pool: PgPool) {
-    // Migration 0004 inserts a fixture issuer with id `9hXq2vRtL8pK7f`
-    // and a legacy `signing_key_id`. After the issuer-management
-    // migration its row stays valid: `signing_key_id` survives, the
-    // five new columns are NULL.
+async fn seeded_dev_row_reads_with_no_signing_keys(pool: PgPool) {
+    // The seeded fixture issuer (`9hXq2vRtL8pK7f`) has no
+    // SigningEngine keys configured: state is NULL and the three
+    // *_key_id columns are NULL. The OIDC binary refuses to issue
+    // credentials for it; create a real issuer through the management
+    // API's create_issuer flow before exercising the credential path.
     let id = IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap();
     let mut conn = pool.acquire().await.unwrap();
     let loaded = issuers::find_by_id(&mut conn, &id)
@@ -126,7 +120,8 @@ async fn seeded_dev_row_reads_with_legacy_shape(pool: PgPool) {
 
     assert_eq!(loaded.state, None);
     assert!(loaded.authorized_key_id.is_none());
-    assert!(loaded.signing_key_id.is_some());
+    assert!(loaded.authentication_key_id.is_none());
+    assert!(loaded.assertion_key_id.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
