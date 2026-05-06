@@ -39,8 +39,14 @@ async fn main() -> ExitCode {
         }
     };
 
+    // SIGNING_ENGINE is the issuer-mgmt's choice, not the smoke's.
+    // We read it from our own env (typically the same .env via
+    // direnv) for visibility — the smoke has no API to ask the
+    // running container which backend it's using.
+    let signing_engine = env::var("SIGNING_ENGINE").unwrap_or_else(|_| "<unset>".into());
     tracing::info!(
         mgmt_url = %cfg.mgmt_url,
+        signing_engine = %signing_engine,
         timeout_secs = cfg.task_timeout.as_secs(),
         poll_ms = cfg.poll_interval.as_millis() as u64,
         "issuer-lifecycle-smoke starting",
