@@ -396,105 +396,23 @@ impl ProofClaims {
     /// mismatch) collapse to `InvalidProof` with a description that
     /// names the failure.
     fn verify_signature(&self) -> Result<(), OAuthError> {
-        match self.alg.as_str() {
-            "EdDSA" => verify_proof_ed25519(&self.cnf_jwk, &self.signing_input, &self.signature),
-            "ES256" => verify_proof_es256(&self.cnf_jwk, &self.signing_input, &self.signature),
-            other => Err(OAuthError::InvalidProof {
-                description: format!(
-                    "unsupported proof alg {other:?}, expected one of \"ES256\" or \"EdDSA\""
-                ),
-            }),
-        }
-    }
-}
-
-fn verify_proof_ed25519(
-    jwk: &Value,
-    signing_input: &str,
-    signature: &[u8],
-) -> Result<(), OAuthError> {
-    use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
-
-    require_jwk_field(jwk, "kty", "OKP")?;
-    require_jwk_field(jwk, "crv", "Ed25519")?;
-
-    let x = decode_jwk_b64(jwk, "x")?;
-    let x_array: [u8; 32] = x.try_into().map_err(|_| OAuthError::InvalidProof {
-        description: "jwk `x` must decode to 32 bytes for Ed25519".into(),
-    })?;
-    let pk = VerifyingKey::from_bytes(&x_array).map_err(|e| OAuthError::InvalidProof {
-        description: format!("jwk `x` is not a valid Ed25519 public key: {e}"),
-    })?;
-
-    let sig_array: [u8; 64] = signature.try_into().map_err(|_| OAuthError::InvalidProof {
-        description: "EdDSA signature must be 64 bytes".into(),
-    })?;
-    let sig = Signature::from_bytes(&sig_array);
-
-    pk.verify(signing_input.as_bytes(), &sig)
-        .map_err(|_| OAuthError::InvalidProof {
-            description: "signature did not verify".into(),
-        })
-}
-
-fn verify_proof_es256(
-    jwk: &Value,
-    signing_input: &str,
-    signature: &[u8],
-) -> Result<(), OAuthError> {
-    use p256::ecdsa::signature::Verifier;
-    use p256::ecdsa::{Signature, VerifyingKey};
-
-    require_jwk_field(jwk, "kty", "EC")?;
-    require_jwk_field(jwk, "crv", "P-256")?;
-
-    let x = decode_jwk_b64(jwk, "x")?;
-    let y = decode_jwk_b64(jwk, "y")?;
-    if x.len() != 32 || y.len() != 32 {
-        return Err(OAuthError::InvalidProof {
-            description: "jwk `x` and `y` must each decode to 32 bytes for P-256".into(),
+        // Reconstruct the JOSE header from the two fields the parser
+        // extracted, then delegate to swiyu-core's JWS verifier — the
+        // same primitive swiyu-didtool's verify-pop will eventually
+        // share.
+        let header = json!({
+            "alg": self.alg.as_str(),
+            "jwk": self.cnf_jwk.clone(),
         });
-    }
-    let mut sec1 = Vec::with_capacity(65);
-    sec1.push(0x04);
-    sec1.extend_from_slice(&x);
-    sec1.extend_from_slice(&y);
-    let pk = VerifyingKey::from_sec1_bytes(&sec1).map_err(|e| OAuthError::InvalidProof {
-        description: format!("jwk does not represent a valid P-256 public key: {e}"),
-    })?;
-
-    let sig = Signature::from_slice(signature).map_err(|e| OAuthError::InvalidProof {
-        description: format!("ES256 signature is not a valid P-256 ECDSA signature: {e}"),
-    })?;
-
-    pk.verify(signing_input.as_bytes(), &sig)
-        .map_err(|_| OAuthError::InvalidProof {
-            description: "signature did not verify".into(),
+        swiyu_core::jws::verify_with_embedded_jwk(
+            &header,
+            self.signing_input.as_bytes(),
+            &self.signature,
+        )
+        .map_err(|e| OAuthError::InvalidProof {
+            description: e.to_string(),
         })
-}
-
-fn require_jwk_field(jwk: &Value, field: &str, expected: &str) -> Result<(), OAuthError> {
-    let actual = jwk.get(field).and_then(Value::as_str);
-    if actual != Some(expected) {
-        return Err(OAuthError::InvalidProof {
-            description: format!("proof jwk: expected {field}={expected:?}, got {actual:?}"),
-        });
     }
-    Ok(())
-}
-
-fn decode_jwk_b64(jwk: &Value, field: &str) -> Result<Vec<u8>, OAuthError> {
-    let v = jwk
-        .get(field)
-        .and_then(Value::as_str)
-        .ok_or_else(|| OAuthError::InvalidProof {
-            description: format!("jwk missing `{field}`"),
-        })?;
-    URL_SAFE_NO_PAD
-        .decode(v)
-        .map_err(|_| OAuthError::InvalidProof {
-            description: format!("jwk `{field}` is not valid base64url"),
-        })
 }
 
 fn invalid_proof_structure() -> OAuthError {
