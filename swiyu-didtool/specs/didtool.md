@@ -17,17 +17,17 @@ Priority for `--keystore`: flag > `DIDTOOL_KEYSTORE` env var > default.
 Example:
 
 ```
-didtool --keystore /path/to/keys --verbose keystore list
+didtool --keystore /path/to/keys --verbose key list
 ```
 
 # Subcommands
 
-## `didtool keystore`
+## `didtool key`
 
 Read-only access to the key store. Keys are never inserted directly through the CLI — they
-are created as a side effect of DID operations such as `didtool create` and `didtool update`.
+are created as a side effect of DID operations such as `didtool did create` and `didtool did rotate`.
 
-### `didtool keystore list`
+### `didtool key list`
 
 Lists all entries in the key store, one per line, sorted by hash:
 
@@ -38,7 +38,7 @@ Lists all entries in the key store, one per line, sorted by hash:
 
 Two-column output (hash, DID separated by two spaces) for easy `grep`/`awk` use.
 
-### `didtool keystore versions --did <did-or-hash>`
+### `didtool key versions --did <did-or-hash>`
 
 Lists all key-pair sets ("versions") stored for a single DID, one per line, sorted by
 version number ascending:
@@ -57,15 +57,15 @@ Each line is `<version>  <change-tag>` separated by two spaces. The change tag i
   omitted. The order is fixed: authorized, authentication, assertion (so output is stable
   and greppable).
 
-Two-column output mirrors `keystore list`. `--did` accepts either the full DID string or
-its 12-character BLAKE3 hash, following the same resolution rule as `keystore show` and
-`keystore export`.
+Two-column output mirrors `key list`. `--did` accepts either the full DID string or
+its 12-character BLAKE3 hash, following the same resolution rule as `key show` and
+`key export`.
 
 This command is purely a key-store view — it does not consult the DID log. The version
-numbers are the same ones used by `keystore show --version <n>` and
-`keystore export --version <n>`.
+numbers are the same ones used by `key show --version <n>` and
+`key export --version <n>`.
 
-### `didtool keystore show --did <did-or-hash> [--role authorized|authentication|assertion] [--version <n>]`
+### `didtool key show --did <did-or-hash> [--role authorized|authentication|assertion] [--version <n>]`
 
 Displays public key(s) to stdout in PEM format.
 
@@ -76,9 +76,9 @@ Displays public key(s) to stdout in PEM format.
 - With `--role`: displays only the public key for that role.
 - `--version <n>`: selects a specific snapshot; defaults to the latest.
 
-Private keys are never shown on stdout — use `export` for those.
+Private keys are never shown on stdout — use `key export` for those.
 
-### `didtool keystore export --did <did-or-hash> --role authorized|authentication|assertion --out <file> [--private] [--version <n>]`
+### `didtool key export --did <did-or-hash> --role authorized|authentication|assertion --out <file> [--private] [--version <n>]`
 
 Writes a single key to `--out` in PEM format.
 
@@ -91,15 +91,15 @@ Writes a single key to `--out` in PEM format.
 - `--version <n>`: selects a specific snapshot; defaults to the latest.
 - `--out <file>`: path to write the PEM file; required.
 
-## `didtool log`
+## `didtool didlog`
 
 Read-only access to a DID's log file. Three subcommands: `list`, `show`, `entry`. Like
-`didtool keystore`, these commands never mutate the log — log entries are written by
-`didtool create` and (in future) `didtool update`.
+`didtool key`, these commands never mutate the log — log entries are written by
+`didtool did create` and (in future) `didtool did rotate`.
 
 ### Source selectors
 
-Each `log` subcommand reads the log from one of two sources:
+Each `didlog` subcommand reads the log from one of two sources:
 
 | Flag | Value | Behavior |
 |---|---|---|
@@ -107,17 +107,17 @@ Each `log` subcommand reads the log from one of two sources:
 | `--input <path>` | local file path | Reads the JSONL log from disk. |
 
 `--did` and `--input` are mutually exclusive. When neither is given, `--input ./did.jsonl` is
-used (matches the default `--out` of `didtool create`).
+used (matches the default `--out` of `didtool did create`).
 
-The `<did-or-hash>` value follows the same resolution rule as `keystore show` and
-`keystore export`: a 12-character all-hex string is looked up in the key store and the DID is
+The `<did-or-hash>` value follows the same resolution rule as `key show` and
+`key export`: a 12-character all-hex string is looked up in the key store and the DID is
 read from that entry's `did.txt`; anything else is parsed as a DID string directly. The HTTPS
 URL is derived from the DID's domain and optional path segments —
 `https://<domain>/<path>/did.jsonl`, or `https://<domain>/.well-known/did.jsonl` when no path
 is present. Percent-encoded `%3A` in the domain segment decodes to `:` so ports are handled
 correctly.
 
-### `didtool log list [--did <did-or-hash> | --input <path>]`
+### `didtool didlog list [--did <did-or-hash> | --input <path>]`
 
 Lists every entry in the log, one row per entry, in sequence order. Output starts with a small
 header identifying the DID, followed by a blank line and the entry rows:
@@ -148,7 +148,7 @@ Columns:
   entries omit the field and read as `no`. Deactivation is one-way, so at most one row can
   read `yes` and it is always the last entry.
 
-### `didtool log show [--did <did-or-hash> | --input <path>] [--out <file>] [--force] [--raw | --pretty]`
+### `didtool didlog show [--did <did-or-hash> | --input <path>] [--out <file>] [--force] [--raw | --pretty]`
 
 Outputs the full DID log.
 
@@ -164,7 +164,7 @@ Outputs the full DID log.
 
 `--raw` and `--pretty` are mutually exclusive.
 
-### `didtool log entry [--did <did-or-hash> | --input <path>] [--at <selector>] [--out <file>] [--force] [--raw | --pretty]`
+### `didtool didlog entry [--did <did-or-hash> | --input <path>] [--at <selector>] [--out <file>] [--force] [--raw | --pretty]`
 
 Outputs a single entry from the DID log. `--at <selector>` selects the entry:
 
@@ -173,7 +173,7 @@ Outputs a single entry from the DID log. `--at <selector>` selects the entry:
 | `latest` | The last entry in the log. This is the default when `--at` is omitted. |
 | `<n>`    | The entry at 1-based numeric index `<n>` (matches the sequence-number prefix of `versionId`). |
 
-Output rules are identical to `log show`: pretty-printed JSON to stdout by default, raw JSONL
+Output rules are identical to `didlog show`: pretty-printed JSON to stdout by default, raw JSONL
 to file by default. `--raw` / `--pretty` override. `--out <file>` refuses to overwrite an
 existing file unless `--force` is given.
 
@@ -187,12 +187,24 @@ existing file unless `--force` is given.
   status lists in the tens of KB) and applies to every HTTPS fetch didtool performs
   (DID log, trust registry, status list). The cap is fixed — there is no override.
 - The fetch is synchronous (`reqwest` blocking client), consistent with the registry calls
-  made by `didtool create`. No async runtime is introduced.
+  made by `didtool did create`. No async runtime is introduced.
 
-## `didtool create`
+## `didtool did`
+
+The `did` subcommands manage the lifecycle of a DID: creation, key rotation, and
+deactivation. They are the only `didtool` commands that mutate the DID log and (by
+default) the SWIYU identifier registry.
+
+| Subcommand | Purpose |
+|---|---|
+| `create` | Allocate a new DID and publish its initial log entry. |
+| `rotate` | Append an entry rotating one or more keys. |
+| `deactivate` | Append a final entry marking the DID terminated. |
+
+### `didtool did create`
 
 ```
-didtool create [--partner-id <id>] [--registry-url <url>] [--no-publish] [options]
+didtool did create [--partner-id <id>] [--registry-url <url>] [--no-publish] [options]
 ```
 
 Creates a new DID via the SWIYU identifier registry, generates (or imports) key pairs, writes
@@ -241,11 +253,11 @@ The API calls made are:
 If the registry POST succeeds but the PUT fails, the registry has an allocated-but-empty entry
 and the local files (`did.jsonl` + keystore entry) are written but not published. The CLI keeps
 the local files (so the keys aren't lost), reports the error, and exits non-zero. **Re-running
-`didtool create` will allocate a fresh identifier and orphan the previous one** — instead,
+`didtool did create` will allocate a fresh identifier and orphan the previous one** — instead,
 retry the upload manually with the local `did.jsonl` (e.g. via `curl`). A `didtool publish`
 subcommand to automate retry is not currently provided.
 
-### Common options
+#### Common options
 
 | Option | Description |
 |---|---|
@@ -267,12 +279,12 @@ Constraints on supplied keys:
 A constraint violation produces a clear error before any keys are written to the key store or
 the DID log is written to disk.
 
-### Output
+#### Output
 
 On success, the full DID string is printed to stdout:
 
 ```
-$ didtool create
+$ didtool did create
 Generated DID: did:tdw:Qm…:identifier-reg.trust-infra.swiyu-int.admin.ch:api:v1:did:<uuid>
 Saved DID log entry: did.jsonl
 Keystore hash: <12-char hash>
@@ -281,7 +293,7 @@ Published to registry: https://identifier-reg.trust-infra.swiyu-int.admin.ch/api
 
 The `Published to registry:` line is omitted when `--no-publish` is given.
 
-### What `create` does internally
+#### What `did create` does internally
 
 1. POSTs to the SWIYU registry to allocate a DID space; the response yields the
    `identifierRegistryUrl` that becomes the DID's URL.
@@ -296,22 +308,20 @@ The `Published to registry:` line is omitted when `--no-publish` is given.
 8. Prints the DID and a publish confirmation (or omits the publish line under `--no-publish`)
    to stdout.
 
-### Dependencies
+#### Dependencies
 
-`create` requires an HTTP client (`reqwest`), which is an unconditional dependency. `didtool`
+`did create` requires an HTTP client (`reqwest`), which is an unconditional dependency. `didtool`
 is a standalone CLI with no downstream consumers, so a feature flag to opt out would add
 complexity without benefit.
 
 `reqwest` is used in blocking mode — there is only one HTTP call and no concurrency needed, so
 introducing an async runtime (tokio) would be unnecessary complexity for a CLI tool.
 
----
-
-## `didtool update`
+### `didtool did rotate`
 
 ```
-didtool update [--did <did-or-hash> | --input <path>]
-               [--rotate authorized | --rotate authentication | --rotate assertion | --rotate all] ...
+didtool did rotate [--did <did-or-hash> | --input <path>]
+               [--role authorized | --role authentication | --role assertion | --role all] ...
                [--authorized-key <pem-file>]
                [--authentication-key <pem-file>]
                [--assertion-key <pem-file>]
@@ -324,12 +334,12 @@ by the *current* authorized key (loaded from the key store), links back to the p
 via the entryHash chain, and embeds the new authentication / assertion keys in the DID
 document.
 
-At least one of `--rotate <role>`, `--authorized-key`, `--authentication-key`, or
+At least one of `--role <role>`, `--authorized-key`, `--authentication-key`, or
 `--assertion-key` must be present — otherwise there is nothing to update.
 
-### Source
+#### Source
 
-Same selectors as `didtool log`:
+Same selectors as `didtool didlog`:
 
 | Flag | Behavior |
 |---|---|
@@ -339,22 +349,22 @@ Same selectors as `didtool log`:
 
 `--did` and `--input` are mutually exclusive. When `--did` is used, any `did.jsonl` in the working directory is ignored — the registry copy is the source of truth.
 
-### Key rotation
+#### Key rotation
 
 Two kinds of flag, freely combinable across roles but **mutually exclusive per role**:
 
 | Flag | Description |
 |---|---|
-| `--rotate <role>` | Generate a fresh key for `<role>`. The flag is repeatable; values are `authorized`, `authentication`, `assertion`, or `all` (= the three roles). Duplicate values are no-ops. |
+| `--role <role>` | Generate a fresh key for `<role>`. The flag is repeatable; values are `authorized`, `authentication`, `assertion`, or `all` (= the three roles). Duplicate values are no-ops. |
 | `--authorized-key <pem-file>` | Import an existing Ed25519 PEM as the new authorized key. |
 | `--authentication-key <pem-file>` | Import an existing P-256 PEM as the new authentication key. |
 | `--assertion-key <pem-file>` | Import an existing P-256 PEM as the new assertion key. |
 
 Roles not addressed by either flag keep their current key — the entry still references them
-unchanged. Combining `--rotate authorized` with `--authorized-key` (etc.) on the same role is an
+unchanged. Combining `--role authorized` with `--authorized-key` (etc.) on the same role is an
 error.
 
-### Output
+#### Output
 
 | Flag | Description |
 |---|---|
@@ -363,14 +373,14 @@ error.
 | _(no `--out`, with `--input` or default)_ | Append to the source file in place via temp-file-and-rename, so a crash mid-write cannot corrupt the existing log. |
 | _(no `--out`, with `--did`)_ | The new log is **not** written to any local file. Persistence relies on the registry publish — see *Publish* below. |
 
-### Publish
+#### Publish
 
 | Flag | Description |
 |---|---|
 | `--no-publish` | Skip the registry update; produce only the local files. |
 
 When publish is enabled (the default), the SWIYU registry is updated via the **same call used
-by `create`**: a `PUT` to
+by `did create`**: a `PUT` to
 `<registry-url>/api/v1/identifier/business-entities/<partner>/identifier-entries/<uuid>` with
 `Content-Type: application/jsonl+json` and the **full updated log** as the body (genesis entry
 + all subsequent updates). The registry treats it as an idempotent replace; subsequent `GET`s
@@ -382,7 +392,7 @@ When `--did` is used without `--out`, the registry is the **only** persistence p
 new entry. Combining `--did`, no `--out`, and `--no-publish` is therefore rejected — the new
 log entry would have nowhere to go.
 
-### What `update` does internally
+#### What `did rotate` does internally
 
 1. Loads the existing DID log (from file or HTTPS).
 2. Looks up the current authorized key pair in the key store by the log's DID. If no key store
@@ -403,7 +413,7 @@ log entry would have nowhere to go.
    the resulting log atomically. With `--did` and no `--out`, this step is skipped.
 7. (Unless `--no-publish`) PUTs the updated log to the SWIYU registry.
 
-### Failure semantics
+#### Failure semantics
 
 If the key store lookup fails (DID not present, current authorized key unreadable), the
 command aborts before any file or registry write.
@@ -418,20 +428,18 @@ user can retry the upload manually. The key store has already advanced to the ne
 the fallback file is the only record of the new entry's DID-document state outside the
 key store.
 
-### Out of scope for this version
+#### Out of scope for this version
 
 - **Prerotation / `nextKeyHashes`.** did:tdw 0.3 supports pre-committing to a future authorized
-  key. Not implemented yet. When added, `update` will enforce that the new authorized
+  key. Not implemented yet. When added, `did rotate` will enforce that the new authorized
   multikey hash matches any commitment recorded in the previous entry's `parameters`.
 - **Non-key DID-document updates** (services, additional contexts, etc.) are not supported.
-  `update` only rotates the three key roles.
+  `did rotate` only rotates the three key roles.
 
----
-
-## `didtool deactivate`
+### `didtool did deactivate`
 
 ```
-didtool deactivate [--did <did-or-hash> | --input <path>]
+didtool did deactivate [--did <did-or-hash> | --input <path>]
                    [--out <file>] [--force]
                    [--no-publish]
                    [--partner-id <id>] [--registry-url <url>]
@@ -444,9 +452,9 @@ resolvers and registries should treat it as terminated.
 Deactivation is one-way. The command refuses to operate on a DID whose latest entry already
 has `parameters.deactivated == true`.
 
-### Source, output, publish
+#### Source, output, publish
 
-Identical to `didtool update`:
+Identical to `didtool did rotate`:
 
 - `--did <did-or-hash>` / `--input <path>` (mutually exclusive; default `./did.jsonl`). With
   `--did`, the registry copy is the source of truth and any local `did.jsonl` is ignored.
@@ -461,7 +469,7 @@ Identical to `didtool update`:
 
 There are no key-rotation flags. Deactivation does not rotate any keys.
 
-### What `deactivate` does internally
+#### What `did deactivate` does internally
 
 1. Loads the existing DID log (file or HTTPS).
 2. Refuses if the latest entry's `parameters.deactivated` is already `true`.
@@ -481,12 +489,12 @@ There are no key-rotation flags. Deactivation does not rotate any keys.
 5. If a local target is in scope (`--out`, or `--input`/default file with no `--out`), writes
    the resulting log atomically. With `--did` and no `--out`, this step is skipped.
 6. (Unless `--no-publish`) PUTs the full updated log to the SWIYU registry, mirroring
-   `update`.
+   `did rotate`.
 
 The key store is **not** advanced to a new version: deactivation does not change any key
 material, so no new snapshot is needed.
 
-### Failure semantics
+#### Failure semantics
 
 If the key store entry for the DID is missing, the command aborts before any file or
 registry write — the deactivation entry cannot be signed without it.
@@ -502,10 +510,21 @@ manually.
 
 ---
 
-## `didtool create-pop`
+## `didtool pop`
+
+The `pop` subcommands generate and verify Proof-of-Possession (PoP) JWTs — short-lived
+JWTs signed by one of a DID's keys to prove control of the corresponding private key.
+Used in registry onboarding handshakes and low-level testing.
+
+| Subcommand | Purpose |
+|---|---|
+| `create` | Sign a fresh PoP JWT with one of the DID's keys. |
+| `verify` | Verify a PoP JWT: signature, freshness, optional nonce. |
+
+### `didtool pop create`
 
 ```
-didtool create-pop --did <did-or-hash>
+didtool pop create --did <did-or-hash>
                    [--role authorized | authentication | assertion]
                    [--nonce <string>]
                    [--ttl <seconds>]
@@ -517,7 +536,7 @@ JWT proves cryptographically that the caller controls the corresponding private 
 uses are registry onboarding handshakes (where a verifier challenges the DID controller with
 a nonce) and low-level testing.
 
-### Flags
+#### Flags
 
 | Flag | Required | Default | Description |
 |---|---|---|---|
@@ -528,7 +547,7 @@ a nonce) and low-level testing.
 | `--out <file>` | no | stdout | Write the JWT to a file instead of stdout. |
 | `--force` | no | off | Allow `--out` to overwrite an existing file. |
 
-### Resulting JWT
+#### Resulting JWT
 
 The signed JWT has this shape (header and payload shown decoded):
 
@@ -547,13 +566,13 @@ payload: { "iss":   "did:tdw:Q…:example.com",
 - `iss` is the DID itself.
 - `iat` / `exp` are Unix timestamps in seconds.
 
-### Output
+#### Output
 
 By default the JWT is written to stdout **without a trailing newline**, so shell redirection
 produces a byte-exact JWT file:
 
 ```
-$ didtool create-pop --did 0a1b2c3d4e5f --nonce abc > pop.jwt
+$ didtool pop create --did 0a1b2c3d4e5f --nonce abc > pop.jwt
 ```
 
 When `--out` is used, the same byte-exact JWT is written to the file. The command refuses to
@@ -563,11 +582,11 @@ When `--nonce` is omitted, the auto-generated nonce is printed to **stderr** (on
 prefixed `generated nonce: `) so the user can record it for later verification:
 
 ```
-$ didtool create-pop --did 0a1b2c3d4e5f > pop.jwt
+$ didtool pop create --did 0a1b2c3d4e5f > pop.jwt
 generated nonce: 7Q3vKx2NfL9aB1cD4eFgHi
 ```
 
-### What `create-pop` does internally
+#### What `pop create` does internally
 
 1. Resolves `--did` to a key store entry (12-char hash or full DID).
 2. Loads the latest snapshot of that entry: the DID, the role's private key, and the matching
@@ -578,12 +597,12 @@ generated nonce: 7Q3vKx2NfL9aB1cD4eFgHi
    `<header>.<payload>` signing input with the private key, and assembles the compact JWS.
 6. Writes the JWT to stdout (no trailing newline) or to `--out`.
 
-### Failure semantics
+#### Failure semantics
 
 If the key store entry is missing, or the role's verification method cannot be found in the
 latest DID-document snapshot, the command aborts before any output is produced.
 
-### Out of scope for this version
+#### Out of scope for this version
 
 - Selecting a key from a non-current snapshot (e.g. a rotated-out authorized key). v1 always
   uses the latest snapshot.
@@ -591,12 +610,10 @@ latest DID-document snapshot, the command aborts before any output is produced.
   `create-cred-proof`, will cover that case.
 - Reading the nonce from stdin or a file. Pass it via `--nonce <string>`.
 
----
-
-## `didtool verify-pop`
+### `didtool pop verify`
 
 ```
-didtool verify-pop [--jwt <string> | --jwt-file <path>]
+didtool pop verify [--jwt <string> | --jwt-file <path>]
                    [--did <hash-or-did> | --input <log-file>]
                    [--nonce <expected>]
                    [--allow-expired]
@@ -604,9 +621,9 @@ didtool verify-pop [--jwt <string> | --jwt-file <path>]
 
 Verifies a Proof of Possession JWT: parses it, resolves the verifying key, checks the
 signature, and validates the payload claims (`iss`, `exp`, `iat`, optionally `nonce`).
-Symmetric with `create-pop`: a JWT produced by `create-pop` round-trips through `verify-pop`.
+Symmetric with `pop create`: a JWT produced by `pop create` round-trips through `pop verify`.
 
-### Flags
+#### Flags
 
 | Flag | Required | Default | Description |
 |---|---|---|---|
@@ -617,7 +634,7 @@ Symmetric with `create-pop`: a JWT produced by `create-pop` round-trips through 
 | `--nonce <string>` | no | — | If present, `payload.nonce` must equal this exactly. Without it, the nonce is reported but not enforced. |
 | `--allow-expired` | no | off | Skip the `exp` freshness check. By default, JWTs whose `exp` is at or before the current time are rejected. |
 
-### kid resolution
+#### kid resolution
 
 The `kid` in the JWT header takes one of two shapes:
 
@@ -635,7 +652,7 @@ The `kid` in the JWT header takes one of two shapes:
 - **`<did>#<fragment>`** — references a verification method inside a DID document. The
   document is resolved in priority order:
 
-  1. **`--did <hash-or-did>`**: HTTPS fetch via the standard `log show` code path.
+  1. **`--did <hash-or-did>`**: HTTPS fetch via the standard `didlog show` code path.
   2. **`--input <path>`**: read from the given local log file.
   3. **Default (no flag)**: look up the kid's DID in the local key store; map known
      fragments (`authentication-key-01` → Authentication, `assertion-key-01` → Assertion)
@@ -644,7 +661,7 @@ The `kid` in the JWT header takes one of two shapes:
   In all three branches, the DID derived from the resolved log/keystore must equal the DID
   part of the kid. `payload.iss` must equal the kid's DID.
 
-### Validation order
+#### Validation order
 
 Checks run fail-closed in this order; the first failure aborts:
 
@@ -672,9 +689,9 @@ identity. For `<did>#<fragment>` kids the binding is intrinsic (kid encodes the 
 `did:key` kids, the binding requires looking up the log — which is why `iss` enforcement
 for `did:key` only kicks in when a log source is provided.
 
-### Output
+#### Output
 
-#### Success
+##### Success
 
 A multi-line summary on **stdout**, exit code 0:
 
@@ -691,12 +708,12 @@ PoP is valid
 When `--allow-expired` is in effect and the JWT is past `exp`, the `exp` line reads
 `expired 1h 12m ago`.
 
-#### Failure
+##### Failure
 
 A single-line `error: …` on **stderr**, exit code 1. The message identifies the first failed
 check; the JWT is treated as invalid as soon as any check fails.
 
-### What `verify-pop` does internally
+#### What `pop verify` does internally
 
 1. Reads the JWT from `--jwt` or `--jwt-file`.
 2. Parses and base64url-decodes the three segments.
@@ -708,13 +725,13 @@ check; the JWT is treated as invalid as soon as any check fails.
 7. If `--nonce` was given, compares to `payload.nonce`.
 8. Prints the success summary to stdout.
 
-### Failure semantics
+#### Failure semantics
 
-`verify-pop` is read-only: no files are modified, no network calls beyond what `--did`
+`pop verify` is read-only: no files are modified, no network calls beyond what `--did`
 triggers. A failed verification simply produces an error and a non-zero exit code; no state
 is left behind.
 
-### Out of scope for this version
+#### Out of scope for this version
 
 - HTTPS fetch outside the `--did` path (no resolver for kids that embed a DID we don't
   know about and that wasn't passed via `--did` / `--input`).
@@ -1083,7 +1100,7 @@ controls the log level:
 Example:
 
 ```
-$ didtool create https://example.com/.well-known/did.jsonl \
+$ didtool did create https://example.com/.well-known/did.jsonl \
     --authorized-key ./my-key.pem --verbose
 DEBUG imported authorized Ed25519 key from ./my-key.pem
 DEBUG derived authorized public key
@@ -1096,5 +1113,5 @@ DEBUG committed keys to key store (hash: 3f7a2c91b04e)
 did:webvh:Qm…:example.com
 ```
 
-`--verbose` is a global flag and applies to all subcommands. For the `keystore` subcommands it
+`--verbose` is a global flag and applies to all subcommands. For the `key` subcommands it
 surfaces steps such as which directory a key was loaded from.

@@ -118,43 +118,48 @@ Create a DID, rotate a key, deactivate:
 
 ```sh
 # Allocate a DID space, sign the genesis log entry, publish to the registry.
-didtool create
+didtool did create
 
 # Append a new entry that rotates the authentication key; publish.
-didtool update --did did:tdw:Qmb7D2murY... --rotate authentication
+didtool did rotate --did did:tdw:Qmb7D2murY... --role authentication
 
 # Append a final entry marking the DID as deactivated; publish.
-didtool deactivate --did did:tdw:Qmb7D2murY...
+didtool did deactivate --did did:tdw:Qmb7D2murY...
 ```
 
 Inspect a DID's log:
 
 ```sh
 # Local file or fetched over HTTPS via --did <did-or-keystore-hash>.
-didtool log list --did did:tdw:Qmb7D2murY...
+didtool didlog list --did did:tdw:Qmb7D2murY...
 # or:
-didtool log show --did did:tdw:Qmb7D2murY... --pretty
-didtool log entry --did did:tdw:Qmb7D2murY... --at latest
+didtool didlog show --did did:tdw:Qmb7D2murY... --pretty
+didtool didlog entry --did did:tdw:Qmb7D2murY... --at latest
 ```
 
 Manage the local key store:
 
 ```sh
-didtool keystore list
-didtool keystore versions --did did:tdw:Qmb7D2murY...
-didtool keystore show --did did:tdw:Qmb7D2murY...
-didtool keystore export --did did:tdw:Qmb7D2murY... --role authorized --out key.pem
+didtool key list
+didtool key versions --did did:tdw:Qmb7D2murY...
+didtool key show --did did:tdw:Qmb7D2murY...
+didtool key export --did did:tdw:Qmb7D2murY... --role authorized --out key.pem
 ```
+
+> [!CAUTION]
+> The `didtool` keystore writes private keys to disk **unencrypted** (PEM files
+> in the keystore directory). This is fine for development against the SWIYU
+> integration environment, but **do not use `didtool` for production keys**.
 
 Produce a Proof of Possession (PoP) — a JWT signed with one of a DID's keys.
 Useful for registry onboarding handshakes and low-level testing:
 
 ```sh
 # Sign with the assertion key; auto-generate a nonce (printed to stderr).
-didtool create-pop --did did:tdw:Qmb7D2murY... > pop.jwt
+didtool pop create --did did:tdw:Qmb7D2murY... > pop.jwt
 
 # Sign with the authorized key, embed a verifier-supplied challenge, write to a file.
-didtool create-pop --did did:tdw:Qmb7D2murY... \
+didtool pop create --did did:tdw:Qmb7D2murY... \
     --role authorized --nonce "<challenge>" --out pop.jwt
 ```
 
@@ -164,10 +169,10 @@ DID's `parameters.updateKeys` when a log source is supplied:
 
 ```sh
 # Verify a PoP from a string.
-didtool verify-pop --jwt "$(cat pop.jwt)"
+didtool pop verify --jwt "$(cat pop.jwt)"
 
 # Verify against a fresh registry fetch, with an expected nonce.
-didtool verify-pop --jwt-file pop.jwt --did did:tdw:Qmb7D2murY... --nonce "<challenge>"
+didtool pop verify --jwt-file pop.jwt --did did:tdw:Qmb7D2murY... --nonce "<challenge>"
 ```
 
 Look up the SWIYU trust granted to a DID — displays the disclosed claims

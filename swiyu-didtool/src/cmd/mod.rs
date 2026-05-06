@@ -1,12 +1,10 @@
-pub mod create;
-pub mod create_pop;
-pub mod deactivate;
+pub mod did;
+pub mod didlog;
 pub mod file;
 pub mod http;
-pub mod log;
+pub mod key;
+pub mod pop;
 pub mod trust;
-pub mod update;
-pub mod verify_pop;
 
 use std::str::FromStr;
 
@@ -28,9 +26,9 @@ pub(crate) fn iso8601(unix_secs: u64) -> String {
 
 /// Errors raised when the SWIYU identifier-registry credentials are required but
 /// were not supplied. The `&'static str` is appended to the message verbatim — use
-/// `""` when `--no-publish` is not a meaningful escape (as in `create`, where the
+/// `""` when `--no-publish` is not a meaningful escape (as in `did create`, where the
 /// POST to allocate the DID URL is mandatory regardless of `--no-publish`), or
-/// `" (or use --no-publish)"` when it is (as in `update` / `deactivate`).
+/// `" (or use --no-publish)"` when it is (as in `did rotate` / `did deactivate`).
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryArgsError {
     #[error("provide --partner-id or set SWIYU_PARTNER_ID{0}")]
@@ -88,7 +86,7 @@ pub(crate) fn resolve_did(store: &KeyStore, target: &str) -> Result<DID, Resolve
 /// Resolves a `<hash|did>` target to a [`KeyStoreEntry`].
 ///
 /// Both forms require the entry to exist locally — used by commands that need access
-/// to the DID's keys (e.g. `keystore show`, `create-pop`).
+/// to the DID's keys (e.g. `key show`, `pop create`).
 pub(crate) fn resolve_entry(store: &KeyStore, target: &str) -> Result<KeyStoreEntry, ResolveError> {
     if is_hash(target) {
         debug!("resolving '{target}' as BLAKE3 hash via key store");

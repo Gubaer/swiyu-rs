@@ -8,8 +8,10 @@ use swiyu_core::did::{DID, DIDError};
 use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::didlog::{DIDDocState, LogEntryFormat};
 
-use crate::cmd::log::{LogError, current_did, load_log};
-use crate::cmd::update::{build_updated_log, compute_version_time, extract_registry_identifier};
+use crate::cmd::did::rotate::{
+    build_updated_log, compute_version_time, extract_registry_identifier,
+};
+use crate::cmd::didlog::{LogError, current_did, load_log};
 use crate::keystore::{KeyRole, KeyStore, KeyStoreError};
 use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
