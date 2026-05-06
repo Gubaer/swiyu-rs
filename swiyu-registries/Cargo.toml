@@ -1,6 +1,6 @@
 [package]
 name = "swiyu-registries"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 
@@ -17,7 +17,7 @@ trust = []
 
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
-reqwest = { version = "0.13", features = ["json", "rustls", "webpki-roots"], default-features = false }
+reqwest = { version = "0.13", features = ["json", "query", "rustls", "webpki-roots"], default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

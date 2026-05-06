@@ -2373,6 +2373,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
@@ -3160,7 +3161,7 @@ dependencies = [
 
 [[package]]
 name = "swiyu-registries"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "reqwest",
  "serde",
