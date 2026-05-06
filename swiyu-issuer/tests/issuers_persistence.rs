@@ -426,3 +426,38 @@ async fn swap_key_triple_swaps_only_one_role(pool: PgPool) {
     assert_eq!(loaded.authentication_key_id, Some(new_authentication));
     assert_eq!(loaded.assertion_key_id, issuer.assertion_key_id);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn fresh_issuer_has_null_current_status_list_id(pool: PgPool) {
+    // Lazy-provisioning invariant: a brand-new issuer carries no
+    // `current_status_list_id`. The first credential issued for this
+    // issuer is what provisions the list and re-points the column.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer = signing_engine_shaped_issuer(tenant_id);
+
+    let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &issuer).await.unwrap();
+
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT current_status_list_id FROM issuers WHERE id = $1")
+            .bind(issuer.id.bare())
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert!(current.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn seeded_issuer_has_null_current_status_list_id(pool: PgPool) {
+    // The seeded dev issuer predates the credential-management slice
+    // and carries NULL through this migration.
+    let mut conn = pool.acquire().await.unwrap();
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT current_status_list_id FROM issuers WHERE id = $1")
+            .bind("9hXq2vRtL8pK7f")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert!(current.is_none());
+}
