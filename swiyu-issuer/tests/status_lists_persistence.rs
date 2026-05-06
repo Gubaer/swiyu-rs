@@ -12,6 +12,7 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
+use chrono::{Duration, Utc};
 use sqlx::PgPool;
 use swiyu_core::statuslist::{
     SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY, StatusList as CoreStatusList,
@@ -590,4 +591,153 @@ async fn write_bit_returns_not_found_for_unknown_list(pool: PgPool) {
         result,
         Err(swiyu_issuer::persistence::PersistenceError::NotFound)
     ));
+}
+
+const LEASE: Duration = Duration::seconds(30);
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acquire_next_dirty_returns_none_when_no_dirty_list_exists(pool: PgPool) {
+    let issuer_id = seeded_issuer(&pool).await;
+    let mut conn = pool.acquire().await.unwrap();
+    // Provision a fresh list — committed_version == published_version == 0,
+    // so it is *not* dirty.
+    status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
+        .await
+        .unwrap();
+
+    let picked = status_lists::acquire_next_dirty(&mut conn, Utc::now(), LEASE)
+        .await
+        .unwrap();
+    assert!(picked.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acquire_next_dirty_returns_dirty_list_with_columns_populated(pool: PgPool) {
+    let issuer_id = seeded_issuer(&pool).await;
+    let mut conn = pool.acquire().await.unwrap();
+    let list_id = status_lists::provision_for_issuer(
+        &mut conn,
+        &issuer_id,
+        Some("11111111-2222-3333-4444-555555555555"),
+        Some("https://status-reg.example.com/lists/abc.jwt"),
+    )
+    .await
+    .unwrap();
+
+    // Make it dirty: a single bit-flip bumps committed_version.
+    status_lists::write_bit(
+        &mut conn,
+        &list_id,
+        StatusListIndex::try_from(0u32).unwrap(),
+        StatusValue::Revoked,
+    )
+    .await
+    .unwrap();
+
+    let picked = status_lists::acquire_next_dirty(&mut conn, Utc::now(), LEASE)
+        .await
+        .unwrap()
+        .expect("dirty list is picked up");
+    assert_eq!(picked.id, list_id);
+    assert_eq!(
+        picked.registry_entry_id.as_deref(),
+        Some("11111111-2222-3333-4444-555555555555")
+    );
+    assert_eq!(
+        picked.registry_url.as_deref(),
+        Some("https://status-reg.example.com/lists/abc.jwt")
+    );
+    assert_eq!(picked.bitstring.len(), BITSTRING_BYTES);
+    assert!(picked.committed_version > picked.published_version);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acquire_next_dirty_lease_prevents_reacquisition(pool: PgPool) {
+    let issuer_id = seeded_issuer(&pool).await;
+    let mut conn = pool.acquire().await.unwrap();
+    let list_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
+        .await
+        .unwrap();
+
+    status_lists::write_bit(
+        &mut conn,
+        &list_id,
+        StatusListIndex::try_from(0u32).unwrap(),
+        StatusValue::Revoked,
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now();
+    let first = status_lists::acquire_next_dirty(&mut conn, now, LEASE)
+        .await
+        .unwrap();
+    assert!(first.is_some(), "first acquire picks the dirty list");
+
+    // Same `now`, but the lease was just stamped to `now + 30s`, so a
+    // second acquisition gets nothing.
+    let second = status_lists::acquire_next_dirty(&mut conn, now, LEASE)
+        .await
+        .unwrap();
+    assert!(second.is_none(), "lease prevents re-pickup");
+
+    // After the lease expires, the row becomes pickable again.
+    let after_expiry = now + LEASE + Duration::seconds(1);
+    let third = status_lists::acquire_next_dirty(&mut conn, after_expiry, LEASE)
+        .await
+        .unwrap();
+    assert!(third.is_some(), "expired lease releases the row");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn acquire_next_dirty_picks_never_leased_row_first(pool: PgPool) {
+    let issuer_id = seeded_issuer(&pool).await;
+    let mut conn = pool.acquire().await.unwrap();
+
+    // Provision two lists. Make both dirty. The second list's
+    // next_publish_attempt_at is left NULL (never leased); the first's
+    // is stamped to a near-past value (lease expired).
+    let leased_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
+        .await
+        .unwrap();
+    let never_leased_id = status_lists::provision_for_issuer(&mut conn, &issuer_id, None, None)
+        .await
+        .unwrap();
+
+    status_lists::write_bit(
+        &mut conn,
+        &leased_id,
+        StatusListIndex::try_from(0u32).unwrap(),
+        StatusValue::Revoked,
+    )
+    .await
+    .unwrap();
+    status_lists::write_bit(
+        &mut conn,
+        &never_leased_id,
+        StatusListIndex::try_from(0u32).unwrap(),
+        StatusValue::Revoked,
+    )
+    .await
+    .unwrap();
+
+    // Stamp `leased_id` with an expired lease (so it would be eligible
+    // again, but the NULLS-FIRST ordering must still prefer
+    // `never_leased_id`).
+    let past = Utc::now() - Duration::seconds(60);
+    sqlx::query("UPDATE status_lists SET next_publish_attempt_at = $1 WHERE id = $2")
+        .bind(past)
+        .bind(leased_id.bare())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+    let picked = status_lists::acquire_next_dirty(&mut conn, Utc::now(), LEASE)
+        .await
+        .unwrap()
+        .expect("a dirty list is picked");
+    assert_eq!(
+        picked.id, never_leased_id,
+        "NULLS FIRST should prefer the never-leased row"
+    );
 }

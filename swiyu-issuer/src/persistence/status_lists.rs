@@ -1,10 +1,13 @@
+use chrono::{DateTime, Duration, Utc};
 use sqlx::Row;
-use sqlx::postgres::PgConnection;
+use sqlx::postgres::{PgConnection, PgRow};
 use swiyu_core::statuslist::{
     SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY, StatusList as CoreStatusList,
 };
 
-use crate::domain::{BITSTRING_BYTES, IssuerId, StatusListId, StatusListIndex, StatusValue};
+use crate::domain::{
+    BITSTRING_BYTES, IssuerId, StatusList, StatusListId, StatusListIndex, StatusValue,
+};
 
 use super::PersistenceError;
 use super::helpers::integrity_from;
@@ -208,4 +211,113 @@ pub async fn write_bit(
     .await?;
 
     Ok(())
+}
+
+/// Atomically picks the oldest dirty status list and stamps it with a
+/// publish-attempt lease.
+///
+/// "Dirty" means `committed_version > published_version` (a bit edit
+/// has landed since the last successful publish round) and the row's
+/// `next_publish_attempt_at` is either NULL (never tried) or has
+/// already passed (a previous lease expired). The query uses
+/// `FOR UPDATE SKIP LOCKED` so a future split into multiple publish
+/// workers does not require schema or query changes; for v0.1.0 there
+/// is one worker, but the convention matches `operation_tasks::
+/// acquire_next`.
+///
+/// `lease_duration` controls how long another worker waits before
+/// re-picking the row on crash recovery. The plan calls out 30s as a
+/// reasonable starting point; tune via observed publish round
+/// durations once metrics land.
+///
+/// Returns `Ok(None)` when no dirty list is currently runnable.
+pub async fn acquire_next_dirty(
+    conn: &mut PgConnection,
+    now: DateTime<Utc>,
+    lease_duration: Duration,
+) -> Result<Option<StatusList>, PersistenceError> {
+    let lease_expiry = now + lease_duration;
+    let row = sqlx::query(
+        r#"
+        UPDATE status_lists
+        SET next_publish_attempt_at = $1
+        WHERE id = (
+            SELECT id FROM status_lists
+            WHERE committed_version > published_version
+              AND (next_publish_attempt_at IS NULL OR next_publish_attempt_at <= $2)
+            ORDER BY next_publish_attempt_at NULLS FIRST, created_at
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id, issuer_id, bitstring, allocated_count,
+                  committed_version, published_version,
+                  last_publish_attempt_at, last_publish_error,
+                  next_publish_attempt_at, publish_attempts,
+                  created_at, registry_entry_id, registry_url
+        "#,
+    )
+    .bind(lease_expiry)
+    .bind(now)
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    row.as_ref().map(row_to_status_list).transpose()
+}
+
+fn row_to_status_list(row: &PgRow) -> Result<StatusList, PersistenceError> {
+    let id: String = row.try_get("id")?;
+    let issuer_id: String = row.try_get("issuer_id")?;
+    let bitstring: Vec<u8> = row.try_get("bitstring")?;
+    let allocated_count: i32 = row.try_get("allocated_count")?;
+    let committed_version: i64 = row.try_get("committed_version")?;
+    let published_version: i64 = row.try_get("published_version")?;
+    let last_publish_attempt_at: Option<DateTime<Utc>> = row.try_get("last_publish_attempt_at")?;
+    let last_publish_error: Option<String> = row.try_get("last_publish_error")?;
+    let next_publish_attempt_at: Option<DateTime<Utc>> = row.try_get("next_publish_attempt_at")?;
+    let publish_attempts: i32 = row.try_get("publish_attempts")?;
+    let created_at: DateTime<Utc> = row.try_get("created_at")?;
+    let registry_entry_id: Option<String> = row.try_get("registry_entry_id")?;
+    let registry_url: Option<String> = row.try_get("registry_url")?;
+
+    if bitstring.len() != BITSTRING_BYTES {
+        return Err(PersistenceError::DataIntegrity {
+            details: format!(
+                "status_lists row {id} carries bitstring of unexpected length: {}",
+                bitstring.len()
+            ),
+        });
+    }
+
+    let allocated_count =
+        u32::try_from(allocated_count).map_err(|_| PersistenceError::DataIntegrity {
+            details: format!("status_lists row {id} has negative allocated_count"),
+        })?;
+    let committed_version =
+        u64::try_from(committed_version).map_err(|_| PersistenceError::DataIntegrity {
+            details: format!("status_lists row {id} has negative committed_version"),
+        })?;
+    let published_version =
+        u64::try_from(published_version).map_err(|_| PersistenceError::DataIntegrity {
+            details: format!("status_lists row {id} has negative published_version"),
+        })?;
+    let publish_attempts =
+        u32::try_from(publish_attempts).map_err(|_| PersistenceError::DataIntegrity {
+            details: format!("status_lists row {id} has negative publish_attempts"),
+        })?;
+
+    Ok(StatusList {
+        id: StatusListId::from_bare(id).map_err(integrity_from)?,
+        issuer_id: IssuerId::from_bare(issuer_id).map_err(integrity_from)?,
+        bitstring,
+        allocated_count,
+        committed_version,
+        published_version,
+        last_publish_attempt_at,
+        last_publish_error,
+        next_publish_attempt_at,
+        publish_attempts,
+        created_at,
+        registry_entry_id,
+        registry_url,
+    })
 }
