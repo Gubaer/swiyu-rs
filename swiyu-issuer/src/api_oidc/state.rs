@@ -4,8 +4,6 @@ use sqlx::PgPool;
 
 use crate::domain::AnySigningEngine;
 
-use super::signer::Signer;
-
 pub struct Config {
     /// Public base URL the wallet sees. The metadata document
     /// substitutes this into `credential_issuer`,
@@ -40,25 +38,14 @@ impl Config {
 pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<Config>,
-    // `signer` is the legacy ephemeral fixture path; `engine` is the
-    // SigningEngine-backed replacement being phased in. Both fields
-    // exist while the credential handler is still on the old path;
-    // the eventual cleanup drops `signer` and `Signer` entirely.
-    pub signer: Arc<Signer>,
     pub engine: Arc<AnySigningEngine>,
 }
 
 impl AppState {
-    pub fn new(
-        pool: PgPool,
-        config: Config,
-        signer: Signer,
-        engine: Arc<AnySigningEngine>,
-    ) -> Self {
+    pub fn new(pool: PgPool, config: Config, engine: Arc<AnySigningEngine>) -> Self {
         Self {
             pool,
             config: Arc::new(config),
-            signer: Arc::new(signer),
             engine,
         }
     }

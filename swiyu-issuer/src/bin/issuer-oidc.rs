@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use chrono::Duration;
-use swiyu_issuer::api_oidc::{AppState, Config, Signer, router};
+use swiyu_issuer::api_oidc::{AppState, Config, router};
 use swiyu_issuer::domain::build_signing_engine_from_env;
 use swiyu_issuer::persistence;
 use tokio::net::TcpListener;
@@ -32,16 +32,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
 
-    // The SigningEngine-backed credential signing path lands in a
-    // follow-up slice; until it does, the credential handler still
-    // signs with this ephemeral fixture key.
-    tracing::warn!(
-        "issuer-oidc is using an EPHEMERAL FIXTURE signing key. \
-         Signed credentials will not verify across restarts and the \
-         issuer's DID document does not advertise the public key. \
-         Replace before any non-alpha deployment."
-    );
-    let signer = Signer::new_ephemeral_for_dev();
     let engine = Arc::new(build_signing_engine_from_env(pool.clone())?);
 
     let state = AppState::new(
@@ -51,7 +41,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             access_token_ttl,
             c_nonce_ttl,
         },
-        signer,
         engine,
     );
     let app = router(state);

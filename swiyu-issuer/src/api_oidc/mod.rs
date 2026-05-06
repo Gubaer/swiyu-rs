@@ -3,11 +3,8 @@ mod credential_offer;
 mod error;
 mod metadata;
 mod oauth_error;
-mod signer;
 mod state;
 mod token;
-
-pub use signer::Signer;
 
 pub use error::OidcError;
 pub use oauth_error::OAuthError;

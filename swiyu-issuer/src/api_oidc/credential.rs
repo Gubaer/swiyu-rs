@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -9,13 +7,17 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
+use thiserror::Error;
 
-use crate::domain::{AccessTokenSecret, CredentialOfferState, IssuerId, NonceSecret};
+use crate::domain::{
+    AccessTokenSecret, AnySigningEngine, CredentialOfferState, IssuerId, KeyPairId, NonceSecret,
+    SigningEngine, SigningEngineError,
+};
 use crate::persistence;
 
 use super::AppState;
 use super::oauth_error::OAuthError;
-use super::signer::Signer;
 
 const SUPPORTED_FORMAT: &str = "vc+sd-jwt";
 const SUPPORTED_PROOF_TYPE: &str = "jwt";
@@ -133,6 +135,16 @@ pub async fn credential(
             )))
         })?;
 
+    // The credential's JWS is signed with the issuer's Assertion key
+    // (P-256 / ES256). The seeded fixture issuer from migration 0001
+    // has no Assertion key configured, so it cannot issue credentials
+    // until it has been re-onboarded through the create_issuer task
+    // flow on the management API.
+    let assertion_key_id = issuer.assertion_key_id.ok_or_else(|| OAuthError::InvalidRequest {
+        description: "issuer has no Assertion key configured; create the issuer through the issuer-management API first"
+            .to_string(),
+    })?;
+
     let proof_claims = parse_wallet_proof(
         &payload.proof.jwt,
         &state.config.issuer_base_url,
@@ -157,8 +169,16 @@ pub async fn credential(
         });
     }
 
-    let credential = build_sd_jwt_vc(&state.signer, &issuer, &offer, &proof_claims.cnf_jwk, now)
-        .map_err(|err| OAuthError::Internal(Box::new(err)))?;
+    let credential = build_sd_jwt_vc(
+        state.engine.as_ref(),
+        &assertion_key_id,
+        &issuer,
+        &offer,
+        &proof_claims.cnf_jwk,
+        now,
+    )
+    .await
+    .map_err(|err| OAuthError::Internal(Box::new(err)))?;
 
     // Same-tx mark_issued + access-token deletion. A panic between
     // the two leaves either both or neither — there is no path that
@@ -342,23 +362,27 @@ fn invalid_proof_structure() -> OAuthError {
 /// Real selective disclosure lands in a follow-up slice once a
 /// per-credential-type policy on which claims are disclosable
 /// exists.
-fn build_sd_jwt_vc(
-    signer: &Arc<Signer>,
+///
+/// The JWS is signed with the issuer's Assertion key (P-256 / ES256)
+/// via [`AnySigningEngine::sign`]. ES256 in JWS hashes the signing
+/// input with SHA-256 and signs the digest; both DevSigningEngine
+/// and VaultSigningEngine expect the 32-byte prehash, so we compute
+/// it here.
+async fn build_sd_jwt_vc(
+    engine: &AnySigningEngine,
+    assertion_key_id: &KeyPairId,
     issuer: &crate::domain::Issuer,
     offer: &crate::domain::CredentialOffer,
     cnf_jwk: &Value,
     now: chrono::DateTime<Utc>,
-) -> Result<String, serde_json::Error> {
-    // Header: typ marks this as an SD-JWT VC; alg matches the
-    // ephemeral fixture key (Ed25519 → EdDSA). kid identifies the
-    // verification key — at v0.1.x it's a fixed suffix on the
-    // issuer's DID, since the published DID document does not yet
-    // advertise the fixture key. Real keystore integration replaces
-    // both alg-source and kid with the actual signing-key entry.
+) -> Result<String, BuildError> {
+    // `kid` matches the verification-method id the create_issuer
+    // worker writes into the published DID document
+    // (`{did}#assertion-key-01` — see `swiyu_core::diddoc::DIDDoc::new_genesis`).
     let header = json!({
-        "alg": "EdDSA",
+        "alg": "ES256",
         "typ": "vc+sd-jwt",
-        "kid": format!("{}#fixture-ephemeral", issuer.did),
+        "kid": format!("{}#assertion-key-01", issuer.did),
     });
 
     let mut payload = Map::new();
@@ -379,12 +403,21 @@ fn build_sd_jwt_vc(
     let header_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
     let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload)?);
     let signing_input = format!("{header_b64}.{payload_b64}");
-    let signature = signer.sign_bytes(signing_input.as_bytes());
-    let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
+    let digest = Sha256::digest(signing_input.as_bytes());
+    let signature = engine.sign(assertion_key_id, &digest).await?;
+    let signature_b64 = URL_SAFE_NO_PAD.encode(&signature.bytes);
 
     // Trailing `~` separator with zero disclosures — minimum
     // spec-conformant SD-JWT VC.
     Ok(format!("{header_b64}.{payload_b64}.{signature_b64}~"))
+}
+
+#[derive(Debug, Error)]
+enum BuildError {
+    #[error("JSON serialisation: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("signing engine: {0}")]
+    Engine(#[from] SigningEngineError),
 }
 
 fn map_lookup(err: persistence::PersistenceError) -> OAuthError {
