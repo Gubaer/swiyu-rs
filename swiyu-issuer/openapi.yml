@@ -908,7 +908,8 @@ components:
             not yet started its first step (state `pending` before
             the worker picks it up). For `create_issuer`, observed
             values are `allocate_did`, `generate_keys`,
-            `build_initial_log`, `publish_log`, and `persist_issuer`.
+            `build_initial_log`, `publish_log`, `persist_issuer`,
+            `create_status_list_entry`, and `provision_status_list`.
             For `deactivate_issuer`, observed values are
             `build_deactivation_log`, `publish_log`, and
             `mark_deactivated`. For `rotate_keys`, observed values
