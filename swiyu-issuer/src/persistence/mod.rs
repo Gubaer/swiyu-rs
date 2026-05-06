@@ -6,6 +6,7 @@ pub mod issuers;
 pub mod oidc;
 pub mod operation_tasks;
 mod pool;
+pub mod status_lists;
 pub mod tenants;
 
 pub use errors::PersistenceError;
