@@ -10,3 +10,6 @@ pub mod common;
 
 #[cfg(feature = "identifier")]
 pub mod identifier;
+
+#[cfg(feature = "status")]
+pub mod status;
