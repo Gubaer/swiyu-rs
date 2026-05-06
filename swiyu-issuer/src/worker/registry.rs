@@ -10,6 +10,7 @@
 //! than `&dyn` because `impl Future` is not object-safe.
 
 use std::future::Future;
+use std::sync::Arc;
 
 use swiyu_core::did::DID;
 use swiyu_core::didlog::{DIDLog, DIDLogEntry};
@@ -103,5 +104,34 @@ impl RegistryFacade for IdentifierRegistryClient {
             .map(DIDLog::into_entries)
             .map_err(|e| RegistryError::Decode(format!("DIDLog parse: {e}")))?;
         Ok(FetchedLog { raw, entries })
+    }
+}
+
+/// Lets tests share a `RegistryFacade` impl between the worker
+/// (which takes ownership) and the test body (which inspects mock
+/// invocations after the run). All methods auto-deref through the
+/// `Arc` to the inner value.
+impl<T: RegistryFacade + ?Sized> RegistryFacade for Arc<T> {
+    fn allocate_did(
+        &self,
+        partner_id: &str,
+    ) -> impl Future<Output = Result<Allocation, RegistryError>> + Send {
+        T::allocate_did(self, partner_id)
+    }
+
+    fn publish_log_entry(
+        &self,
+        partner_id: &str,
+        identifier: &str,
+        entry: &str,
+    ) -> impl Future<Output = Result<(), RegistryError>> + Send {
+        T::publish_log_entry(self, partner_id, identifier, entry)
+    }
+
+    fn fetch_log(
+        &self,
+        did: &DID,
+    ) -> impl Future<Output = Result<FetchedLog, RegistryError>> + Send {
+        T::fetch_log(self, did)
     }
 }
