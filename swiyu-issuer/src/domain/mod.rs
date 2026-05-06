@@ -30,7 +30,5 @@ pub use signing_engine::{
     KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine, SigningEngineError,
     VaultSigningEngine, VaultSigningEngineConfig, build_from_env as build_signing_engine_from_env,
 };
-pub use status_list::{
-    BITSTRING_BYTES, LIST_CAPACITY, STATUS_SIZE_BITS, StatusList, StatusListIndex, StatusValue,
-};
+pub use status_list::{BITSTRING_BYTES, StatusList, StatusListIndex, StatusValue};
 pub use tenant::Tenant;

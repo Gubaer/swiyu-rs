@@ -1,10 +1,10 @@
 use sqlx::Row;
 use sqlx::postgres::PgConnection;
-
-use crate::domain::{
-    BITSTRING_BYTES, IssuerId, LIST_CAPACITY, StatusListId, StatusListIndex, StatusValue,
-    status_list::encoding,
+use swiyu_core::statuslist::{
+    SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY, StatusList as CoreStatusList,
 };
+
+use crate::domain::{BITSTRING_BYTES, IssuerId, StatusListId, StatusListIndex, StatusValue};
 
 use super::PersistenceError;
 use super::helpers::integrity_from;
@@ -116,7 +116,7 @@ pub async fn allocate_index(
         "#,
     )
     .bind(list_id.bare())
-    .bind(LIST_CAPACITY as i32)
+    .bind(SWIYU_STATUS_LIST_CAPACITY as i32)
     .fetch_optional(&mut *conn)
     .await?;
 
@@ -165,7 +165,7 @@ pub async fn write_bit(
     let Some(row) = row else {
         return Err(PersistenceError::NotFound);
     };
-    let mut bitstring: Vec<u8> = row.try_get("bitstring")?;
+    let bitstring: Vec<u8> = row.try_get("bitstring")?;
     if bitstring.len() != BITSTRING_BYTES {
         return Err(PersistenceError::DataIntegrity {
             details: format!(
@@ -175,7 +175,13 @@ pub async fn write_bit(
         });
     }
 
-    encoding::write_status(&mut bitstring, index, value);
+    let mut list = CoreStatusList::from_raw(SWIYU_STATUS_LIST_BITS, bitstring)
+        .expect("SWIYU_STATUS_LIST_BITS is in core's accepted range");
+    list.set_at(u64::from(index.value()), value)
+        .map_err(|err| PersistenceError::DataIntegrity {
+            details: format!("status_lists row {list_id}: {err}"),
+        })?;
+    let bitstring = list.as_bytes();
 
     sqlx::query(
         r#"
@@ -185,7 +191,7 @@ pub async fn write_bit(
         WHERE id = $2
         "#,
     )
-    .bind(&bitstring)
+    .bind(bitstring)
     .bind(list_id.bare())
     .execute(&mut *conn)
     .await?;

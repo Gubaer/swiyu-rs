@@ -13,12 +13,25 @@
 //! `CREATEDB` privilege.
 
 use sqlx::PgPool;
+use swiyu_core::statuslist::{
+    SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY, StatusList as CoreStatusList,
+};
 
 use swiyu_issuer::domain::{
-    BITSTRING_BYTES, IssuerId, LIST_CAPACITY, StatusListId, StatusListIndex, StatusValue, TenantId,
-    status_list::encoding,
+    BITSTRING_BYTES, IssuerId, StatusListId, StatusListIndex, StatusValue, TenantId,
 };
 use swiyu_issuer::persistence::status_lists;
+
+/// Decodes the slot at `idx` from a raw bitstring read out of the
+/// `status_lists` table. Mirror of `persistence::status_lists::write_bit`'s
+/// in-place core call; used by tests that round-trip `write_bit` against
+/// the database.
+fn read_slot(bitstring: &[u8], idx: StatusListIndex) -> StatusValue {
+    CoreStatusList::from_raw(SWIYU_STATUS_LIST_BITS, bitstring.to_vec())
+        .unwrap()
+        .value_at(u64::from(idx.value()))
+        .unwrap()
+}
 
 async fn insert_tenant(pool: &PgPool, tenant_id: &TenantId) {
     sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
@@ -120,7 +133,7 @@ async fn allocated_count_at_capacity_is_allowed(pool: PgPool) {
         &list_id,
         issuer_id,
         vec![0u8; BITSTRING_BYTES],
-        LIST_CAPACITY as i32,
+        SWIYU_STATUS_LIST_CAPACITY as i32,
     )
     .await
     .unwrap();
@@ -139,7 +152,7 @@ async fn allocated_count_above_capacity_is_rejected(pool: PgPool) {
         &list_id,
         issuer_id,
         vec![0u8; BITSTRING_BYTES],
-        LIST_CAPACITY as i32 + 1,
+        SWIYU_STATUS_LIST_CAPACITY as i32 + 1,
     )
     .await;
     assert!(
@@ -370,7 +383,7 @@ async fn allocate_index_returns_none_at_capacity(pool: PgPool) {
         &list_id,
         issuer_id.bare(),
         vec![0u8; BITSTRING_BYTES],
-        LIST_CAPACITY as i32,
+        SWIYU_STATUS_LIST_CAPACITY as i32,
     )
     .await
     .unwrap();
@@ -386,7 +399,7 @@ async fn allocate_index_returns_none_at_capacity(pool: PgPool) {
     );
     assert_eq!(
         fetch_allocated_count(&pool, &list_id).await,
-        LIST_CAPACITY as i32
+        SWIYU_STATUS_LIST_CAPACITY as i32
     );
     assert_eq!(
         fetch_committed_version(&pool, &list_id).await,
@@ -461,14 +474,14 @@ async fn write_bit_flips_target_slot(pool: PgPool) {
 
     let bitstring = fetch_bitstring(&pool, &list_id).await;
     assert_eq!(
-        encoding::read_status(&bitstring, target).unwrap(),
+        read_slot(&bitstring, target),
         StatusValue::Revoked
     );
     // Neighbouring slots stay zero (Valid).
     for other in [0u32, 1, 2, 3, 4, 5, 6, 8, 9] {
         let idx = StatusListIndex::try_from(other).unwrap();
         assert_eq!(
-            encoding::read_status(&bitstring, idx).unwrap(),
+            read_slot(&bitstring, idx),
             StatusValue::Valid
         );
     }
@@ -492,7 +505,7 @@ async fn write_bit_round_trips_each_value(pool: PgPool) {
             .await
             .unwrap();
         let bitstring = fetch_bitstring(&pool, &list_id).await;
-        assert_eq!(encoding::read_status(&bitstring, target).unwrap(), value);
+        assert_eq!(read_slot(&bitstring, target), value);
     }
 }
 

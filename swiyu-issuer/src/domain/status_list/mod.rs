@@ -1,68 +1,24 @@
 use chrono::{DateTime, Utc};
+use swiyu_core::statuslist::{SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY};
 
 use super::DomainError;
 use super::ids::{IssuerId, StatusListId};
 
-pub mod encoding;
-
-/// Bits per credential in the BitstringStatusList encoding.
-///
-/// `2` accommodates the three values [`StatusValue::Valid`],
-/// [`StatusValue::Suspended`], [`StatusValue::Revoked`] in a single
-/// list. See `aspect-credential-management.md` (Status-list
-/// integration / Bit encoding) and
-/// `impl-credential-management.md` (Domain types).
-pub const STATUS_SIZE_BITS: u8 = 2;
-
-/// Maximum number of credentials a single status list can carry.
-///
-/// `131_072` is the standard BitstringStatusList capacity. When this
-/// is exhausted, the issuance path provisions a fresh status list and
-/// re-points `issuers.current_status_list_id`.
-pub const LIST_CAPACITY: u32 = 131_072;
+pub use swiyu_core::statuslist::StatusValue;
 
 /// Length in bytes of the raw bitstring backing one status list.
 ///
-/// `LIST_CAPACITY * STATUS_SIZE_BITS / 8` = `32_768`. The persistence
-/// layer enforces this length via a CHECK constraint on the
-/// `status_lists.bitstring` column.
-pub const BITSTRING_BYTES: usize = (LIST_CAPACITY as usize) * (STATUS_SIZE_BITS as usize) / 8;
-
-/// Per-credential value stored in a BitstringStatusList entry.
-///
-/// The discriminants are the wire-format bit values:
-/// `0` = valid, `1` = suspended, `2` = revoked. Value `3` is unused
-/// and surfaced as [`DomainError::InvalidInput`] from the encoding
-/// helpers if encountered on read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum StatusValue {
-    Valid = 0,
-    Suspended = 1,
-    Revoked = 2,
-}
-
-impl TryFrom<u8> for StatusValue {
-    type Error = DomainError;
-
-    fn try_from(raw: u8) -> Result<Self, Self::Error> {
-        match raw {
-            0 => Ok(Self::Valid),
-            1 => Ok(Self::Suspended),
-            2 => Ok(Self::Revoked),
-            _ => Err(DomainError::InvalidInput {
-                details: format!("unknown status value: {raw}"),
-            }),
-        }
-    }
-}
+/// Derived from the SWIYU profile in `swiyu-core` (`SWIYU_STATUS_LIST_CAPACITY *
+/// SWIYU_STATUS_LIST_BITS / 8` = `32_768`). The persistence layer enforces this
+/// length via a CHECK constraint on the `status_lists.bitstring` column.
+pub const BITSTRING_BYTES: usize =
+    (SWIYU_STATUS_LIST_CAPACITY as usize) * (SWIYU_STATUS_LIST_BITS as usize) / 8;
 
 /// Position of a credential within a status list, bounded by
-/// [`LIST_CAPACITY`].
+/// `SWIYU_STATUS_LIST_CAPACITY`.
 ///
-/// The constructor enforces the bound; the encoding helpers and
-/// persistence layer rely on the type-level guarantee that the value
-/// is within range.
+/// The constructor enforces the bound; the persistence layer relies on
+/// the type-level guarantee that the value is within range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StatusListIndex(u32);
 
@@ -76,10 +32,10 @@ impl TryFrom<u32> for StatusListIndex {
     type Error = DomainError;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        if value >= LIST_CAPACITY {
+        if u64::from(value) >= SWIYU_STATUS_LIST_CAPACITY {
             return Err(DomainError::InvalidInput {
                 details: format!(
-                    "status list index out of range: {value} (capacity = {LIST_CAPACITY})"
+                    "status list index out of range: {value} (capacity = {SWIYU_STATUS_LIST_CAPACITY})"
                 ),
             });
         }
@@ -93,7 +49,7 @@ impl std::fmt::Display for StatusListIndex {
     }
 }
 
-/// One BitstringStatusList instance owned by an issuer.
+/// One status list owned by an issuer.
 ///
 /// `committed_version` increments on every committed bit update
 /// (issuance or lifecycle op). `published_version` increments after a
@@ -111,7 +67,7 @@ pub struct StatusList {
 
     /// Number of indices already handed out by the issuance path.
     /// The next free index is `allocated_count`. Once it reaches
-    /// [`LIST_CAPACITY`] a fresh status list is provisioned.
+    /// `SWIYU_STATUS_LIST_CAPACITY` a fresh status list is provisioned.
     pub allocated_count: u32,
 
     pub committed_version: u64,
@@ -146,7 +102,7 @@ impl StatusList {
     }
 
     pub fn is_at_capacity(&self) -> bool {
-        self.allocated_count >= LIST_CAPACITY
+        u64::from(self.allocated_count) >= SWIYU_STATUS_LIST_CAPACITY
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -163,11 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn constants_are_self_consistent() {
-        assert_eq!(
-            BITSTRING_BYTES,
-            (LIST_CAPACITY as usize) * (STATUS_SIZE_BITS as usize) / 8
-        );
+    fn bitstring_bytes_matches_swiyu_profile() {
         assert_eq!(BITSTRING_BYTES, 32_768);
     }
 
@@ -185,9 +137,9 @@ mod tests {
     fn is_at_capacity_only_at_full() {
         let mut list = make_list();
         assert!(!list.is_at_capacity());
-        list.allocated_count = LIST_CAPACITY - 1;
+        list.allocated_count = (SWIYU_STATUS_LIST_CAPACITY - 1) as u32;
         assert!(!list.is_at_capacity());
-        list.allocated_count = LIST_CAPACITY;
+        list.allocated_count = SWIYU_STATUS_LIST_CAPACITY as u32;
         assert!(list.is_at_capacity());
     }
 
@@ -202,37 +154,17 @@ mod tests {
     }
 
     #[test]
-    fn status_value_try_from_round_trip() {
-        for value in [
-            StatusValue::Valid,
-            StatusValue::Suspended,
-            StatusValue::Revoked,
-        ] {
-            assert_eq!(StatusValue::try_from(value as u8).unwrap(), value);
-        }
-    }
-
-    #[test]
-    fn status_value_try_from_rejects_three() {
-        assert!(StatusValue::try_from(3u8).is_err());
-        assert!(StatusValue::try_from(255u8).is_err());
-    }
-
-    #[test]
     fn status_list_index_rejects_out_of_range() {
-        assert!(StatusListIndex::try_from(LIST_CAPACITY).is_err());
-        assert!(StatusListIndex::try_from(LIST_CAPACITY + 1).is_err());
+        let cap = SWIYU_STATUS_LIST_CAPACITY as u32;
+        assert!(StatusListIndex::try_from(cap).is_err());
+        assert!(StatusListIndex::try_from(cap + 1).is_err());
         assert!(StatusListIndex::try_from(u32::MAX).is_err());
     }
 
     #[test]
     fn status_list_index_accepts_in_range() {
+        let cap = SWIYU_STATUS_LIST_CAPACITY as u32;
         assert_eq!(StatusListIndex::try_from(0u32).unwrap().value(), 0);
-        assert_eq!(
-            StatusListIndex::try_from(LIST_CAPACITY - 1)
-                .unwrap()
-                .value(),
-            LIST_CAPACITY - 1
-        );
+        assert_eq!(StatusListIndex::try_from(cap - 1).unwrap().value(), cap - 1);
     }
 }

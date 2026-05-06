@@ -15,11 +15,12 @@ use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
+use swiyu_core::statuslist::{SWIYU_STATUS_LIST_BITS, StatusList as CoreStatusList};
 use swiyu_issuer::api_management::{AppState, Config, router};
 use swiyu_issuer::domain::{
     ApiToken, ApiTokenSecret, BITSTRING_BYTES, CredentialOffer, INTEGRITY_HASH_LEN,
     IssuedCredential, IssuedCredentialState, Issuer, IssuerId, IssuerState, PreAuthCode,
-    StatusListId, StatusListIndex, StatusValue, TenantId, status_list::encoding,
+    StatusListId, StatusListIndex, StatusValue, TenantId,
 };
 use swiyu_issuer::persistence;
 
@@ -181,7 +182,10 @@ async fn fetch_status_bit(pool: &PgPool, credential: &IssuedCredential) -> Statu
         .await
         .unwrap();
     assert_eq!(bitstring.len(), BITSTRING_BYTES);
-    encoding::read_status(&bitstring, credential.status_list_index).unwrap()
+    CoreStatusList::from_raw(SWIYU_STATUS_LIST_BITS, bitstring)
+        .unwrap()
+        .value_at(u64::from(credential.status_list_index.value()))
+        .unwrap()
 }
 
 async fn fetch_committed_version(pool: &PgPool, list_id: &StatusListId) -> i64 {
