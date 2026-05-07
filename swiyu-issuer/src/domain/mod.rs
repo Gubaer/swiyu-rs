@@ -1,7 +1,6 @@
 pub mod access_token;
 pub mod api_token;
 pub mod credential_offer;
-mod errors;
 pub mod ids;
 pub mod issued_credential;
 pub mod issuer;
@@ -16,7 +15,14 @@ pub mod vct;
 pub use access_token::{AccessToken, AccessTokenHash, AccessTokenSecret};
 pub use api_token::{ApiToken, ApiTokenHash, ApiTokenSecret};
 pub use credential_offer::{CredentialOffer, CredentialOfferState};
-pub use errors::DomainError;
+
+#[derive(Debug, thiserror::Error)]
+pub enum DomainError {
+    #[error("invalid input: {details}")]
+    InvalidInput { details: String },
+    #[error("state transition not allowed")]
+    StateTransitionNotAllowed,
+}
 pub use ids::{
     ApiTokenId, CredentialOfferId, IssuedCredentialId, IssuerId, StatusListId, TaskId, TenantId,
 };
