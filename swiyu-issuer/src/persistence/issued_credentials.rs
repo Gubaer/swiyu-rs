@@ -81,14 +81,11 @@ pub struct ListFilters {
 }
 
 /// Inputs to a paginated list query against `issued_credentials`.
-///
-/// `cursor` carries the `(issued_at, id)` of the last item of the
-/// previous page; `None` requests the first page. Ordering is
-/// `(issued_at DESC, id DESC)` so newest credentials come first,
-/// matching the `issued_credentials_tenant_issuer` index.
 #[derive(Debug)]
 pub struct ListPageQuery {
     pub filters: ListFilters,
+    /// `(issued_at, id)` of the last item of the previous page; `None`
+    /// requests the first page. Ordering is `(issued_at DESC, id DESC)`.
     pub cursor: Option<(DateTime<Utc>, String)>,
     pub limit: u32,
 }
