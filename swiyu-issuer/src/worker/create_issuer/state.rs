@@ -30,46 +30,38 @@ pub struct CreateIssuerInput {
 }
 
 /// Accumulated step outputs for a `CreateIssuer` task.
-///
-/// Every field is optional. The worker reads this on resume and skips
-/// the step that produced the field if the field is already populated
-/// (`assigned_did_url` after `allocate_did`, `key_ids` after
-/// `generate_keys`, `log_published` after `publish_log`,
-/// `status_list_registry_entry_id` after `create_status_list_entry`).
-/// `build_initial_log`, `persist_issuer`, and `provision_status_list`
-/// are idempotent without state-data records: the first is
-/// deterministic, the second checks the `issuers` row directly, the
-/// third reads back `issuers.current_status_list_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CreateIssuerStateData {
     /// Registry-published DIDLog URL (e.g.
     /// `https://identifier-reg.swiyu.admin.ch/api/v1/did/<UUID>/did.jsonl`).
-    /// The host/path component of the DID is derived from this URL;
-    /// the final DID with SCID is computed during `build_initial_log`
-    /// and not stored separately, since it is deterministic from this
-    /// URL plus the key triple.
+    /// Set by `allocate_did`; when present that step is skipped on resume.
+    /// The host/path component of the DID is derived from this URL; the
+    /// final DID with SCID is computed during `build_initial_log` and not
+    /// stored separately, since it is deterministic from this URL plus the
+    /// key triple.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assigned_did_url: Option<String>,
 
     /// Registry-assigned UUID extracted from the allocation URL.
-    /// Required by `publish_log_entry`, which addresses the entry by
+    /// Set by `allocate_did` alongside `assigned_did_url`. Required by
+    /// `publish_log_entry`, which addresses the entry by
     /// (`partner_id`, `identifier`) rather than by DID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assigned_identifier: Option<String>,
 
+    /// Set by `generate_keys`; when present that step is skipped on resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_ids: Option<KeyTriple>,
 
-    /// Set to `true` once `publish_log` has succeeded. The registry's
-    /// PUT endpoint returns no body, so the worker records a boolean
-    /// rather than a server-supplied identifier.
+    /// Set to `true` once `publish_log` has succeeded; when `true` that step
+    /// is skipped on resume. The registry's PUT endpoint returns no body, so
+    /// the worker records a boolean rather than a server-supplied identifier.
     #[serde(default, skip_serializing_if = "is_false")]
     pub log_published: bool,
 
     /// Registry-side status-list entry UUID returned by
-    /// `create_status_list_entry`. Idempotency marker for that step on
-    /// retry: when present the registry call is skipped and only the
-    /// DB-side provisioning runs.
+    /// `create_status_list_entry`. When present the registry call is skipped
+    /// on resume and only the DB-side provisioning runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_list_registry_entry_id: Option<String>,
 
@@ -81,13 +73,14 @@ pub struct CreateIssuerStateData {
     pub status_list_registry_url: Option<String>,
 }
 
-/// The three `KeyPairId`s an issuer holds: one Ed25519 (`Authorized`)
-/// for DID-log signing, two ECDSA P-256 (`Authentication`,
-/// `Assertion`) embedded in the DID document.
+/// The three `KeyPairId`s an issuer holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyTriple {
+    /// Ed25519 key used for DID-log signing.
     pub authorized: KeyPairId,
+    /// ECDSA P-256 key embedded in the DID document as the authentication verification method.
     pub authentication: KeyPairId,
+    /// ECDSA P-256 key embedded in the DID document as the assertion verification method.
     pub assertion: KeyPairId,
 }
 
