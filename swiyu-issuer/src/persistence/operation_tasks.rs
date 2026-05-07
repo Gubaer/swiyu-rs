@@ -329,8 +329,8 @@ fn row_to_task(row: &PgRow) -> Result<OperationTask, PersistenceError> {
     Ok(OperationTask {
         id: TaskId::from_bare(id).map_err(integrity_from)?,
         tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
-        task_type: TaskType::parse(&task_type).map_err(integrity_from)?,
-        state: TaskState::parse(&state).map_err(integrity_from)?,
+        task_type: TaskType::try_from(task_type.as_str()).map_err(integrity_from)?,
+        state: TaskState::try_from(state.as_str()).map_err(integrity_from)?,
         step,
         attempts: attempts.max(0) as u32,
         next_attempt_at,

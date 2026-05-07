@@ -27,7 +27,15 @@ impl TaskState {
         }
     }
 
-    pub fn parse(s: &str) -> Result<Self, DomainError> {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed)
+    }
+}
+
+impl TryFrom<&str> for TaskState {
+    type Error = DomainError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "pending" => Ok(Self::Pending),
             "in_progress" => Ok(Self::InProgress),
@@ -37,10 +45,6 @@ impl TaskState {
                 details: format!("unknown task state: {s}"),
             }),
         }
-    }
-
-    pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed)
     }
 }
 
@@ -60,8 +64,12 @@ impl TaskType {
             Self::RotateKeys => "rotate_keys",
         }
     }
+}
 
-    pub fn parse(s: &str) -> Result<Self, DomainError> {
+impl TryFrom<&str> for TaskType {
+    type Error = DomainError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "create_issuer" => Ok(Self::CreateIssuer),
             "deactivate_issuer" => Ok(Self::DeactivateIssuer),
@@ -167,13 +175,13 @@ mod tests {
             TaskState::Completed,
             TaskState::Failed,
         ] {
-            assert_eq!(TaskState::parse(state.as_str()).unwrap(), state);
+            assert_eq!(TaskState::try_from(state.as_str()).unwrap(), state);
         }
     }
 
     #[test]
     fn task_state_parse_rejects_unknown() {
-        assert!(TaskState::parse("running").is_err());
+        assert!(TaskState::try_from("running").is_err());
     }
 
     #[test]
@@ -191,13 +199,13 @@ mod tests {
             TaskType::DeactivateIssuer,
             TaskType::RotateKeys,
         ] {
-            assert_eq!(TaskType::parse(task_type.as_str()).unwrap(), task_type);
+            assert_eq!(TaskType::try_from(task_type.as_str()).unwrap(), task_type);
         }
     }
 
     #[test]
     fn task_type_parse_rejects_unknown() {
-        assert!(TaskType::parse("compress_log").is_err());
+        assert!(TaskType::try_from("compress_log").is_err());
     }
 
     #[test]
