@@ -30,22 +30,27 @@ The JSON Schema (or other schema document) that validates the claims of a creden
 
 ## Domain entity model
 
-We collapse `CredentialType` and `CredentialConfiguration` into a single domain entity called **`CredentialType`**. At v0.1.0 the relationship between the two standards' concepts is 1:1 in our deployment shape (one configuration per type per issuer), so keeping them as two entities would only add boilerplate. The unified `CredentialType` carries:
+We collapse `CredentialType`, `CredentialConfiguration`, and `CredentialSchema` into a single domain entity called **`CredentialType`**. At v0.1.0:
 
-- the type identity (`vct`, claim schema reference);
-- the OID4VCI configuration (format, display, signing algorithm, binding methods, accepted proof types).
+- The relationship between the W3C `CredentialType` and the OID4VCI `CredentialConfiguration` is 1:1 in our deployment shape (one configuration per type per issuer), so keeping them as two entities would only add boilerplate.
+- The relationship between `CredentialType` and `CredentialSchema` is also 1:1 within a tenant. The tenant ownership model (see [`aspect-credential-type.md`](aspect-credential-type.md)) rules out cross-tenant sharing of either, so a separate schema entity earns no reuse benefit.
 
-`CredentialSchema` remains a **separate entity**: it can be shared or standardised independently, and it represents a specific concern (claim validation) distinct from type identity and protocol configuration.
+The unified `CredentialType` carries:
 
-A separate `CredentialConfiguration` entity may be split out later only if a real reason appears — for example, the same type exposed by the same issuer in two different formats (`vc+sd-jwt` plus `mso_mdoc`).
+- the type identity (`vct`);
+- the OID4VCI configuration (format, display, signing algorithm, binding methods, accepted proof types);
+- the JSON Schema validating the credential's claims, stored as a document blob on the `CredentialType` row.
+
+A separate `CredentialConfiguration` entity may be split out later only if a real reason appears — for example, the same type exposed by the same issuer in two different formats (`vc+sd-jwt` plus `mso_mdoc`). A separate `CredentialSchema` entity may be revisited if cross-tenant schema sharing or schema versioning ever becomes a real requirement; neither is at v0.1.0.
 
 ## Cardinalities
 
 - **Tenant → Issuer**: 1:{0..n}; see [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md).
-- **Issuer → CredentialType**: 1:n. Each `CredentialType` belongs to exactly one issuer.
-- **CredentialType → CredentialSchema**: 1:1 at any given time. Schema versioning is a future concern, not modelled in v0.1.0.
+- **Tenant → CredentialType**: 1:n. Each `CredentialType` belongs to exactly one tenant. Issuer ↔ `CredentialType` is an n:m assignment within a tenant — see [`aspect-credential-type.md`](aspect-credential-type.md).
 - **CredentialType → CredentialOffer**: 1:n.
 - **CredentialOffer → IssuedCredential**: 1:{0..1}.
+
+The JSON Schema validating a credential's claims is a property of `CredentialType` (1:1 within the row), not a separate entity in the cardinality graph. Schema versioning is a future concern, not modelled in v0.1.0.
 
 ### `vct` sharing across issuers
 
@@ -59,8 +64,8 @@ The redundancy is the right tradeoff for our multi-tenant model.
 
 ## Naming rules
 
-- Use **`CredentialType`** as the primary domain entity. It carries both the type identity (`vct`, schema reference) and the OID4VCI configuration (format, display, signing algorithm, binding methods).
-- Use **`CredentialSchema`** for the JSON Schema validation document. It is a separate entity from `CredentialType`.
+- Use **`CredentialType`** as the primary domain entity. It carries the type identity (`vct`), the OID4VCI configuration (format, display, signing algorithm, binding methods), and the JSON Schema validating the credential's claims.
+- Use **`CredentialSchema`** as a *concept name* for the JSON Schema validation document. It is **not** a separate domain entity; it is a property of `CredentialType` stored as a document blob.
 - *"CredentialConfiguration"* is **not a separate entity** in our domain. Keep the term for protocol-level discussion (when referencing OID4VCI's `credential_configurations_supported`), but expect to find its data on `CredentialType`.
 - Avoid the bare term *"VC schema"* — in the standards it specifically means the validation document, narrower than how the phrase is often used colloquially.
 - Avoid `VcType` / `VCType` in Rust type names. `CredentialType` reads better and matches CLAUDE.md's preference for full names.
@@ -70,13 +75,12 @@ The redundancy is the right tradeoff for our multi-tenant model.
 
 The domain entities live in their own modules when they are added:
 
-- `domain::credential_type` — type identity, schema reference, and OID4VCI configuration.
-- `domain::credential_schema` — JSON Schema document.
+- `domain::credential_type` — type identity, OID4VCI configuration, and the JSON Schema validating the credential's claims.
 
-Relationship: a `CredentialOffer` references a `CredentialType`. An issued credential embeds the `vct` (from its `CredentialType`) and optionally the schema reference per W3C semantics.
+Relationship: a `CredentialOffer` references a `CredentialType`. An issued credential embeds the `vct` (from its `CredentialType`) and optionally a `credentialSchema` reference per W3C semantics; that reference resolves to a route on the issuer that serves the schema document held on the `CredentialType` row.
 
 ## Open
 
-- ~~Whether `CredentialSchema` is stored inline as `JSONB` on the `CredentialType` row, or referenced by URL only (with a cached copy for stability and offline validation).~~ Resolved in [`impl_credential_schema.md`](impl_credential_schema.md): a separate `credential_schemas` table that *is* the cache, with `source_url` recording the canonical fetch origin. v0.1.0 ships one bundled schema instead of the table.
+- ~~Whether `CredentialSchema` is stored inline as `JSONB` on the `CredentialType` row, or referenced by URL only (with a cached copy for stability and offline validation).~~ Resolved: stored inline as a `JSONB` document blob on the `CredentialType` row, with an optional `claim_schema_source_url` column recording the canonical fetch origin where one exists. The earlier `credential_schemas`-table direction was reversed once the tenant ownership model made cross-tenant schema sharing impossible, leaving a separate table with no reuse to amortise. See [`aspect-credential-type.md`](aspect-credential-type.md) and [`impl_credential_schema.md`](impl_credential_schema.md). v0.1.0 still ships one bundled schema in-process, with the DB column landing alongside the future `credential_types` table.
 - When (if ever) to re-introduce `CredentialConfiguration` as a separate entity. Trigger: the same type exposed by the same issuer in two different formats, or other 1:n divergence between type and configuration.
 - Schema versioning model. Trigger: a deployed standard schema evolves and the issuer needs to validate already-issued credentials against the schema in force at issuance time.

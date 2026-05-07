@@ -10,7 +10,7 @@ Two terms from [`aspect-domain.md`](aspect-domain.md) the rest of this document 
 
 **`vct`** — the SD-JWT VC type identifier. A URI in the credential's `vct` claim. Identifies *what kind* of credential is being issued.
 
-**`CredentialSchema`** — the JSON Schema document that validates the *claims* of a credential of a given `vct`. Separate entity from `CredentialType`; relationship is 1:1 at any given time.
+**`CredentialSchema`** — the JSON Schema document that validates the *claims* of a credential of a given `vct`. **Not** a separate domain entity; stored as a document blob (`JSONB` column) on the `CredentialType` row. The relationship is 1:1 within a row.
 
 ## Long-term direction
 
@@ -30,38 +30,31 @@ Even when the source of truth is external, the issuer owns a copy. Reasons:
 - We need a stable, byte-exact reference for what was in force at issuance time once schema versioning becomes real.
 - Compiling a JSON Schema validator is not free; doing it at load time, not per request, requires a stable in-process copy.
 
-The owned copy lives in the DB. A `credential_schemas` table — separate from `credential_types`, per [`aspect-domain.md`](aspect-domain.md)'s naming rule — with columns roughly:
+The owned copy lives on the `credential_types` row as a `JSONB` `claim_schema` column, with an optional `claim_schema_source_url` column recording where the canonical copy was fetched from. `claim_schema_source_url` is `NULL` for issuer-private schemas with no external source of truth. A `claim_schema_fetched_at` timestamp accompanies the URL when one is set.
 
-```
-credential_schemas (
-    id            text primary key,
-    vct           text not null,
-    version       text not null,
-    document      jsonb not null,
-    source_url    text,
-    fetched_at    timestamptz,
-    created_at    timestamptz not null
-);
-```
+The earlier draft of this document proposed a separate `credential_schemas` table justified by cross-issuer schema sharing for federal standards — many communes referencing one row for a shared `ProofOfResidency` schema. That justification was reversed once the tenant ownership model made it explicit that schemas don't cross the tenant boundary any more than `CredentialType` rows do. See [`aspect-credential-type.md`](aspect-credential-type.md) for the full reasoning.
 
-`credential_types` references it by FK. The open question in [`aspect-domain.md`](aspect-domain.md) ("inline `JSONB` on `CredentialType` vs. URL-only with cache") collapses to **a separate table that *is* the cache**, with `source_url` recording where the canonical copy was fetched from. `source_url` is `NULL` for issuer-private schemas with no external source of truth.
+Why a column on `credential_types` rather than a separate table:
 
-Why a separate table rather than `JSONB` inline on `credential_types`:
+- No cross-tenant sharing of either `CredentialType` or its schema, so a separate row earns no reuse to amortise.
+- Schemas are small (single KB to tens of KB). One per `CredentialType` row at the scale described in [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md) (~500 issuers, similar order of types) is bounded and cheap.
+- One fewer entity, no FK to maintain, no separate cache abstraction. The `JSONB` column *is* the cache.
+- Schema versioning, when it eventually arrives, becomes either an embedded `version` field in the schema document or a `claim_schema_version` column on `credential_types`, rather than a separate versioned-row dance.
 
-- Many issuers can share a schema row (federal standards). With inline `JSONB` every commune carries a duplicate of the same `ProofOfResidency` schema.
-- Schemas grow (single KB to tens of KB); they do not belong on a frequently-read configuration row.
-- The separate table is the natural seam for `version`, `fetched_at`, and a future foreign-data table for SD-JWT VC Type Metadata.
+Where the column shape grows additional siblings (e.g. SD-JWT VC Type Metadata, which is *not* the JSON Schema validating claims), that metadata sits alongside `claim_schema` as another `JSONB` column on the same row, not in a separate table.
 
 ### Compiled validator
 
-A compiled `jsonschema::Validator` per schema, kept in `AppState` behind an `Arc<HashMap<Vct, Arc<Validator>>>`. Built at startup from the DB; rebuilt when a schema row changes. The handler does `validator.validate(claims)`. No parsing or compilation in the request path.
+A compiled `jsonschema::Validator` per credential type, kept in `AppState` behind an `Arc<HashMap<CredentialTypeId, Arc<Validator>>>`. Built at startup from the `claim_schema` column on `credential_types`; rebuilt when a row's schema column changes. The handler resolves the credential type from the offer's `(tenant_id, credential_type_id)` pair, then does `validator.validate(claims)`. No parsing or compilation in the request path.
+
+Keying by `CredentialTypeId` rather than by `vct` matters under the tenant ownership model: two tenants can carry rows with the same `vct` value but different schema documents, and the validator cache must distinguish them.
 
 ### Refresh model (out of scope for v0.1.0)
 
 For the eventual production shape:
 
-- A background task — or an admin-API endpoint — fetches from `source_url`, compares to the stored document, writes a new version row.
-- Validators in `AppState` are rebuilt on schema-row change. Postgres `LISTEN`/`NOTIFY` is the natural trigger and is already on the menu in [`aspect-technology.md`](aspect-technology.md).
+- A background task — or an admin-API endpoint — fetches from `claim_schema_source_url`, compares to the stored document, writes the new document into the `claim_schema` column on the relevant `credential_types` row.
+- Validators in `AppState` are rebuilt on `credential_types` row change. Postgres `LISTEN`/`NOTIFY` is the natural trigger and is already on the menu in [`aspect-technology.md`](aspect-technology.md).
 - Validation always uses the *current* compiled validator. Once schema versioning is real, the issued-credential record stores the schema version it was issued under.
 
 ## v0.1.0 shape
@@ -162,7 +155,7 @@ Decided over `boon` on the strength of user base and active maintenance. JSON Sc
 
 ## What is deliberately not in v0.1.0
 
-- The `credential_schemas` table and the `credential_types` table. Both wait for the slice that introduces real type configuration.
+- The `credential_types` table (with its `claim_schema` `JSONB` column and optional `claim_schema_source_url`). Waits for the slice that introduces real type configuration.
 - Fetching from a canonical SWIYU registry URL. Bundled file is the stand-in.
 - Schema versioning. One file, one version, no `version` column anywhere yet.
 - SD-JWT VC Type Metadata as a first-class concept. The bundled schema validates *claims* only; protocol-level type metadata (display, claim selection, sd-jwt-specific knobs) is the `CredentialType` slice's problem.
@@ -175,4 +168,4 @@ Decided over `boon` on the strength of user base and active maintenance. JSON Sc
 - **URN namespace registration.** `communal` is not an IANA- registered URN NID. Strict RFC 8141 conformance would require either registration or an `urn:x-…` form (the latter is increasingly an anti-pattern). Lean: keep the unregistered NID through pre-production maturity; revisit before going public.
 - **Issuer authority for `commune_bfs`.** When the issuer is an e-government organisation rather than the commune itself, the verifier must trust that the issuer is authorised to assert residency for the commune named in `commune_bfs`. The trust framework for this delegation (issuer metadata, Trust Statement scope) is out of v0.1.0 scope but flagged here because the generic `vct` makes the question explicit.
 - **Filename convention vs. manifest.** `:` → `_` filename mapping is deterministic but ugly. Revisit when the bundled list grows past a handful, at which point a `schemas/index.json` mapping `vct` → filename is the natural step.
-- **DB representation when schemas move out of the bundle.** Whether `credential_schemas` is the only table or whether the wire document and Type Metadata get separate columns or rows. Triggered by the slice that introduces `credential_types`.
+- **DB representation when schemas move out of the bundle.** Whether the SD-JWT VC Type Metadata document (separate from the JSON Schema validating claims) sits alongside `claim_schema` as another `JSONB` column on `credential_types`, or earns its own row in some related table. Triggered by the slice that introduces `credential_types`.
