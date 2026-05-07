@@ -63,11 +63,11 @@ pub async fn find_by_pre_auth_code(
 /// code can't be re-fetched after issuance.
 ///
 /// Caller is responsible for loading the offer, running the domain
-/// state-machine guard (`CredentialOffer::try_issue`), and
+/// state-machine guard ([`CredentialOffer::try_issue`]), and
 /// supplying `issued_at`. The SQL `WHERE state = 'pending'` guard
 /// is defence in depth: a concurrent cancel that happens between
 /// the handler's load and write would leave 0 rows updated, which
-/// surfaces as `PersistenceError::NotFound`. Lives in the
+/// surfaces as [`PersistenceError::NotFound`]. Lives in the
 /// `persistence::oidc::credential_offers` namespace so the
 /// management binary cannot accidentally invoke it.
 pub async fn mark_issued(
