@@ -15,28 +15,17 @@ use crate::persistence;
 use crate::persistence::issued_credentials::{ListFilters, ListPageQuery};
 
 use super::AppState;
-use super::auth::{TenantContext, acquire_for_issuer, require_issuer_owned_by_tenant};
+use super::auth::{TenantContext, acquire_pool_for_issuer, require_issuer_owned_by_tenant};
 use super::cursor;
 use super::dto::{
     GetIssuedCredentialResponse, ListIssuedCredentialsQuery, ListIssuedCredentialsResponse,
 };
 use super::error::ApiError;
 
-/// Page size applied to `GET /api/v1/issuers/{issuer_id}/credentials`
-/// when the caller omits `limit`. Sized to fit a typical operator UI
-/// page without forcing a follow-up request.
-const DEFAULT_LIST_LIMIT: u32 = 25;
-
-/// Lower bound on `limit`. Zero would return an empty page with a
-/// `next_cursor` that never advances, so the smallest legal page is
-/// one row.
-const MIN_LIST_LIMIT: u32 = 1;
-
-/// Upper bound on `limit`. Caps per-request work against the database
-/// and the JSON response size; clients that need more rows must
-/// paginate.
-const MAX_LIST_LIMIT: u32 = 100;
-
+/// `GET /api/v1/issuers/{issuer_id}/credentials/{credential_id}`
+///
+/// Returns HTTP 404 for both unknown credentials and cross-issuer access
+/// (right tenant, wrong issuer) to prevent ownership probing.
 pub async fn get(
     State(state): State<AppState>,
     Path((issuer_id_str, credential_id_str)): Path<(String, String)>,
@@ -48,9 +37,9 @@ pub async fn get(
         credential_id = %credential_id_str,
         "issued credential fetch requested",
     );
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
     let credential_id = parse_credential_id(&credential_id_str)?;
-    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_pool_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
     let credential =
         persistence::issued_credentials::find(&mut conn, &tenant_context.tenant_id, &credential_id)
             .await?
@@ -64,6 +53,9 @@ pub async fn get(
     Ok(Json(credential_to_response(credential, Utc::now())))
 }
 
+/// `GET /api/v1/issuers/{issuer_id}/credentials`
+///
+/// Cursor-paginated list with optional `state` and `vct` filters.
 pub async fn list(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
@@ -79,8 +71,8 @@ pub async fn list(
         vct = ?query.vct,
         "issued credential list requested",
     );
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
-    let limit = resolve_list_limit(query.limit)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
+    let limit = super::resolve_list_limit(query.limit)?;
     let state_filter = query.state.as_deref().map(parse_state_filter).transpose()?;
     let decoded_cursor = query
         .cursor
@@ -88,7 +80,7 @@ pub async fn list(
         .map(|raw| cursor::decode(raw, |bare| IssuedCredentialId::from_bare(bare).map(|_| ())))
         .transpose()?;
 
-    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_pool_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
     let page = persistence::issued_credentials::list(
         &mut conn,
         &tenant_context.tenant_id,
@@ -121,6 +113,10 @@ pub async fn list(
     Ok(Json(ListIssuedCredentialsResponse { items, next_cursor }))
 }
 
+/// `POST /api/v1/issuers/{issuer_id}/credentials/{credential_id}/suspend`
+///
+/// Transitions the credential from `active` to `suspended`. Returns `409
+/// Conflict` if the credential is not currently `active`.
 pub async fn suspend(
     State(state): State<AppState>,
     Path((issuer_id_str, credential_id_str)): Path<(String, String)>,
@@ -132,7 +128,7 @@ pub async fn suspend(
         credential_id = %credential_id_str,
         "issued credential suspend requested",
     );
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
     let credential_id = parse_credential_id(&credential_id_str)?;
     let updated = run_lifecycle_op(
         &state,
@@ -147,6 +143,10 @@ pub async fn suspend(
     Ok(Json(credential_to_response(updated, Utc::now())))
 }
 
+/// `POST /api/v1/issuers/{issuer_id}/credentials/{credential_id}/unsuspend`
+///
+/// Transitions the credential from `suspended` back to `active`. Returns `409
+/// Conflict` if the credential is not currently `suspended`.
 pub async fn unsuspend(
     State(state): State<AppState>,
     Path((issuer_id_str, credential_id_str)): Path<(String, String)>,
@@ -158,7 +158,7 @@ pub async fn unsuspend(
         credential_id = %credential_id_str,
         "issued credential unsuspend requested",
     );
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
     let credential_id = parse_credential_id(&credential_id_str)?;
     let updated = run_lifecycle_op(
         &state,
@@ -173,6 +173,10 @@ pub async fn unsuspend(
     Ok(Json(credential_to_response(updated, Utc::now())))
 }
 
+/// `POST /api/v1/issuers/{issuer_id}/credentials/{credential_id}/revoke`
+///
+/// Permanently revokes the credential from `active` or `suspended`. Terminal —
+/// revocation cannot be undone. Returns `409 Conflict` if already `revoked`.
 pub async fn revoke(
     State(state): State<AppState>,
     Path((issuer_id_str, credential_id_str)): Path<(String, String)>,
@@ -184,7 +188,7 @@ pub async fn revoke(
         credential_id = %credential_id_str,
         "issued credential revoke requested",
     );
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
     let credential_id = parse_credential_id(&credential_id_str)?;
     let updated = run_lifecycle_op(
         &state,
@@ -280,28 +284,10 @@ fn parse_credential_id(raw: &str) -> Result<IssuedCredentialId, ApiError> {
     })
 }
 
-fn parse_issuer_id(raw: &str) -> Result<IssuerId, ApiError> {
-    IssuerId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })
-}
-
 fn parse_state_filter(raw: &str) -> Result<IssuedCredentialState, ApiError> {
     IssuedCredentialState::parse(raw).map_err(|err| ApiError::InvalidInput {
         details: format!("state query parameter: {err}"),
     })
-}
-
-fn resolve_list_limit(requested: Option<u32>) -> Result<u32, ApiError> {
-    let limit = requested.unwrap_or(DEFAULT_LIST_LIMIT);
-    if !(MIN_LIST_LIMIT..=MAX_LIST_LIMIT).contains(&limit) {
-        return Err(ApiError::InvalidInput {
-            details: format!(
-                "limit must be between {MIN_LIST_LIMIT} and {MAX_LIST_LIMIT}, got {limit}"
-            ),
-        });
-    }
-    Ok(limit)
 }
 
 fn credential_to_response(
@@ -337,34 +323,6 @@ mod tests {
     fn parse_credential_id_rejects_invalid_character() {
         let err = parse_credential_id("notValid0").unwrap_err();
         assert!(matches!(err, ApiError::InvalidInput { .. }));
-    }
-
-    #[test]
-    fn resolve_list_limit_uses_default_when_unset() {
-        assert_eq!(resolve_list_limit(None).unwrap(), DEFAULT_LIST_LIMIT);
-    }
-
-    #[test]
-    fn resolve_list_limit_accepts_value_in_range() {
-        assert_eq!(resolve_list_limit(Some(50)).unwrap(), 50);
-        assert_eq!(
-            resolve_list_limit(Some(MIN_LIST_LIMIT)).unwrap(),
-            MIN_LIST_LIMIT
-        );
-        assert_eq!(
-            resolve_list_limit(Some(MAX_LIST_LIMIT)).unwrap(),
-            MAX_LIST_LIMIT
-        );
-    }
-
-    #[test]
-    fn resolve_list_limit_rejects_zero() {
-        assert!(resolve_list_limit(Some(0)).is_err());
-    }
-
-    #[test]
-    fn resolve_list_limit_rejects_above_max() {
-        assert!(resolve_list_limit(Some(MAX_LIST_LIMIT + 1)).is_err());
     }
 
     #[test]

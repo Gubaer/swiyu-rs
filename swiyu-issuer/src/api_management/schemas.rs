@@ -18,6 +18,10 @@ pub enum SchemaLoadError {
     Compile { vct: String, message: String },
 }
 
+/// Compile and return validators for all schemas bundled in the VCT catalogue.
+///
+/// Temporary: the catalogue currently holds exactly one hard-coded schema.
+/// Replace this with dynamic schema loading once the catalogue is configurable.
 pub fn load() -> Result<HashMap<String, Arc<Validator>>, SchemaLoadError> {
     CATALOGUE
         .iter()

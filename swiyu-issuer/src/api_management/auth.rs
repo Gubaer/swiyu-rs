@@ -111,7 +111,7 @@ pub async fn require_issuer_owned_by_tenant(
 /// returning it. Every issuer-scoped management handler runs through
 /// this so the ownership check cannot be skipped by accident: a
 /// handler that needs a connection at all gets the check for free.
-pub async fn acquire_for_issuer(
+pub async fn acquire_pool_for_issuer(
     state: &AppState,
     tenant_id: &TenantId,
     issuer_id: &IssuerId,

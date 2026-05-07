@@ -3,148 +3,94 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Request body for `POST /api/v1/issuers`.
-///
-/// The BA-supplied portion of a `CreateIssuer` operation task. The
-/// rest (DID, key triple, lifecycle state) is produced server-side
-/// by the worker. Multi-tenant routing is resolved from the API
-/// token by `TenantContext`, never from the body.
-///
-/// Both fields are optional. The handler applies defaults when a
-/// field is missing or trims to an empty string: `description`
-/// becomes `""`; `display_name` becomes `Issuer <bare-issuer-id>`
-/// using the freshly generated `IssuerId`.
-///
-/// Distinct from `worker::create_issuer::CreateIssuerInput` (the
-/// internal worker DTO) so the wire shape can diverge — e.g. when
-/// `did_method` returns once `did:webvh` is testable end-to-end.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateIssuerSubmission {
+    /// Defaults to `""` when omitted.
     pub description: Option<String>,
+    /// Defaults to `Issuer <id>` when omitted.
     pub display_name: Option<String>,
 }
 
-/// Response body returned by `POST /api/v1/issuers` on success
-/// (HTTP 201).
-///
-/// `task_id` is for polling the saga status. `issuer_id` is
-/// generated server-side at submit time and pinned in
-/// `task.result_issuer_id`; the BA can hit `/api/v1/issuers/{id}`
-/// with it immediately and gets 404 until the task reaches
-/// `Completed`.
+/// Response body returned by `POST /api/v1/issuers` on success (HTTP 201).
 #[derive(Debug, Serialize)]
 pub struct CreateIssuerResponse {
+    /// Poll handle; use `GET /api/v1/operation-tasks/{task_id}` to track the saga.
     pub task_id: String,
+    /// Generated server-side. `GET /api/v1/issuers/{id}` returns 404 until the
+    /// task completes.
     pub issuer_id: String,
 }
 
-/// Response body returned by
-/// `POST /api/v1/issuers/{issuer_id}/rotate-keys`.
-///
-/// `task_id` is always present — rotate-keys submissions either
-/// insert a fresh task (HTTP 201) or surface an existing in-flight
-/// one (HTTP 200) for poll-handle continuity. Unlike deactivate,
-/// rotate-keys has no "already in desired state" idempotent shape;
-/// rotation is repeatable and a deactivated issuer is rejected with
-/// 409 rather than treated as already-rotated.
+/// Response body returned by `POST /api/v1/issuers/{issuer_id}/rotate-keys`.
 #[derive(Debug, Serialize)]
 pub struct RotateKeysResponse {
+    /// Always present: a fresh task (HTTP 201) or the existing in-flight one
+    /// (HTTP 200).
     pub task_id: String,
     pub issuer_id: String,
 }
 
-/// Response body returned by
-/// `POST /api/v1/issuers/{issuer_id}/deactivate`.
-///
-/// `task_id` is `Some` for fresh deactivations (HTTP 201, the new
-/// task) and for already-pending or already-completed deactivations
-/// where the originating task row is still findable (HTTP 200,
-/// returned for poll-handle continuity). It is `None` only when the
-/// issuer is `Deactivated` but no `DeactivateIssuer` task row drove
-/// the transition — typically a directly-mutated fixture row.
-/// `issuer_id` always echoes the path parameter.
+/// Response body returned by `POST /api/v1/issuers/{issuer_id}/deactivate`.
 #[derive(Debug, Serialize)]
 pub struct DeactivateIssuerResponse {
+    /// `Some` when a task drove the deactivation (fresh or already in-flight);
+    /// `None` when the issuer is already `Deactivated` with no associated task row.
     pub task_id: Option<String>,
     pub issuer_id: String,
 }
 
 /// Response body returned by `GET /api/v1/issuers/{issuer_id}` on
 /// success (HTTP 200).
-///
-/// Carries the BA-facing projection of an issuer. Deliberately
-/// omits:
-///
-/// - `tenant_id` — the BA already knows their tenant (it's bound to
-///   the API token), so echoing it adds noise without information.
-/// - `authorized_key_id` / `authentication_key_id` /
-///   `assertion_key_id` — these are internal SigningEngine handles
-///   the BA cannot act on, so exposing them is implementation leak.
-/// - `logo_uri`, `locale` — legacy presentation metadata that the
-///   v1 surface deliberately omits.
-///
-/// The seeded dev row from migration 0004 lacks `state` and is
-/// filtered out by the handler with a 404 — every issuer that lands
-/// in this DTO has the fields below set, so they appear without
-/// `Option<…>` wrappers.
 #[derive(Debug, Serialize)]
 pub struct GetIssuerResponse {
     pub id: String,
     pub did: String,
+    /// Lifecycle state: `"active"` or `"deactivated"`.
     pub state: String,
+    /// Empty string when no description was supplied at creation.
     pub description: String,
+    /// Defaults to `Issuer <id>` when no display name was supplied at creation.
     pub display_name: String,
 }
 
 /// Query parameters for `GET /api/v1/issuers`.
-///
-/// All fields are optional. `limit` is bounded at the handler;
-/// out-of-range values yield `invalid_input`. `cursor` is opaque to
-/// clients — the handler rejects anything it did not itself emit.
 #[derive(Debug, Deserialize)]
 pub struct ListIssuersQuery {
+    /// Page size. Bounded at the handler; out-of-range values yield `invalid_input`.
     pub limit: Option<u32>,
+    /// Opaque cursor from the previous page's `next_cursor`. The handler rejects
+    /// anything it did not itself emit.
     pub cursor: Option<String>,
 }
 
 /// Response body returned by `GET /api/v1/issuers` on success
 /// (HTTP 200).
-///
-/// `next_cursor` is `None` when the current page exhausts the
-/// tenant's issuers; otherwise it carries the opaque token to pass
-/// back as the next request's `cursor`.
 #[derive(Debug, Serialize)]
 pub struct ListIssuersResponse {
     pub items: Vec<GetIssuerResponse>,
+    /// Opaque token to pass as `cursor` on the next request; `None` when this
+    /// page exhausts the tenant's issuers.
     pub next_cursor: Option<String>,
 }
 
 /// Response body returned by `GET /api/v1/operation-tasks/{task_id}`
 /// on success (HTTP 200).
-///
-/// BA-facing projection of an `OperationTask`. Surfaces the polling
-/// fields a business application needs to track a long-running
-/// operation: `state` and `step` for "where in the saga we are",
-/// `attempts` / `next_attempt_at` / `error_*` for visibility into
-/// retry behaviour, and the lifecycle timestamps.
-///
-/// Deliberately omits:
-///
-/// - `tenant_id` — bound to the API token, redundant on the wire.
-/// - `input` — the BA submitted it, no need to echo it back.
-/// - `state_data` — internal saga progress (DID, key handles), not
-///   part of the BA-facing contract.
-/// - `result_issuer_id` — the BA already received `issuer_id` in
-///   the response to `POST /api/v1/issuers`; echoing it here would
-///   add nothing.
 #[derive(Debug, Serialize)]
 pub struct GetOperationTaskResponse {
     pub id: String,
+    /// One of `"create_issuer"`, `"deactivate_issuer"`, `"rotate_keys"`.
     pub task_type: String,
+    /// Saga state: `"pending"`, `"in_progress"`, `"completed"`, or `"failed"`.
     pub state: String,
+    /// Current saga step within the operation; `None` when the task has not
+    /// started yet.
     pub step: Option<String>,
     pub attempts: u32,
+    /// When the next retry is scheduled; `None` when the task is active or
+    /// terminal.
     pub next_attempt_at: Option<DateTime<Utc>>,
+    /// Set on terminal failure; `None` while the task is pending or in progress.
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -152,53 +98,42 @@ pub struct GetOperationTaskResponse {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
-/// Request body for creating a credential offer.
-///
-/// Submitted by a business application to
-/// `POST /api/v1/issuers/{issuer_id}/credential-offers`. The `vct`
-/// selects which JSON Schema validates `claims`; unknown values
-/// return HTTP 400. `expires_in_seconds` is optional; the handler
-/// applies a default and rejects values outside the configured
-/// bounds. See `specs/impl_api_management.md` for the full
-/// contract.
+/// Request body for `POST /api/v1/issuers/{issuer_id}/credential-offers`.
 #[derive(Debug, Deserialize)]
 pub struct CreateCredentialOfferRequest {
+    /// SD-JWT VC type identifier (URI). Selects the JSON Schema used to
+    /// validate `claims`; unknown values return HTTP 400.
     pub vct: String,
     pub claims: Value,
+    /// Offer lifetime in seconds. The handler applies a configured default when
+    /// omitted and rejects values outside the configured bounds.
     pub expires_in_seconds: Option<u32>,
 }
 
-/// Response body returned by `POST .../credential-offers` on
-/// success (HTTP 201).
-///
-/// `pre_auth_code` is the **bare** OID4VCI secret returned to the
-/// caller exactly once; only its hash is persisted, so this is the
-/// only opportunity to capture it. `offer_deeplink` is an
-/// `openid-credential-offer://` URI suitable for rendering as a
-/// QR code or handing to the holder's wallet.
+/// Response body returned by `POST .../credential-offers` on success (HTTP 201).
 #[derive(Debug, Serialize)]
 pub struct CreateCredentialOfferResponse {
     pub id: String,
+    /// Bare OID4VCI pre-authorisation secret, returned exactly once. Only its
+    /// hash is persisted — this is the caller's only opportunity to capture it.
     pub pre_auth_code: String,
+    /// `openid-credential-offer://` URI, suitable for a QR code or direct
+    /// handoff to a holder wallet.
     pub offer_deeplink: String,
     pub expires_at: DateTime<Utc>,
 }
 
-/// Response body returned by
-/// `GET .../credential-offers/{offer_id}` on success (HTTP 200).
-///
-/// `state` is the offer's *observed* state: when an offer is
-/// still stored as `Pending` past its `expires_at`, this field is
-/// `"expired"` even though the database row has not been updated.
-/// Deliberately omits any pre-auth-code field — the bare secret
-/// was returned only at creation, and the stored hash is not
-/// surfaced.
+/// Response body returned by `GET .../credential-offers/{offer_id}` on success
+/// (HTTP 200).
 #[derive(Debug, Serialize)]
 pub struct GetCredentialOfferResponse {
     pub id: String,
     pub issuer_id: String,
+    /// SD-JWT VC type identifier (URI).
     pub vct: String,
     pub claims: Value,
+    /// Observed state: a stored-`pending` row past `expires_at` surfaces as
+    /// `"expired"` without a database update.
     pub state: String,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
@@ -206,17 +141,12 @@ pub struct GetCredentialOfferResponse {
     pub cancelled_at: Option<DateTime<Utc>>,
 }
 
-/// Response body returned by
-/// `GET .../credential-offers/{offer_id}/status` on success
-/// (HTTP 200).
-///
-/// Lightweight projection for polling business applications: no
-/// claims, no PII, no `vct`, no `created_at`. `state` is the
-/// *observed* state, identical to the field surfaced by the full
-/// fetch endpoint.
+/// Response body returned by `GET .../credential-offers/{offer_id}/status` on
+/// success (HTTP 200).
 #[derive(Debug, Serialize)]
 pub struct OfferStatusResponse {
     pub id: String,
+    /// Observed state; same semantics as `state` in `GetCredentialOfferResponse`.
     pub state: String,
     pub expires_at: DateTime<Utc>,
     pub issued_at: Option<DateTime<Utc>>,
@@ -224,29 +154,28 @@ pub struct OfferStatusResponse {
 }
 
 /// Query parameters for `GET .../credential-offers`.
-///
-/// All fields are optional. `limit` is bounded at the handler; out-of-range
-/// values yield `invalid_input`. `cursor` is opaque to clients — the handler
-/// rejects anything it did not itself emit. `state` filters on the
-/// *observed* projection: `expired` matches stored-`pending` rows past their
-/// `expires_at`, and `pending` matches stored-`pending` rows still within it.
 #[derive(Debug, Deserialize)]
 pub struct ListCredentialOffersQuery {
+    /// Page size. Bounded at the handler; out-of-range values yield `invalid_input`.
     pub limit: Option<u32>,
+    /// Opaque cursor from the previous page's `next_cursor`. The handler rejects
+    /// anything it did not itself emit.
     pub cursor: Option<String>,
+    /// Filter on the observed state. `"expired"` matches stored-`pending` rows past
+    /// `expires_at`; `"pending"` matches those still within it.
     pub state: Option<String>,
 }
 
+/// Response body returned by `GET .../credential-offers` on success (HTTP 200).
 #[derive(Debug, Serialize)]
 pub struct ListCredentialOffersResponse {
     pub items: Vec<GetCredentialOfferResponse>,
+    /// Opaque token to pass as `cursor` on the next request; `None` when this
+    /// page exhausts the issuer's offers.
     pub next_cursor: Option<String>,
 }
 
-/// Query parameters for
-/// `GET /api/v1/issuers/{issuer_id}/credentials`. The owning issuer
-/// is in the path; no `issuer_id` query parameter. All fields here
-/// are optional.
+/// Query parameters for `GET /api/v1/issuers/{issuer_id}/credentials`.
 #[derive(Debug, Deserialize)]
 pub struct ListIssuedCredentialsQuery {
     /// Page size. Bounded at the handler to `1..=100`; out-of-range
@@ -270,40 +199,35 @@ pub struct ListIssuedCredentialsQuery {
     pub vct: Option<String>,
 }
 
-/// Response body returned by issued-credential lifecycle handlers
-/// (`suspend`, `unsuspend`, `revoke`) and by the GET endpoints
-/// (`get` and `list`).
-///
-/// `state` carries the lifecycle state stored on the row
-/// (`active` / `suspended` / `revoked`). `expired` is a derived view
-/// over `expires_at` per `aspect-credential-management.md` § "Expiry
-/// is a view, not a state": expiry never appears as a stored state,
-/// but the response surfaces a boolean for client convenience.
-///
-/// `holder_key_jkt` is the RFC 7638 thumbprint of the wallet's `cnf`
-/// key, base64url-encoded; included so a BA can correlate later
-/// presentations with the credential the wallet was issued.
-/// `status_list_id` and `status_list_index` are surfaced for
-/// operational transparency: they are the same `(uri, idx)` pair the
-/// `status` claim on the SD-JWT VC carries, and operators routinely
-/// need them when investigating revocation or publish-state issues.
+/// Response body returned by issued-credential lifecycle handlers (`suspend`,
+/// `unsuspend`, `revoke`) and by the GET endpoints (`get` and `list`).
 #[derive(Debug, Serialize)]
 pub struct GetIssuedCredentialResponse {
     pub id: String,
     pub issuer_id: String,
     pub credential_offer_id: String,
+    /// SD-JWT VC type identifier (URI).
     pub vct: String,
+    /// RFC 7638 base64url thumbprint of the wallet's `cnf` key.
     pub holder_key_jkt: String,
+    /// URI of the status list that carries this credential's revocation bit.
     pub status_list_id: String,
+    /// Index into the status list.
     pub status_list_index: u32,
+    /// Stored lifecycle state: `"active"`, `"suspended"`, or `"revoked"`.
     pub state: String,
+    /// `true` when `expires_at` is in the past. Derived; never stored as a state.
     pub expired: bool,
     pub issued_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
 
+/// Response body returned by `GET /api/v1/issuers/{issuer_id}/credentials` on
+/// success (HTTP 200).
 #[derive(Debug, Serialize)]
 pub struct ListIssuedCredentialsResponse {
     pub items: Vec<GetIssuedCredentialResponse>,
+    /// Opaque token to pass as `cursor` on the next request; `None` when this
+    /// page exhausts the issuer's credentials.
     pub next_cursor: Option<String>,
 }

@@ -10,7 +10,7 @@ use crate::persistence;
 use crate::persistence::credential_offers::ListPageQuery;
 
 use super::AppState;
-use super::auth::{TenantContext, acquire_for_issuer};
+use super::auth::{TenantContext, acquire_pool_for_issuer};
 use super::dto::{
     CreateCredentialOfferRequest, CreateCredentialOfferResponse, GetCredentialOfferResponse,
     ListCredentialOffersQuery, ListCredentialOffersResponse, OfferStatusResponse,
@@ -33,21 +33,12 @@ const MIN_EXPIRES_IN_SECONDS: u32 = 60;
 /// product decision rather than a default the API should grant.
 const MAX_EXPIRES_IN_SECONDS: u32 = 3600;
 
-/// Page size applied to `GET .../credential-offers` when the caller
-/// omits `limit`. Sized to fit a typical operator UI page without
-/// forcing a follow-up request for small issuers.
-const DEFAULT_LIST_LIMIT: u32 = 25;
-
-/// Lower bound on `limit`. Zero would return an empty page with a
-/// `next_cursor` that never advances, so the smallest legal page is
-/// one row.
-const MIN_LIST_LIMIT: u32 = 1;
-
-/// Upper bound on `limit`. Caps per-request work against the
-/// database and the JSON response size; clients that need more rows
-/// must paginate.
-const MAX_LIST_LIMIT: u32 = 100;
-
+/// `POST /api/v1/issuers/{issuer_id}/credential-offers`
+///
+/// Validates the VCT and claims against the schema loaded at startup, then
+/// persists a new offer with a freshly generated pre-authorised code. Returns
+/// `201 Created` with the bare pre-auth code and an OID4VCI deeplink the
+/// caller can hand to the holder's wallet.
 pub async fn create(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
@@ -62,12 +53,12 @@ pub async fn create(
         "credential offer creation requested",
     );
 
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
 
     validate_claims(&state, &payload)?;
     let expires_in = resolve_expires_in(payload.expires_in_seconds)?;
 
-    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_pool_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let pre_auth_code = PreAuthCode::generate();
     let expires_at = Utc::now() + expires_in;
@@ -135,11 +126,10 @@ fn build_offer_deeplink(
     issuer_id: &IssuerId,
     offer_id: &CredentialOfferId,
 ) -> String {
-    // The wallet path lives on the issuer-oidc binary at
-    // /i/{issuer_id}/credential-offer/{offer_id} (see
-    // `specs/impl_api_oidc.md`), so the credential_offer_uri must
-    // resolve there. Both binaries serve under the same external
-    // ISSUER_BASE_URL via reverse proxy.
+    // issuer-oidc serves the wallet endpoint at
+    // /i/{issuer_id}/credential-offer/{offer_id}, so the
+    // credential_offer_uri must resolve there. Both binaries share
+    // the same external ISSUER_BASE_URL via reverse proxy.
     let credential_offer_uri = format!(
         "{}/i/{}/credential-offer/{}",
         issuer_base_url.trim_end_matches('/'),
@@ -150,7 +140,7 @@ fn build_offer_deeplink(
     format!("openid-credential-offer://?credential_offer_uri={encoded}")
 }
 
-pub async fn get(
+pub async fn get_offer(
     State(state): State<AppState>,
     Path((issuer_id_str, offer_id_str)): Path<(String, String)>,
     tenant_context: TenantContext,
@@ -162,10 +152,10 @@ pub async fn get(
         "credential offer fetch requested",
     );
 
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
     let offer_id = parse_offer_id(&offer_id_str)?;
 
-    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_pool_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let offer = persistence::credential_offers::find_by_id(
         &mut conn,
@@ -178,7 +168,13 @@ pub async fn get(
     Ok(Json(offer_to_response(offer, Utc::now())))
 }
 
-pub async fn cancel(
+/// `POST /api/v1/issuers/{issuer_id}/credential-offers/{offer_id}/cancel`
+///
+/// Cancels a pending offer. Re-cancelling an already-cancelled offer is
+/// idempotent. Cancelling an issued or expired offer returns `409 Conflict`.
+/// On success the persistence layer NULLs the pre-auth code so the wallet
+/// path can no longer redeem it.
+pub async fn cancel_offer(
     State(state): State<AppState>,
     Path((issuer_id_str, offer_id_str)): Path<(String, String)>,
     tenant_context: TenantContext,
@@ -190,10 +186,10 @@ pub async fn cancel(
         "credential offer cancel requested",
     );
 
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
     let offer_id = parse_offer_id(&offer_id_str)?;
 
-    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_pool_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let mut offer = persistence::credential_offers::find_by_id(
         &mut conn,
@@ -237,7 +233,12 @@ pub async fn cancel(
     Ok(Json(offer_to_response(offer, now)))
 }
 
-pub async fn status(
+/// `GET /api/v1/issuers/{issuer_id}/credential-offers/{offer_id}/status`
+///
+/// Lightweight polling endpoint: returns the observed state and lifecycle
+/// timestamps without the full claims payload. Intended for callers that
+/// only need to know whether the offer has been redeemed or has expired.
+pub async fn get_offer_status(
     State(state): State<AppState>,
     Path((issuer_id_str, offer_id_str)): Path<(String, String)>,
     tenant_context: TenantContext,
@@ -249,10 +250,10 @@ pub async fn status(
         "credential offer status requested",
     );
 
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
     let offer_id = parse_offer_id(&offer_id_str)?;
 
-    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_pool_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let offer = persistence::credential_offers::find_by_id(
         &mut conn,
@@ -265,7 +266,13 @@ pub async fn status(
     Ok(Json(offer_to_status_response(&offer, Utc::now())))
 }
 
-pub async fn list(
+/// `GET /api/v1/issuers/{issuer_id}/credential-offers`
+///
+/// Returns a cursor-paginated page of offers, optionally filtered by state.
+/// Pagination is keyed on `(created_at, offer_id)`; pass the `next_cursor`
+/// from the previous response to advance. Expired state is computed at query
+/// time from `expires_at` — it is never written to the database.
+pub async fn list_offers(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
     Query(query): Query<ListCredentialOffersQuery>,
@@ -280,8 +287,8 @@ pub async fn list(
         "credential offer list requested",
     );
 
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
-    let limit = resolve_list_limit(query.limit)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
+    let limit = super::resolve_list_limit(query.limit)?;
     let state_filter = parse_state_filter(query.state.as_deref())?;
     let decoded_cursor = query
         .cursor
@@ -291,7 +298,7 @@ pub async fn list(
         })
         .transpose()?;
 
-    let mut conn = acquire_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
+    let mut conn = acquire_pool_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
 
     let now = Utc::now();
     let page = persistence::credential_offers::list(
@@ -324,18 +331,6 @@ pub async fn list(
     Ok(Json(ListCredentialOffersResponse { items, next_cursor }))
 }
 
-fn resolve_list_limit(requested: Option<u32>) -> Result<u32, ApiError> {
-    let limit = requested.unwrap_or(DEFAULT_LIST_LIMIT);
-    if !(MIN_LIST_LIMIT..=MAX_LIST_LIMIT).contains(&limit) {
-        return Err(ApiError::InvalidInput {
-            details: format!(
-                "limit must be between {MIN_LIST_LIMIT} and {MAX_LIST_LIMIT}, got {limit}"
-            ),
-        });
-    }
-    Ok(limit)
-}
-
 fn parse_state_filter(raw: Option<&str>) -> Result<Option<CredentialOfferState>, ApiError> {
     match raw {
         None => Ok(None),
@@ -345,12 +340,6 @@ fn parse_state_filter(raw: Option<&str>) -> Result<Option<CredentialOfferState>,
                 details: format!("state query parameter: {err}"),
             }),
     }
-}
-
-fn parse_issuer_id(raw: &str) -> Result<IssuerId, ApiError> {
-    IssuerId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })
 }
 
 fn parse_offer_id(raw: &str) -> Result<CredentialOfferId, ApiError> {
@@ -541,34 +530,6 @@ mod tests {
     #[test]
     fn resolve_expires_in_rejects_above_max() {
         assert!(resolve_expires_in(Some(MAX_EXPIRES_IN_SECONDS + 1)).is_err());
-    }
-
-    #[test]
-    fn resolve_list_limit_uses_default_when_unset() {
-        assert_eq!(resolve_list_limit(None).unwrap(), DEFAULT_LIST_LIMIT);
-    }
-
-    #[test]
-    fn resolve_list_limit_accepts_value_in_range() {
-        assert_eq!(resolve_list_limit(Some(50)).unwrap(), 50);
-        assert_eq!(
-            resolve_list_limit(Some(MIN_LIST_LIMIT)).unwrap(),
-            MIN_LIST_LIMIT
-        );
-        assert_eq!(
-            resolve_list_limit(Some(MAX_LIST_LIMIT)).unwrap(),
-            MAX_LIST_LIMIT
-        );
-    }
-
-    #[test]
-    fn resolve_list_limit_rejects_zero() {
-        assert!(resolve_list_limit(Some(0)).is_err());
-    }
-
-    #[test]
-    fn resolve_list_limit_rejects_above_max() {
-        assert!(resolve_list_limit(Some(MAX_LIST_LIMIT + 1)).is_err());
     }
 
     #[test]

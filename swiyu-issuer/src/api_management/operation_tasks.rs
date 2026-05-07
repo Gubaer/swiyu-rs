@@ -11,6 +11,12 @@ use super::auth::TenantContext;
 use super::dto::GetOperationTaskResponse;
 use super::error::ApiError;
 
+/// `GET /api/v1/operation-tasks/{task_id}`
+///
+/// Fetch a single operation task by ID, scoped to the requesting tenant.
+///
+/// Returns `404 Not Found` for both missing tasks and tasks belonging to a
+/// different tenant, so task existence is never leaked across tenant boundaries.
 pub async fn get(
     State(state): State<AppState>,
     Path(task_id_str): Path<String>,

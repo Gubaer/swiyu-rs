@@ -25,21 +25,10 @@ use super::error::ApiError;
 /// search results unwieldily.
 const MAX_FIELD_LENGTH: usize = 255;
 
-/// Page size applied to `GET /api/v1/issuers` when the caller omits
-/// `limit`. Sized to fit a typical operator UI page without forcing a
-/// follow-up request for tenants with a handful of issuers.
-const DEFAULT_LIST_LIMIT: u32 = 25;
-
-/// Lower bound on `limit`. Zero would return an empty page with a
-/// `next_cursor` that never advances, so the smallest legal page is
-/// one row.
-const MIN_LIST_LIMIT: u32 = 1;
-
-/// Upper bound on `limit`. Caps per-request work against the
-/// database and the JSON response size; clients that need more rows
-/// must paginate.
-const MAX_LIST_LIMIT: u32 = 100;
-
+/// `POST /api/v1/issuers`
+///
+/// Submits a `CreateIssuer` saga task. The DID and key triple are provisioned
+/// asynchronously by the worker; poll `task_id` to track progress.
 pub async fn create(
     State(state): State<AppState>,
     tenant_context: TenantContext,
@@ -103,6 +92,10 @@ pub async fn create(
     ))
 }
 
+/// `GET /api/v1/issuers/{issuer_id}`
+///
+/// Returns 404 for unknown issuers and for the seeded legacy row (which
+/// predates lifecycle tracking and has no key triple).
 pub async fn get(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
@@ -114,9 +107,7 @@ pub async fn get(
         "issuer fetch requested",
     );
 
-    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
 
     let mut conn = state
         .pool
@@ -135,6 +126,12 @@ pub async fn get(
     Ok(Json(issuer_to_response(issuer)?))
 }
 
+/// `POST /api/v1/issuers/{issuer_id}/deactivate`
+///
+/// Idempotent: an already-deactivated issuer returns HTTP 200 with the
+/// originating `task_id` if one exists. A duplicate submission while a task
+/// is in flight returns HTTP 200 with the existing `task_id`. A fresh
+/// submission returns HTTP 201.
 pub async fn deactivate(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
@@ -146,9 +143,7 @@ pub async fn deactivate(
         "deactivate-issuer task submission",
     );
 
-    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
 
     let mut conn = state
         .pool
@@ -246,6 +241,11 @@ pub async fn deactivate(
     }
 }
 
+/// `POST /api/v1/issuers/{issuer_id}/rotate-keys`
+///
+/// Deactivated issuers return `409 Conflict`. An in-flight rotation task
+/// returns HTTP 200 with the existing `task_id`; terminal prior tasks do not
+/// block a fresh submission — rotation is repeatable.
 pub async fn rotate_keys(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
@@ -268,9 +268,7 @@ pub async fn rotate_keys(
         "rotate-keys task submission",
     );
 
-    let issuer_id = IssuerId::from_bare(&issuer_id_str).map_err(|err| ApiError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
 
     let mut conn = state
         .pool
@@ -349,6 +347,9 @@ pub async fn rotate_keys(
     ))
 }
 
+/// `GET /api/v1/issuers`
+///
+/// Cursor-paginated list of issuers for the tenant.
 pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<ListIssuersQuery>,
@@ -361,7 +362,7 @@ pub async fn list(
         "issuer list requested",
     );
 
-    let limit = resolve_list_limit(query.limit)?;
+    let limit = super::resolve_list_limit(query.limit)?;
     let decoded_cursor = query
         .cursor
         .as_deref()
@@ -401,28 +402,13 @@ pub async fn list(
     Ok(Json(ListIssuersResponse { items, next_cursor }))
 }
 
-fn resolve_list_limit(requested: Option<u32>) -> Result<u32, ApiError> {
-    let limit = requested.unwrap_or(DEFAULT_LIST_LIMIT);
-    if !(MIN_LIST_LIMIT..=MAX_LIST_LIMIT).contains(&limit) {
-        return Err(ApiError::InvalidInput {
-            details: format!(
-                "limit must be between {MIN_LIST_LIMIT} and {MAX_LIST_LIMIT}, got {limit}"
-            ),
-        });
-    }
-    Ok(limit)
-}
-
 /// Projects an `Issuer` to its BA-facing wire DTO.
 ///
-/// Returns `ApiError::NotFound` for the seeded legacy row (state ==
-/// None): that row pre-dates the issuer-management flow and is not
-/// part of the v1 surface, so we hide it the same way we hide
-/// cross-tenant rows. Any other issuer was written by
-/// `worker::create_issuer::persist_issuer`, which always sets the
-/// fields the response needs, so the remaining unwraps are safe by
-/// construction — a `None` here would mean the DB row is corrupt
-/// and an internal error response is appropriate.
+/// Returns `ApiError::NotFound` for the seeded legacy row (`state == None`),
+/// which pre-dates the issuer-management flow. Any other issuer was written by
+/// `worker::create_issuer::persist_issuer`, which always sets `description`
+/// and `display_name`, so a `None` there means a corrupt DB row and warrants
+/// `ApiError::Internal`.
 fn issuer_to_response(issuer: Issuer) -> Result<GetIssuerResponse, ApiError> {
     let state = issuer.state.ok_or(ApiError::NotFound)?;
     let description = issuer.description.ok_or_else(|| internal("description"))?;
@@ -513,33 +499,5 @@ mod tests {
         let exact = "a".repeat(MAX_FIELD_LENGTH);
         let v = normalise_optional_field("description", Some(&exact)).unwrap();
         assert_eq!(v.unwrap().len(), MAX_FIELD_LENGTH);
-    }
-
-    #[test]
-    fn resolve_list_limit_uses_default_when_unset() {
-        assert_eq!(resolve_list_limit(None).unwrap(), DEFAULT_LIST_LIMIT);
-    }
-
-    #[test]
-    fn resolve_list_limit_accepts_value_in_range() {
-        assert_eq!(resolve_list_limit(Some(50)).unwrap(), 50);
-        assert_eq!(
-            resolve_list_limit(Some(MIN_LIST_LIMIT)).unwrap(),
-            MIN_LIST_LIMIT
-        );
-        assert_eq!(
-            resolve_list_limit(Some(MAX_LIST_LIMIT)).unwrap(),
-            MAX_LIST_LIMIT
-        );
-    }
-
-    #[test]
-    fn resolve_list_limit_rejects_zero() {
-        assert!(resolve_list_limit(Some(0)).is_err());
-    }
-
-    #[test]
-    fn resolve_list_limit_rejects_above_max() {
-        assert!(resolve_list_limit(Some(MAX_LIST_LIMIT + 1)).is_err());
     }
 }
