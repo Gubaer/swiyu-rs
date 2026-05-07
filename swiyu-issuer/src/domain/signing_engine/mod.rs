@@ -97,7 +97,10 @@ impl std::fmt::Display for KeyPairId {
 /// the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawPublicKey {
+    /// The algorithm the key belongs to, which determines how `bytes` is encoded.
     pub algorithm: KeyAlgorithm,
+    /// Raw key bytes. Ed25519: 32-byte compressed point.
+    /// ECDSA P-256: 65-byte SEC1 uncompressed (`0x04 || x || y`).
     pub bytes: Vec<u8>,
 }
 
@@ -109,16 +112,19 @@ pub struct RawPublicKey {
 /// in the issuer's DID log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedKeyPair {
+    /// Opaque handle for subsequent `sign` and `delete_keypair` calls.
     pub id: KeyPairId,
+    /// Public key to embed in the issuer's DID log.
     pub public_key: RawPublicKey,
 }
 
-/// Signature with its algorithm tag, in the encoding swiyu-issuer expects:
-/// 64 raw bytes for Ed25519, raw `r || s` (64 bytes) for ECDSA P-256.
+/// Signature returned by a `SigningEngine`.
 /// The engine normalises to this form regardless of what the backend produces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature {
+    /// The algorithm used to produce the signature.
     pub algorithm: KeyAlgorithm,
+    /// Raw signature bytes. Ed25519: 64 bytes. ECDSA P-256: `r || s` (64 bytes).
     pub bytes: Vec<u8>,
 }
 
@@ -144,8 +150,7 @@ pub enum SigningEngineError {
 /// only public keys, signatures, and opaque identifiers. Backends
 /// range across maturity levels — `DevSigningEngine` (database-backed,
 /// development), a possible `VaultSigningEngine`, and `HsmSigningEngine`
-/// (PKCS#11, required in production). See `aspect-key-management.md`
-/// and `impl-key-management.md`.
+/// (PKCS#11, required in production).
 pub trait SigningEngine: Send + Sync {
     /// Generates a new key pair for the given role.
     ///
