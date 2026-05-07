@@ -43,14 +43,26 @@ pub fn build_from_env(pool: PgPool) -> Result<AnySigningEngine, BuildError> {
     }
 }
 
+fn non_blank_env(name: &'static str) -> Result<String, BuildError> {
+    let value = env::var(name).unwrap_or_default();
+    match value.trim() {
+        "" => Err(BuildError::VaultEnvMissing(name)),
+        s => Ok(s.to_string()),
+    }
+}
+
 fn build_vault() -> Result<VaultSigningEngine, BuildError> {
-    let address = env::var("VAULT_ADDR").map_err(|_| BuildError::VaultEnvMissing("VAULT_ADDR"))?;
-    let token = env::var("VAULT_TOKEN").map_err(|_| BuildError::VaultEnvMissing("VAULT_TOKEN"))?;
-    let transit_path = env::var("VAULT_TRANSIT_PATH")
-        .unwrap_or_else(|_| VaultSigningEngineConfig::DEFAULT_TRANSIT_PATH.to_string());
-    let request_timeout = match env::var("VAULT_REQUEST_TIMEOUT_SECS") {
-        Ok(s) => Duration::from_secs(s.parse::<u64>().map_err(BuildError::VaultTimeoutInvalid)?),
-        Err(_) => VaultSigningEngineConfig::DEFAULT_REQUEST_TIMEOUT,
+    let address = non_blank_env("VAULT_ADDR")?;
+    let token = non_blank_env("VAULT_TOKEN")?;
+    let transit_path_raw = env::var("VAULT_TRANSIT_PATH").unwrap_or_default();
+    let transit_path = match transit_path_raw.trim() {
+        "" => VaultSigningEngineConfig::DEFAULT_TRANSIT_PATH.to_string(),
+        s => s.to_string(),
+    };
+    let request_timeout_raw = env::var("VAULT_REQUEST_TIMEOUT_SECS").unwrap_or_default();
+    let request_timeout = match request_timeout_raw.trim() {
+        "" => VaultSigningEngineConfig::DEFAULT_REQUEST_TIMEOUT,
+        s => Duration::from_secs(s.parse::<u64>().map_err(BuildError::VaultTimeoutInvalid)?),
     };
     Ok(VaultSigningEngine::new(VaultSigningEngineConfig {
         address: Url::parse(&address).map_err(|e| BuildError::VaultAddrInvalid(e.to_string()))?,
