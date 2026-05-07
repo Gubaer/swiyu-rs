@@ -58,8 +58,7 @@ impl TryFrom<&str> for CredentialOfferState {
 #[derive(Debug, Clone)]
 pub struct CredentialOffer {
     /// Generated at construction time by the application, not by
-    /// the database. See `specs/impl_persistence.md` for the
-    /// identifier strategy.
+    /// the database.
     pub id: CredentialOfferId,
 
     /// Carried directly rather than derived from `issuer_id` so

@@ -1,8 +1,7 @@
 //! Retry-timing helpers for the operation-task worker.
 //!
-//! Encodes the curve and cap from `specs/impl-issuer.md` (Backoff /
-//! Crash recovery): exponential delay with full jitter capped at 1
-//! hour per attempt, and a 24-hour wall-clock budget per task.
+//! Exponential delay with full jitter, capped at 1 hour per attempt,
+//! with a 24-hour wall-clock budget per task.
 
 use std::time::Duration;
 

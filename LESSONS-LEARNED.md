@@ -4,6 +4,10 @@
 
 - When referring to a field name or identifier in a doc comment, use a bare backtick identifier: `` `kid` ``, not `` `"kid"` ``.
 
+## Spec file references in comments
+
+- Do not reference `specs/` files (e.g. `specs/impl-issuer.md`) in source comments. The spec is not part of the repo's public surface and the reference rots. Say what the code does; omit the pointer to where the design came from.
+
 ## Markdown line wrapping
 
 - In Markdown spec files, do not hard-wrap prose paragraphs. Each paragraph is one long line; the editor or renderer handles soft-wrap. Tables, code blocks, and headings stay on their own lines as Markdown requires; list items each occupy one logical line (continuation text on the same line, not indented onto the next).

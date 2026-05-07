@@ -1,6 +1,5 @@
 //! Development-tier `SigningEngine` backed by a Postgres table that
-//! stores private keys unencrypted. See
-//! `specs/impl-key-management.md` (DevSigningEngine subsection).
+//! stores private keys unencrypted.
 
 use std::future::Future;
 

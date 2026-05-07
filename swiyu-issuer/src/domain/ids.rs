@@ -23,7 +23,7 @@
 //! reduces transcription errors when an identifier is read off a
 //! screen by a human. UUIDs were rejected for being unnecessarily
 //! long; hash-of-UUID for arriving at the same place by a longer
-//! route. See `specs/impl_persistence.md`.
+//! route.
 //!
 //! # Prefix discipline
 //!
