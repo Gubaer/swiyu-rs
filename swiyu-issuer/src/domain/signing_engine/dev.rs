@@ -17,9 +17,6 @@ use super::{
     SigningEngineError,
 };
 
-const ALGORITHM_ED25519: &str = "ed25519";
-const ALGORITHM_ECDSA_P256: &str = "ecdsa-p256";
-
 /// Low-maturity `SigningEngine` for development and integration tests.
 ///
 /// Persists private keys unencrypted in `signing_engine_dev_keypairs`.
@@ -54,7 +51,7 @@ impl SigningEngine for DevSigningEngine {
                  VALUES ($1, $2, $3, $4)",
             )
             .bind(id.as_uuid())
-            .bind(algorithm_label(algorithm))
+            .bind(algorithm.as_str())
             .bind(&private_bytes)
             .bind(&public_bytes)
             .execute(&pool)
@@ -148,21 +145,10 @@ impl SigningEngine for DevSigningEngine {
     }
 }
 
-fn algorithm_label(algorithm: KeyAlgorithm) -> &'static str {
-    match algorithm {
-        KeyAlgorithm::Ed25519 => ALGORITHM_ED25519,
-        KeyAlgorithm::EcdsaP256 => ALGORITHM_ECDSA_P256,
-    }
-}
-
 fn parse_algorithm_label(label: &str) -> Result<KeyAlgorithm, SigningEngineError> {
-    match label {
-        ALGORITHM_ED25519 => Ok(KeyAlgorithm::Ed25519),
-        ALGORITHM_ECDSA_P256 => Ok(KeyAlgorithm::EcdsaP256),
-        other => Err(SigningEngineError::Backend(
-            format!("unknown algorithm label in DB: {other}").into(),
-        )),
-    }
+    KeyAlgorithm::try_from(label).map_err(|e| {
+        SigningEngineError::Backend(format!("unknown algorithm label in DB: {e}").into())
+    })
 }
 
 fn generate_ed25519() -> (Vec<u8>, Vec<u8>) {
@@ -289,11 +275,11 @@ mod tests {
     #[test]
     fn algorithm_label_round_trips() {
         assert_eq!(
-            parse_algorithm_label(algorithm_label(KeyAlgorithm::Ed25519)).unwrap(),
+            parse_algorithm_label(KeyAlgorithm::Ed25519.as_str()).unwrap(),
             KeyAlgorithm::Ed25519
         );
         assert_eq!(
-            parse_algorithm_label(algorithm_label(KeyAlgorithm::EcdsaP256)).unwrap(),
+            parse_algorithm_label(KeyAlgorithm::EcdsaP256.as_str()).unwrap(),
             KeyAlgorithm::EcdsaP256
         );
     }

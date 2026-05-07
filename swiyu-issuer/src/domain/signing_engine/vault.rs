@@ -19,8 +19,6 @@ use super::{
     SigningEngineError,
 };
 
-const VAULT_TYPE_ED25519: &str = "ed25519";
-const VAULT_TYPE_ECDSA_P256: &str = "ecdsa-p256";
 const VAULT_TOKEN_HEADER: &str = "X-Vault-Token";
 // Vault stores every signing key we create at version 1; we never call rotate
 // (rotation creates a brand-new Vault key under a new UUID instead).
@@ -261,7 +259,7 @@ impl VaultSigningEngine {
         algorithm: KeyAlgorithm,
     ) -> Result<(), SigningEngineError> {
         let url = self.key_url(id)?;
-        let body = json!({ "type": vault_type_label(algorithm) });
+        let body = json!({ "type": algorithm.as_str() });
         let response = self
             .client
             .post(url)
@@ -427,21 +425,9 @@ fn reqwest_to_backend(error: reqwest::Error) -> SigningEngineError {
     SigningEngineError::Backend(Box::new(error))
 }
 
-fn vault_type_label(algorithm: KeyAlgorithm) -> &'static str {
-    match algorithm {
-        KeyAlgorithm::Ed25519 => VAULT_TYPE_ED25519,
-        KeyAlgorithm::EcdsaP256 => VAULT_TYPE_ECDSA_P256,
-    }
-}
-
 fn parse_vault_algorithm(label: &str) -> Result<KeyAlgorithm, SigningEngineError> {
-    match label {
-        VAULT_TYPE_ED25519 => Ok(KeyAlgorithm::Ed25519),
-        VAULT_TYPE_ECDSA_P256 => Ok(KeyAlgorithm::EcdsaP256),
-        other => Err(SigningEngineError::Backend(
-            format!("unknown vault key type: {other}").into(),
-        )),
-    }
+    KeyAlgorithm::try_from(label)
+        .map_err(|e| SigningEngineError::Backend(format!("unknown vault key type: {e}").into()))
 }
 
 fn parse_ed25519_public_key(b64: &str) -> Result<Vec<u8>, SigningEngineError> {
@@ -549,11 +535,11 @@ mod tests {
     #[test]
     fn vault_algorithm_round_trips() {
         assert_eq!(
-            parse_vault_algorithm(vault_type_label(KeyAlgorithm::Ed25519)).unwrap(),
+            parse_vault_algorithm(KeyAlgorithm::Ed25519.as_str()).unwrap(),
             KeyAlgorithm::Ed25519
         );
         assert_eq!(
-            parse_vault_algorithm(vault_type_label(KeyAlgorithm::EcdsaP256)).unwrap(),
+            parse_vault_algorithm(KeyAlgorithm::EcdsaP256.as_str()).unwrap(),
             KeyAlgorithm::EcdsaP256
         );
     }

@@ -35,6 +35,29 @@ impl KeyAlgorithm {
             KeyRole::Assertion | KeyRole::Authentication => KeyAlgorithm::EcdsaP256,
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KeyAlgorithm::Ed25519 => "ed25519",
+            KeyAlgorithm::EcdsaP256 => "ecdsa-p256",
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("unknown algorithm: {0:?}")]
+pub struct UnknownAlgorithm(pub String);
+
+impl TryFrom<&str> for KeyAlgorithm {
+    type Error = UnknownAlgorithm;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "ed25519" => Ok(KeyAlgorithm::Ed25519),
+            "ecdsa-p256" => Ok(KeyAlgorithm::EcdsaP256),
+            other => Err(UnknownAlgorithm(other.to_string())),
+        }
+    }
 }
 
 /// Opaque identifier for a key pair stored inside a `SigningEngine`.
