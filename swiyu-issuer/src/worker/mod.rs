@@ -13,6 +13,59 @@ pub mod rotate_keys;
 pub mod runner;
 pub mod status_list_publisher;
 
+/// Pulls the SWIYU registry UUID out of a parsed issuer DID.
+///
+/// Canonical issuer DIDs have the form
+/// `did:tdw:<scid>:<domain>:<path-segments>` where the last path
+/// segment is the registry-assigned UUID. Returns `None` when the DID
+/// carries no path component.
+pub(crate) fn registry_identifier(did: &swiyu_core::did::DID) -> Option<String> {
+    did.path()?
+        .rsplit(':')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use swiyu_core::did::DID;
+
+    use super::registry_identifier;
+
+    fn parse(s: &str) -> DID {
+        DID::from_str(s).expect("valid did fixture")
+    }
+
+    #[test]
+    fn registry_identifier_extracts_uuid_from_canonical_shape() {
+        let did =
+            parse("did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d");
+        assert_eq!(
+            registry_identifier(&did),
+            Some("fce949f2-32c4-4915-8b60-0ee2f705231d".into()),
+        );
+    }
+
+    #[test]
+    fn registry_identifier_extracts_trailing_uuid_from_multi_segment_path() {
+        let did =
+            parse("did:tdw:scid:reg.example.com:api:v1:did:fce949f2-32c4-4915-8b60-0ee2f705231d");
+        assert_eq!(
+            registry_identifier(&did),
+            Some("fce949f2-32c4-4915-8b60-0ee2f705231d".into()),
+        );
+    }
+
+    #[test]
+    fn registry_identifier_returns_none_for_did_without_path() {
+        let did = parse("did:tdw:scid:example.com");
+        assert!(registry_identifier(&did).is_none());
+    }
+}
+
 pub use runner::{Worker, WorkerError};
 pub use status_list_publisher::{PublisherConfig, StatusListPublisher};
 

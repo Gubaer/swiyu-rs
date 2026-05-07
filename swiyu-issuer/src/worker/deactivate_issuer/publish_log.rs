@@ -29,8 +29,8 @@ use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, Step
 use crate::worker::registry::{RegistryFacade, build_updated_log};
 
 use super::log_builder::{BuildError, build_deactivation_entry};
-use super::registry_identifier;
 use super::state::DeactivateIssuerStateData;
+use crate::worker::registry_identifier;
 
 pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     tenant: &Tenant,

@@ -24,8 +24,8 @@ use serde_json::{Map, json};
 use swiyu_core::did::DID;
 
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant};
-use crate::worker::deactivate_issuer::registry_identifier;
 use crate::worker::registry::{RegistryFacade, build_updated_log};
+use crate::worker::registry_identifier;
 
 use super::log_builder::{BuildError, build_rotation_entry};
 use super::state::RotateKeysStateData;

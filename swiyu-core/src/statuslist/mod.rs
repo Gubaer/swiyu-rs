@@ -534,13 +534,7 @@ pub struct StatusListJwtPayload {
 }
 
 impl StatusListJwtPayload {
-    pub fn new(
-        iss: String,
-        sub: String,
-        iat: u64,
-        exp: Option<u64>,
-        list: StatusList,
-    ) -> Self {
+    pub fn new(iss: String, sub: String, iat: u64, exp: Option<u64>, list: StatusList) -> Self {
         Self {
             iss,
             sub,
@@ -602,10 +596,7 @@ impl TryFrom<&Value> for StatusListJwtPayload {
         let exp = match obj.get("exp") {
             None => None,
             Some(Value::Null) => None,
-            Some(v) => Some(
-                v.as_u64()
-                    .ok_or(StatusListError::InvalidFieldType("exp"))?,
-            ),
+            Some(v) => Some(v.as_u64().ok_or(StatusListError::InvalidFieldType("exp"))?),
         };
         let inner = obj
             .get("status_list")
