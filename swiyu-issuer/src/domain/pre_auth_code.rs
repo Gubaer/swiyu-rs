@@ -6,18 +6,10 @@ const PRE_AUTH_CODE_BYTES: usize = 16;
 /// to the business application at credential-offer creation, then
 /// delivered to the wallet via the OID4VCI by-reference flow.
 ///
-/// The bare value is held on the `credential_offers` row in the
-/// `pre_auth_code` column for the offer's pending window: the
-/// by-reference offer-uri fetch must return the bare value, so it
-/// has to be retrievable. The column is set to `NULL` at the first
-/// terminal-state transition (cancel or issue). See
-/// `specs/aspect-persistence.md` for the pending-window-plaintext
-/// rationale.
-///
-/// `Clone` is implemented because the value lives in DB rows that
-/// the codebase clones routinely; the redacted `Debug` impl still
-/// guards against accidental log leakage at developer-touchpoints.
-/// `Display` and `serde::Serialize` are deliberately absent.
+/// The bare value is stored on the `credential_offers` row for the
+/// offer's pending window because the by-reference offer-uri fetch
+/// must return it. It is set to `NULL` at the first terminal-state
+/// transition. `Display` and `serde::Serialize` are deliberately absent.
 #[derive(Clone)]
 pub struct PreAuthCode(String);
 

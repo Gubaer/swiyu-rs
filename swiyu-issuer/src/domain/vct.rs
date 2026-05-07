@@ -1,11 +1,9 @@
 /// One supported credential type.
-///
-/// `vct` is the SD-JWT VC type identifier (a URI). `schema` is the
-/// raw JSON Schema document the management API uses to validate
-/// claims at credential-offer creation time. Bundled at compile
-/// time via `include_str!`; the schema files live under `schemas/`.
 pub struct VctEntry {
+    /// SD-JWT VC type identifier (a URI).
     pub vct: &'static str,
+    /// Raw JSON Schema document used to validate claims at credential-offer
+    /// creation time. Bundled at compile time via `include_str!`.
     pub schema: &'static str,
 }
 

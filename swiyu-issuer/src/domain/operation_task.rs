@@ -5,18 +5,15 @@ use super::DomainError;
 use super::ids::{IssuerId, TaskId, TenantId};
 
 /// Lifecycle state of an operation task as observed by a business application.
-///
-/// New tasks start in `Pending` and reach one of two terminal states:
-/// `Completed` on success, `Failed` after exhausting retries or on any
-/// non-retryable error. The `InProgress` state covers both active
-/// execution and time spent paused waiting for retry timers — the BA
-/// does not distinguish the two. See `aspect-issuer.md`
-/// (Asynchronous execution).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
+    /// Initial state.
     Pending,
+    /// Covers both active execution and time paused waiting for retry timers.
     InProgress,
+    /// Terminal. The operation succeeded.
     Completed,
+    /// Terminal. The operation exhausted retries or hit a non-retryable error.
     Failed,
 }
 
@@ -77,33 +74,29 @@ impl TaskType {
 }
 
 /// Intermediate data produced by a successfully executed step.
-///
-/// The worker merges `state_data_patch` into the task row's `state_data`
-/// JSONB column before advancing to the next step. Each entry overwrites
-/// the existing key with the same name; entries not in the patch are
-/// preserved.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct StepResult {
+    /// Merged into the task row's `state_data` JSONB column before advancing
+    /// to the next step. Each key overwrites the existing value; absent keys
+    /// are preserved.
     pub state_data_patch: serde_json::Map<String, Value>,
 }
 
 /// Outcome of a step function executed by the worker.
-///
-/// - `Done(result)` — step succeeded; `result` contributes to the
-///   accumulated state and the worker advances to the next step.
-/// - `Retry` — transient failure; the worker schedules another attempt
-///   with exponential backoff. If the elapsed-time cap is exceeded, the
-///   worker transitions the task to `Failed` instead of scheduling another
-///   retry.
-/// - `Terminal` — non-recoverable failure; the worker transitions the
-///   task to `Failed` immediately.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StepOutcome {
+    /// Step succeeded. `result` is merged into accumulated state and the
+    /// worker advances to the next step.
     Done(StepResult),
+    /// Transient failure. The worker schedules another attempt with exponential
+    /// backoff. If the elapsed-time cap is exceeded, the task transitions to
+    /// `Failed` instead.
     Retry {
         error_code: String,
         error_message: String,
     },
+    /// Non-recoverable failure. The worker transitions the task to `Failed`
+    /// immediately without scheduling a retry.
     Terminal {
         error_code: String,
         error_message: String,
@@ -113,9 +106,7 @@ pub enum StepOutcome {
 /// A long-running operation initiated by a business application.
 ///
 /// A task is created with state `Pending`, picked up by a worker, and
-/// runs through a sequence of internal steps until reaching a terminal
-/// state. See `aspect-issuer.md` (Asynchronous execution) and
-/// `impl-issuer.md` (Worker) for the choreography.
+/// runs through a sequence of internal steps until reaching a terminal state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperationTask {
     pub id: TaskId,
