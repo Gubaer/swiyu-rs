@@ -92,18 +92,11 @@ pub async fn find_by_id_for_tenant(
 }
 
 /// Outcome of [`mark_deactivated`].
-///
-/// `NowDeactivated` is the first-write case: the row was `Active`
-/// and the UPDATE flipped it. `Already` is the idempotent re-run
-/// case: the row is already `Deactivated`, so the UPDATE matched no
-/// rows but the issuer is in the desired terminal state. Callers in
-/// the deactivate saga treat both as success; the variant is exposed
-/// so the worker can log the distinction and so future code can
-/// gate side effects (e.g. only emit a domain event on the
-/// first-write transition).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkOutcome {
+    /// Idempotent re-run: the row was already `Deactivated`.
     Already,
+    /// First write: the row was `Active` and the UPDATE flipped it.
     NowDeactivated,
 }
 
@@ -165,17 +158,11 @@ pub async fn mark_deactivated(
 }
 
 /// Outcome of [`swap_key_triple`].
-///
-/// `NowSwapped` is the first-write case: at least one of the row's
-/// three key columns differed from the requested triple and the
-/// UPDATE installed the new values. `Already` is the idempotent
-/// re-run case: all three columns already matched the requested
-/// triple, so the UPDATE matched no rows. Callers treat both as
-/// success; the variant lets the worker log the distinction and
-/// lets future code gate side effects on first-write transitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwapOutcome {
+    /// Idempotent re-run: all three key columns already matched the requested triple.
     Already,
+    /// First write: at least one key column differed and the UPDATE installed the new values.
     NowSwapped,
 }
 
@@ -296,13 +283,10 @@ pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), Pers
 pub use super::ListPage;
 
 /// Inputs to a paginated list query against `issuers`.
-///
-/// `cursor` carries the `(created_at, id)` of the last item of the
-/// previous page; `None` requests the first page. Ordering is
-/// `(created_at DESC, id DESC)` so newest issuers come first, matching
-/// the credential-offers list.
 #[derive(Debug)]
 pub struct ListPageQuery {
+    /// `(created_at, id)` of the last item of the previous page; `None`
+    /// requests the first page. Ordering is `(created_at DESC, id DESC)`.
     pub cursor: Option<(DateTime<Utc>, String)>,
     pub limit: u32,
 }
