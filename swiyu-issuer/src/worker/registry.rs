@@ -19,16 +19,15 @@ use swiyu_registries::identifier::{Allocation, IdentifierRegistryClient};
 use swiyu_registries::status::{StatusListEntry, StatusRegistryClient};
 
 /// A successful `fetch_log` result.
-///
-/// Pairs the raw JSONL body the registry returned with the parsed
-/// entries. Both views matter because the SWIYU registry's PUT
-/// endpoint is "replace the whole log", not "append": each
-/// publish_log step needs the parsed entries to build the next entry
-/// on top, and the raw bytes to put back the prior entries verbatim.
-/// Re-serialising the parsed entries would risk byte-level drift
-/// (key ordering, whitespace) and corrupt the entryHash chain.
 pub struct FetchedLog {
+    /// Raw JSONL body as returned by the registry. Kept verbatim so
+    /// publish_log can PUT the prior entries back unchanged —
+    /// re-serialising the parsed entries would risk key-ordering or
+    /// whitespace drift that would corrupt the entryHash chain.
     pub raw: String,
+    /// Parsed entries, used to build the next log entry on top of the
+    /// current tail. The SWIYU registry's PUT endpoint is
+    /// "replace the whole log", not "append".
     pub entries: Vec<DIDLogEntry>,
 }
 
