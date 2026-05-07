@@ -33,8 +33,7 @@ pub async fn exists_for_tenant(
 /// The wallet-facing OIDC binary has no tenant in its URL, so the
 /// lookup needs to fall back on the issuer id alone. The row's
 /// `tenant_id` column carries the resolution, which the handler
-/// then threads into any tenant-scoped persistence call (defense in
-/// depth, per `aspect-multi-tenancy.md`).
+/// then threads into any tenant-scoped persistence call.
 ///
 /// Returns `Ok(None)` for "no such issuer". Callers in the OIDC
 /// binary should respond with the same generic 404 they would for

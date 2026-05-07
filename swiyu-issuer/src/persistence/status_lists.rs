@@ -27,8 +27,7 @@ use super::helpers::integrity_from;
 /// in the *unallocated-on-registry* state until the worker fills them
 /// in) or `Some` (the issuer-creation worker has already obtained them
 /// from `create_status_list_entry` and persists them alongside the
-/// row). See `plan-credential-management.md` § "Eager registry-side
-/// provisioning at issuer-creation time".
+/// row).
 ///
 /// Returns the id of the newly provisioned list. The function does
 /// **not** check the issuer exists; the FK on `status_lists.
@@ -191,9 +190,7 @@ pub async fn allocate_index(
 /// Reads the bitstring `FOR UPDATE` (row exclusive lock) inside the
 /// caller-supplied transaction, applies the bit edit in memory via
 /// the encoding helpers, then writes the full bitstring back. The
-/// 32 KB read-modify-write is acceptable at v0.1.0 issuance volumes;
-/// see `aspect-credential-management.md` (Bitstring read-modify-write
-/// contention).
+/// 32 KB read-modify-write is acceptable at current issuance volumes.
 ///
 /// Returns `PersistenceError::NotFound` when the list does not exist.
 pub async fn write_bit(
