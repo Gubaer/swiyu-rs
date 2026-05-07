@@ -85,7 +85,7 @@ mod tests {
         uuid_bytes[6] = (uuid_bytes[6] & 0x0F) | 0x40;
         uuid_bytes[8] = (uuid_bytes[8] & 0x3F) | 0x80;
         GeneratedKeyPair {
-            id: KeyPairId::from_uuid(Uuid::from_bytes(uuid_bytes)),
+            id: KeyPairId::from(Uuid::from_bytes(uuid_bytes)),
             public_key: RawPublicKey {
                 algorithm,
                 bytes: vec![uuid_byte; pk_len],

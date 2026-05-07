@@ -390,9 +390,9 @@ fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
             .transpose()
             .map_err(integrity_from)?,
         description,
-        authorized_key_id: authorized_key_id.map(KeyPairId::from_uuid),
-        authentication_key_id: authentication_key_id.map(KeyPairId::from_uuid),
-        assertion_key_id: assertion_key_id.map(KeyPairId::from_uuid),
+        authorized_key_id: authorized_key_id.map(KeyPairId::from),
+        authentication_key_id: authentication_key_id.map(KeyPairId::from),
+        assertion_key_id: assertion_key_id.map(KeyPairId::from),
         display_name,
         logo_uri,
         locale,

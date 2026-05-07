@@ -97,7 +97,7 @@ mod tests {
         let mut bytes = [byte; 16];
         bytes[6] = (bytes[6] & 0x0F) | 0x40;
         bytes[8] = (bytes[8] & 0x3F) | 0x80;
-        KeyPairId::from_uuid(Uuid::from_bytes(bytes))
+        KeyPairId::from(Uuid::from_bytes(bytes))
     }
 
     fn fixture_p256() -> P256PublicKey {

@@ -17,14 +17,12 @@ pub use vault::{VaultSigningEngine, VaultSigningEngineConfig};
 /// The signing algorithm of a key pair.
 ///
 /// Limited to the two algorithms required by SWIYU. The mapping from
-/// `KeyRole` to algorithm is fixed by `KeyAlgorithm::for_role`:
-///
-/// - `Ed25519` — used for the `Authorized` role (signs DID log entries).
-/// - `EcdsaP256` — ECDSA over the NIST P-256 curve. Used for the
-///   `Assertion` and `Authentication` roles.
+/// `KeyRole` to algorithm is fixed by `KeyAlgorithm::for_role`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyAlgorithm {
+    /// Used for the `Authorized` role (signs DID log entries).
     Ed25519,
+    /// ECDSA over the NIST P-256 curve. Used for the `Assertion` and `Authentication` roles.
     EcdsaP256,
 }
 
@@ -74,12 +72,14 @@ impl KeyPairId {
         Self(Uuid::new_v4())
     }
 
-    pub fn from_uuid(uuid: Uuid) -> Self {
-        Self(uuid)
-    }
-
     pub fn as_uuid(&self) -> &Uuid {
         &self.0
+    }
+}
+
+impl From<Uuid> for KeyPairId {
+    fn from(uuid: Uuid) -> Self {
+        Self(uuid)
     }
 }
 
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn key_pair_id_display_uses_hyphenated_uuid() {
         let uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        let id = KeyPairId::from_uuid(uuid);
+        let id = KeyPairId::from(uuid);
         assert_eq!(id.to_string(), "550e8400-e29b-41d4-a716-446655440000");
     }
 }
