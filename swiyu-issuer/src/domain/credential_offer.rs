@@ -54,8 +54,7 @@ impl TryFrom<&str> for CredentialOfferState {
 /// pre-authorisation code lives on this aggregate **plaintext during
 /// the pending window** because the OID4VCI by-reference flow makes
 /// the bare value retrievable at request time; it is set to `None`
-/// at the first terminal-state transition. See
-/// `specs/aspect-persistence.md` for the rationale.
+/// at the first terminal-state transition.
 #[derive(Debug, Clone)]
 pub struct CredentialOffer {
     /// Generated at construction time by the application, not by
