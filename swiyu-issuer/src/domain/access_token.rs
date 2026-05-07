@@ -14,7 +14,7 @@ const ACCESS_TOKEN_BYTES: usize = 16;
 /// returned to the wallet exactly once at the token endpoint and is
 /// never persisted; only its [`AccessTokenHash`] is. The redacted
 /// `Debug` impl prevents accidental log leakage; comparison against
-/// a stored hash always goes through [`AccessTokenHash::matches`].
+/// a stored hash always goes through [`AccessTokenHash`].
 pub struct AccessTokenSecret(String);
 
 impl AccessTokenSecret {
@@ -57,19 +57,13 @@ impl fmt::Debug for AccessTokenSecret {
     }
 }
 
-/// A persisted access-token row.
-///
-/// Returned by `persistence::oidc::access_tokens::find_valid_by_hash`
-/// after a successful Bearer-header lookup at the credential
-/// endpoint. Carries the offer_id so the handler can fetch the
-/// associated `credential_offers` row, and tenant/issuer for
-/// defense-in-depth scoping on the subsequent state-transition
-/// writes.
+/// A persisted access-token row, returned after a successful Bearer-header lookup.
 #[derive(Debug, Clone)]
 pub struct AccessToken {
     pub token_hash: AccessTokenHash,
     pub tenant_id: TenantId,
     pub issuer_id: IssuerId,
+    /// Used to fetch the associated `credential_offers` row.
     pub offer_id: CredentialOfferId,
     pub expires_at: DateTime<Utc>,
 }
@@ -86,10 +80,6 @@ impl AccessTokenHash {
 
     pub fn from_stored(s: impl Into<String>) -> Self {
         Self(s.into())
-    }
-
-    pub fn matches(&self, candidate: &AccessTokenSecret) -> bool {
-        self == &candidate.hash()
     }
 }
 
@@ -114,14 +104,14 @@ mod tests {
     fn matches_succeeds_for_same_secret() {
         let secret = AccessTokenSecret::generate();
         let stored = secret.hash();
-        assert!(stored.matches(&secret));
+        assert_eq!(stored, secret.hash());
     }
 
     #[test]
     fn matches_fails_for_different_secrets() {
         let stored = AccessTokenSecret::generate().hash();
         let other = AccessTokenSecret::generate();
-        assert!(!stored.matches(&other));
+        assert_ne!(stored, other.hash());
     }
 
     #[test]

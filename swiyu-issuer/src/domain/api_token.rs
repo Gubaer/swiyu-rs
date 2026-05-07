@@ -19,7 +19,7 @@ const WIRE_PREFIX: &str = "tok_";
 /// `ApiTokenSecret` deliberately does not implement `Clone`,
 /// `Display`, or `serde::Serialize`. The custom `Debug` impl redacts
 /// the value to prevent accidental log leakage. Comparison against a
-/// stored token always goes through [`ApiTokenHash::matches`], so the
+/// stored token always goes through [`ApiTokenHash`], so the
 /// bare secret never enters the persistence-layer signatures.
 pub struct ApiTokenSecret(String);
 
@@ -94,10 +94,6 @@ impl ApiTokenHash {
 
     pub fn from_stored(s: impl Into<String>) -> Self {
         Self(s.into())
-    }
-
-    pub fn matches(&self, candidate: &ApiTokenSecret) -> bool {
-        self == &candidate.hash()
     }
 }
 
@@ -222,14 +218,14 @@ mod tests {
     fn matches_succeeds_for_same_secret() {
         let secret = ApiTokenSecret::generate();
         let stored = secret.hash();
-        assert!(stored.matches(&secret));
+        assert_eq!(stored, secret.hash());
     }
 
     #[test]
     fn matches_fails_for_different_secrets() {
         let stored = ApiTokenSecret::generate().hash();
         let other = ApiTokenSecret::generate();
-        assert!(!stored.matches(&other));
+        assert_ne!(stored, other.hash());
     }
 
     #[test]

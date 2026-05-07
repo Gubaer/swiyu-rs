@@ -65,10 +65,6 @@ impl NonceHash {
     pub fn from_stored(s: impl Into<String>) -> Self {
         Self(s.into())
     }
-
-    pub fn matches(&self, candidate: &NonceSecret) -> bool {
-        self == &candidate.hash()
-    }
 }
 
 #[cfg(test)]
@@ -92,14 +88,14 @@ mod tests {
     fn matches_succeeds_for_same_nonce() {
         let nonce = NonceSecret::generate();
         let stored = nonce.hash();
-        assert!(stored.matches(&nonce));
+        assert_eq!(stored, nonce.hash());
     }
 
     #[test]
     fn matches_fails_for_different_nonces() {
         let stored = NonceSecret::generate().hash();
         let other = NonceSecret::generate();
-        assert!(!stored.matches(&other));
+        assert_ne!(stored, other.hash());
     }
 
     #[test]
