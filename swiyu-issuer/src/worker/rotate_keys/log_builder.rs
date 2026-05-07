@@ -32,10 +32,6 @@ use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpo
 use crate::domain::{Issuer, IssuerState, KeyAlgorithm, SigningEngine, SigningEngineError};
 use crate::worker::create_issuer::KeyTriple;
 
-/// `did:tdw:0.3` is the only DID method swiyu-issuer can validate
-/// end-to-end against the SWIYU registry.
-const FORMAT: LogEntryFormat = LogEntryFormat::TDW03;
-
 #[derive(Debug, Error)]
 pub enum BuildError {
     #[error("issuer is not in state Active: {0}")]
@@ -156,7 +152,7 @@ pub async fn build_rotation_entry<S: SigningEngine>(
     let now_iso = now.to_rfc3339_opts(SecondsFormat::Secs, true);
 
     let entry_template = DIDLogEntry::new_rotation(
-        &FORMAT,
+        &LogEntryFormat::TDW03,
         &prev_version_id,
         &issuer.did,
         &new_authorized_multikey,
@@ -169,12 +165,12 @@ pub async fn build_rotation_entry<S: SigningEngine>(
     // with an empty proof slot at index 4. The entryHash must be
     // computed over the 4-element preliminary form (no proof slot).
     let mut entry_value = Value::from(entry_template);
-    strip_proof_slot(&mut entry_value, &FORMAT);
+    strip_proof_slot(&mut entry_value, &LogEntryFormat::TDW03);
 
     let next_seq = log.len() as u32 + 1;
     let entry_hash = derive_entry_hash(&entry_value);
     let new_version_id = format!("{next_seq}-{entry_hash}");
-    set_version_id(&mut entry_value, &new_version_id, &FORMAT);
+    set_version_id(&mut entry_value, &new_version_id, &LogEntryFormat::TDW03);
 
     // Sign with the OUTGOING Authorized key. Even when Authorized
     // is itself among the rotated roles, the old key signs this
@@ -197,7 +193,7 @@ pub async fn build_rotation_entry<S: SigningEngine>(
     let hash_data = proof_config.signing_input(&document_for_hash);
     let signature = engine.sign(&outgoing_authorized_id, &hash_data).await?;
     let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
-    append_proof(&mut entry_value, Value::from(proof), &FORMAT);
+    append_proof(&mut entry_value, Value::from(proof), &LogEntryFormat::TDW03);
 
     Ok(entry_value)
 }

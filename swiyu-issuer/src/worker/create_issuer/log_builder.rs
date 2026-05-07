@@ -23,11 +23,6 @@ use crate::domain::{KeyAlgorithm, SigningEngine, SigningEngineError};
 
 use super::CreateIssuerStateData;
 
-/// `did:tdw:0.3` is the only DID method swiyu-issuer can validate
-/// end-to-end against the SWIYU registry. `did:webvh:1.0` lives in
-/// swiyu-core for verifier-side reasons but is not produced here.
-const FORMAT: LogEntryFormat = LogEntryFormat::TDW03;
-
 #[derive(Debug, Error)]
 pub enum BuildError {
     #[error("state_data missing required field: {0}")]
@@ -122,7 +117,7 @@ pub async fn build_log_entry<S: SigningEngine>(
     let now_iso = now.to_rfc3339_opts(SecondsFormat::Secs, true);
 
     let entry_template = DIDLogEntry::new_genesis(
-        &FORMAT,
+        &LogEntryFormat::TDW03,
         &authorized_multikey,
         &did_placeholder,
         &authentication_key,
@@ -132,7 +127,7 @@ pub async fn build_log_entry<S: SigningEngine>(
 
     // SCID is derived over the four-element preliminary form.
     let mut prelim = Value::from(entry_template);
-    strip_proof_slot(&mut prelim, &FORMAT);
+    strip_proof_slot(&mut prelim, &LogEntryFormat::TDW03);
     let scid = derive_scid(&prelim);
 
     // Substitute {SCID} into versionId and the DID.
@@ -143,7 +138,7 @@ pub async fn build_log_entry<S: SigningEngine>(
 
     let entry_hash = derive_entry_hash(&entry_value);
     let version_id = format!("1-{entry_hash}");
-    set_version_id(&mut entry_value, &version_id, &FORMAT);
+    set_version_id(&mut entry_value, &version_id, &LogEntryFormat::TDW03);
 
     // The DID Toolbox (Java) signs only the document content (entry[3]["value"]
     // for did:tdw 0.3), not the entire entry. We mirror that to interoperate
@@ -162,7 +157,7 @@ pub async fn build_log_entry<S: SigningEngine>(
     let hash_data = proof_config.signing_input(&document_for_hash);
     let signature = engine.sign(&key_ids.authorized, &hash_data).await?;
     let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
-    append_proof(&mut entry_value, Value::from(proof), &FORMAT);
+    append_proof(&mut entry_value, Value::from(proof), &LogEntryFormat::TDW03);
 
     Ok(entry_value)
 }

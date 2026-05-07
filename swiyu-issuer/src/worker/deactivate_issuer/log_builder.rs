@@ -23,11 +23,6 @@ use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpo
 
 use crate::domain::{Issuer, IssuerState, KeyAlgorithm, SigningEngine, SigningEngineError};
 
-/// `did:tdw:0.3` is the only DID method swiyu-issuer can validate
-/// end-to-end against the SWIYU registry. Mirrors the same `FORMAT`
-/// constant in `create_issuer::log_builder`.
-const FORMAT: LogEntryFormat = LogEntryFormat::TDW03;
-
 #[derive(Debug, Error)]
 pub enum BuildError {
     #[error("issuer is not in state Active: {0}")]
@@ -117,8 +112,12 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
 
     let now_iso = now.to_rfc3339_opts(SecondsFormat::Secs, true);
 
-    let entry_template =
-        DIDLogEntry::new_deactivation(&FORMAT, &prev_version_id, &prev_doc, &now_iso);
+    let entry_template = DIDLogEntry::new_deactivation(
+        &LogEntryFormat::TDW03,
+        &prev_version_id,
+        &prev_doc,
+        &now_iso,
+    );
 
     // `to_json` emits the 5-element TDW form including an empty
     // proof slot at index 4. The entryHash must be computed over
@@ -127,12 +126,12 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
     // log_builder. Strip first, then append the real proof at the
     // end.
     let mut entry_value = Value::from(entry_template);
-    strip_proof_slot(&mut entry_value, &FORMAT);
+    strip_proof_slot(&mut entry_value, &LogEntryFormat::TDW03);
 
     let next_seq = log.len() as u32 + 1;
     let entry_hash = derive_entry_hash(&entry_value);
     let new_version_id = format!("{next_seq}-{entry_hash}");
-    set_version_id(&mut entry_value, &new_version_id, &FORMAT);
+    set_version_id(&mut entry_value, &new_version_id, &LogEntryFormat::TDW03);
 
     let authorized_pk = engine.get_public_key(&authorized_key_id).await?;
     if authorized_pk.algorithm != KeyAlgorithm::Ed25519 || authorized_pk.bytes.len() != 32 {
@@ -169,7 +168,7 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
     let hash_data = proof_config.signing_input(&document_for_hash);
     let signature = engine.sign(&authorized_key_id, &hash_data).await?;
     let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
-    append_proof(&mut entry_value, Value::from(proof), &FORMAT);
+    append_proof(&mut entry_value, Value::from(proof), &LogEntryFormat::TDW03);
 
     Ok(entry_value)
 }
