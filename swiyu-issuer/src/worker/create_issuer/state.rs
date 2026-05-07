@@ -56,7 +56,7 @@ pub struct CreateIssuerStateData {
     /// Set to `true` once `publish_log` has succeeded; when `true` that step
     /// is skipped on resume. The registry's PUT endpoint returns no body, so
     /// the worker records a boolean rather than a server-supplied identifier.
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "crate::worker::is_false")]
     pub log_published: bool,
 
     /// Registry-side status-list entry UUID returned by
@@ -82,10 +82,6 @@ pub struct KeyTriple {
     pub authentication: KeyPairId,
     /// ECDSA P-256 key embedded in the DID document as the assertion verification method.
     pub assertion: KeyPairId,
-}
-
-fn is_false(b: &bool) -> bool {
-    !*b
 }
 
 #[cfg(test)]

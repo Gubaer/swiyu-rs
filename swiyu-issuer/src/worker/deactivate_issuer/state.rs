@@ -27,12 +27,8 @@ pub struct DeactivateIssuerStateData {
     /// SWIYU Identifier Registry. The registry's PUT endpoint returns
     /// no body, so the worker records a boolean rather than a
     /// server-supplied identifier — same pattern as `CreateIssuer`.
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "crate::worker::is_false")]
     pub log_published: bool,
-}
-
-fn is_false(b: &bool) -> bool {
-    !*b
 }
 
 #[cfg(test)]

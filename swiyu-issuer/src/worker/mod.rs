@@ -19,6 +19,12 @@ pub mod status_list_publisher;
 /// `did:tdw:<scid>:<domain>:<path-segments>` where the last path
 /// segment is the registry-assigned UUID. Returns `None` when the DID
 /// carries no path component.
+// serde's skip_serializing_if requires a fn path; there is no std equivalent of
+// Option::is_none for bool, so we provide one here for all state modules.
+pub(crate) fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 pub(crate) fn registry_identifier(did: &swiyu_core::did::DID) -> Option<String> {
     did.path()?
         .rsplit(':')

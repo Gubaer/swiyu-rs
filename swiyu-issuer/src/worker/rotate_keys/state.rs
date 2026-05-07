@@ -138,12 +138,8 @@ pub struct RotateKeysStateData {
     /// PUT endpoint returns no body, so the worker records a boolean
     /// rather than a server-supplied identifier — same pattern as
     /// `CreateIssuer` and `DeactivateIssuer`.
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "crate::worker::is_false")]
     pub log_published: bool,
-}
-
-fn is_false(b: &bool) -> bool {
-    !*b
 }
 
 #[cfg(test)]
