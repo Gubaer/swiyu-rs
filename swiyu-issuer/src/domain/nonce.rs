@@ -32,15 +32,17 @@ impl NonceSecret {
         &self.0
     }
 
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-
     pub fn hash(&self) -> NonceHash {
         let mut hasher = Sha256::new();
         hasher.update(self.0.as_bytes());
         let digest = hasher.finalize();
         NonceHash(bs58::encode(&digest).into_string())
+    }
+}
+
+impl From<NonceSecret> for String {
+    fn from(nonce: NonceSecret) -> Self {
+        nonce.0
     }
 }
 

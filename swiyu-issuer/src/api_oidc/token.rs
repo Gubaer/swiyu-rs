@@ -129,10 +129,10 @@ pub async fn token(
     .await?;
 
     Ok(Json(TokenResponse {
-        access_token: access_token.into_inner(),
+        access_token: access_token.into(),
         token_type: "Bearer",
         expires_in: state.config.access_token_ttl.num_seconds(),
-        c_nonce: nonce.into_inner(),
+        c_nonce: nonce.into(),
         c_nonce_expires_in: state.config.c_nonce_ttl.num_seconds(),
     }))
 }

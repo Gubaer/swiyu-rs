@@ -35,15 +35,17 @@ impl AccessTokenSecret {
         &self.0
     }
 
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-
     pub fn hash(&self) -> AccessTokenHash {
         let mut hasher = Sha256::new();
         hasher.update(self.0.as_bytes());
         let digest = hasher.finalize();
         AccessTokenHash(bs58::encode(&digest).into_string())
+    }
+}
+
+impl From<AccessTokenSecret> for String {
+    fn from(token: AccessTokenSecret) -> Self {
+        token.0
     }
 }
 

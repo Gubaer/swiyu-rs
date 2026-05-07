@@ -78,7 +78,7 @@ pub async fn create(
 
     let response = CreateCredentialOfferResponse {
         id: offer.id.bare().to_string(),
-        pre_auth_code: pre_auth_code.into_inner(),
+        pre_auth_code: pre_auth_code.into(),
         offer_deeplink: deeplink,
         expires_at,
     };

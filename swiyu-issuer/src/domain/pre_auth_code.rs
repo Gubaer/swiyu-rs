@@ -32,15 +32,17 @@ impl PreAuthCode {
         &self.0
     }
 
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-
     /// Reconstructs a `PreAuthCode` from a bare value the persistence
     /// layer just read out of `credential_offers.pre_auth_code`. Only
     /// callers inside `persistence` should invoke this.
     pub fn from_stored(s: impl Into<String>) -> Self {
         Self(s.into())
+    }
+}
+
+impl From<PreAuthCode> for String {
+    fn from(code: PreAuthCode) -> Self {
+        code.0
     }
 }
 
