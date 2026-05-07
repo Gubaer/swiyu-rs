@@ -24,7 +24,7 @@ pub const MAX_TASK_AGE_HOURS: i64 = 24;
 /// `attempts` is the post-increment failure count for the current step
 /// (`attempts == 1` after the first failure), matching how the worker
 /// records the value before computing the delay.
-pub fn backoff_delay(attempts: u32, rng: &mut (impl RngCore + ?Sized)) -> Duration {
+pub fn backoff_delay<R: RngCore + ?Sized>(attempts: u32, rng: &mut R) -> Duration {
     // attempts >= 6 already exceeds the 1h ceiling (60_000 << 6 = 3_840_000 ms);
     // clamp to keep the shift safely inside u64 for any future growth in attempts.
     let effective_attempts = attempts.min(6);
