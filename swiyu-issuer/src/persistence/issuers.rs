@@ -294,14 +294,7 @@ pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), Pers
     Ok(())
 }
 
-/// One page of issuers plus a flag indicating whether more rows
-/// remain past the current page. Mirrors
-/// `credential_offers::ListPage`.
-#[derive(Debug)]
-pub struct ListPage {
-    pub items: Vec<Issuer>,
-    pub has_more: bool,
-}
+pub use super::ListPage;
 
 /// Inputs to a paginated list query against `issuers`.
 ///
@@ -325,7 +318,7 @@ pub async fn list(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
     query: ListPageQuery,
-) -> Result<ListPage, PersistenceError> {
+) -> Result<ListPage<Issuer>, PersistenceError> {
     let (cursor_created_at, cursor_issuer_id) = match query.cursor {
         Some((ts, id)) => (Some(ts), Some(id)),
         None => (None, None),

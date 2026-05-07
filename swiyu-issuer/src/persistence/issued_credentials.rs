@@ -71,17 +71,7 @@ pub async fn find(
     row.map(|row| row_to_credential(&row)).transpose()
 }
 
-/// One page of issued credentials plus a flag indicating whether more
-/// rows remain past the current page.
-///
-/// Mirrors the pagination shape used by `credential_offers::ListPage`
-/// and `issuers::ListPage`: the underlying query fetches `limit + 1`
-/// rows and drops the surplus before returning.
-#[derive(Debug)]
-pub struct ListPage {
-    pub items: Vec<IssuedCredential>,
-    pub has_more: bool,
-}
+pub use super::ListPage;
 
 #[derive(Debug, Default)]
 pub struct ListFilters {
@@ -107,7 +97,7 @@ pub async fn list(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
     query: ListPageQuery,
-) -> Result<ListPage, PersistenceError> {
+) -> Result<ListPage<IssuedCredential>, PersistenceError> {
     let (cursor_issued_at, cursor_credential_id) = match query.cursor {
         Some((ts, id)) => (Some(ts), Some(id)),
         None => (None, None),

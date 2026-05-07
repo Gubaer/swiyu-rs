@@ -69,17 +69,7 @@ pub async fn find_by_id(
     }
 }
 
-/// One page of credential offers plus a flag indicating whether more
-/// rows remain past the current page.
-///
-/// The flag is computed by fetching `limit + 1` rows internally and
-/// dropping the surplus before returning. Callers do not need to add
-/// the `+ 1` themselves.
-#[derive(Debug)]
-pub struct ListPage {
-    pub items: Vec<CredentialOffer>,
-    pub has_more: bool,
-}
+pub use super::ListPage;
 
 /// Inputs to a paginated list query against `credential_offers`.
 ///
@@ -104,7 +94,7 @@ pub async fn list(
     tenant_id: &TenantId,
     issuer_id: &IssuerId,
     query: ListPageQuery,
-) -> Result<ListPage, PersistenceError> {
+) -> Result<ListPage<CredentialOffer>, PersistenceError> {
     let (cursor_created_at, cursor_offer_id) = match query.cursor {
         Some((ts, id)) => (Some(ts), Some(id)),
         None => (None, None),
