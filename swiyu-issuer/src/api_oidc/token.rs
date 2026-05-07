@@ -9,29 +9,33 @@ use crate::persistence;
 use super::AppState;
 use super::oauth_error::OAuthError;
 
-const PRE_AUTHORIZED_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
-
 /// Form-encoded request body for `POST /token`.
-///
-/// The OID4VCI field name `pre-authorized_code` carries a hyphen,
-/// which serde would otherwise reject; the rename keeps the wire
-/// shape exact.
 #[derive(Debug, Deserialize)]
 pub struct TokenRequest {
     pub grant_type: String,
+    /// Wire name is `pre-authorized_code` (hyphen, not underscore) per OID4VCI.
     #[serde(rename = "pre-authorized_code")]
     pub pre_authorized_code: String,
 }
 
+/// Response body for `POST /token`.
 #[derive(Debug, Serialize)]
 pub struct TokenResponse {
     pub access_token: String,
+    /// Always `"Bearer"`.
     pub token_type: &'static str,
+    /// Access-token lifetime in seconds.
     pub expires_in: i64,
+    /// Nonce the wallet must include in its credential-request proof JWT.
     pub c_nonce: String,
+    /// Nonce lifetime in seconds.
     pub c_nonce_expires_in: i64,
 }
 
+/// `POST /i/{issuer_id}/token`
+///
+/// Exchanges a pre-authorised code for a bearer access token and a `c_nonce`
+/// for use in the subsequent credential-request proof JWT.
 pub async fn token(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
@@ -43,7 +47,7 @@ pub async fn token(
         "token request",
     );
 
-    if payload.grant_type != PRE_AUTHORIZED_GRANT_TYPE {
+    if payload.grant_type != super::PRE_AUTHORIZED_GRANT_TYPE {
         return Err(OAuthError::UnsupportedGrantType {
             grant_type: payload.grant_type,
         });
@@ -151,7 +155,7 @@ mod tests {
         let body = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Apre-authorized_code\
                     &pre-authorized_code=DevDevDevDev";
         let req: TokenRequest = serde_urlencoded::from_str(body).unwrap();
-        assert_eq!(req.grant_type, PRE_AUTHORIZED_GRANT_TYPE);
+        assert_eq!(req.grant_type, super::super::PRE_AUTHORIZED_GRANT_TYPE);
         assert_eq!(req.pre_authorized_code, "DevDevDevDev");
     }
 

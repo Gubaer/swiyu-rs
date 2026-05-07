@@ -52,6 +52,11 @@ pub struct CredentialResponse {
     pub credential: String,
 }
 
+/// `POST /i/{issuer_id}/credential`
+///
+/// OID4VCI credential-issuance endpoint. The wallet presents its bearer access token and a
+/// wallet-proof JWT; if both are valid and the underlying offer is still pending, the issuer
+/// signs and returns an SD-JWT VC.
 pub async fn credential(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
@@ -94,7 +99,7 @@ pub async fn credential(
         Utc::now(),
     )
     .await
-    .map_err(map_lookup)?
+    .map_err(OAuthError::from)?
     .ok_or_else(|| OAuthError::InvalidToken {
         description: "no valid access token matches the presented bearer".to_string(),
     })?;
@@ -108,10 +113,8 @@ pub async fn credential(
         });
     }
 
-    // Load the offer the access token was minted for. Per the spec,
-    // the offer must be `pending` and unexpired; observed-state
-    // resolution treats stored-`pending` past `expires_at` as
-    // `Expired`, which fails the check.
+    // The offer must be pending and unexpired; observed-state resolution
+    // treats stored-pending past `expires_at` as Expired, which fails the check below.
     let offer = persistence::credential_offers::find_by_id(
         &mut conn,
         &token.tenant_id,
@@ -119,7 +122,7 @@ pub async fn credential(
         &token.offer_id,
     )
     .await
-    .map_err(map_lookup)?;
+    .map_err(OAuthError::from)?;
 
     let now = Utc::now();
     if offer.observed_state(now) != CredentialOfferState::Pending {
@@ -135,18 +138,16 @@ pub async fn credential(
 
     let issuer = persistence::issuers::find_by_id(&mut conn, &issuer_id)
         .await
-        .map_err(map_lookup)?
+        .map_err(OAuthError::from)?
         .ok_or_else(|| {
             OAuthError::Internal(Box::new(std::io::Error::other(
                 "issuer disappeared after access-token validation",
             )))
         })?;
 
-    // The credential's JWS is signed with the issuer's Assertion key
-    // (P-256 / ES256). The seeded fixture issuer from migration 0001
-    // has no Assertion key configured, so it cannot issue credentials
-    // until it has been re-onboarded through the create_issuer task
-    // flow on the management API.
+    // The credential's JWS is signed with the issuer's Assertion key (P-256 / ES256).
+    // An issuer without an Assertion key must be onboarded through the create_issuer
+    // task flow on the management API before it can issue credentials.
     let assertion_key_id = issuer.assertion_key_id.ok_or_else(|| OAuthError::InvalidRequest {
         description: "issuer has no Assertion key configured; create the issuer through the issuer-management API first"
             .to_string(),
@@ -167,7 +168,7 @@ pub async fn credential(
     let nonce_offer_id =
         persistence::oidc::nonces::consume_by_hash(&mut conn, &nonce_secret.hash(), now)
             .await
-            .map_err(map_lookup)?
+            .map_err(OAuthError::from)?
             .ok_or_else(|| OAuthError::InvalidProof {
                 description: "nonce is unknown, expired, or already consumed".to_string(),
             })?;
@@ -185,9 +186,8 @@ pub async fn credential(
     // door but the local trace (allocation, row, offer transition)
     // is half-applied.
     //
-    // Signing latency (a few ms locally) extends the transaction;
-    // see plan-credential-management.md (Cross-phase risks) for the
-    // pool-sizing trade-off.
+    // Signing latency (a few ms) extends the transaction; keep the connection
+    // pool sized accordingly.
     let mut tx = state
         .pool
         .begin()
@@ -200,7 +200,7 @@ pub async fn credential(
     let status_claim = build_status_claim(&status_list_registry_url, status_list_index);
     let expires_at = now + Duration::days(CREDENTIAL_VALIDITY_DAYS);
     let credential = build_sd_jwt_vc(
-        state.engine.as_ref(),
+        state.signing_engine.as_ref(),
         &assertion_key_id,
         &issuer,
         &offer,
@@ -227,7 +227,7 @@ pub async fn credential(
     );
     persistence::issued_credentials::insert(&mut tx, &issued_credential)
         .await
-        .map_err(map_lookup)?;
+        .map_err(OAuthError::from)?;
     // TODO(audit): record IssuedCredentialIssued event in the same
     // transaction (action=issue, target=issued_credential.id, details
     // includes the originating offer_id).
@@ -253,7 +253,7 @@ pub async fn credential(
     })?;
     persistence::oidc::access_tokens::delete_by_hash(&mut tx, &token.token_hash)
         .await
-        .map_err(map_lookup)?;
+        .map_err(OAuthError::from)?;
     tx.commit()
         .await
         .map_err(|err| OAuthError::Internal(Box::new(err)))?;
@@ -281,7 +281,7 @@ async fn allocate_status_slot(
         tx, issuer_id,
     )
     .await
-    .map_err(map_lookup)?
+    .map_err(OAuthError::from)?
     {
         Some((id, Some(url))) => (id, url),
         Some((id, None)) => {
@@ -304,7 +304,7 @@ async fn allocate_status_slot(
 
     let index = persistence::status_lists::allocate_index(tx, &list_id)
         .await
-        .map_err(map_lookup)?
+        .map_err(OAuthError::from)?
         .ok_or_else(|| {
             OAuthError::Internal(Box::new(std::io::Error::other(format!(
                 "status list {list_id} is at capacity; rollover to a fresh \
@@ -664,10 +664,6 @@ enum BuildError {
     Json(#[from] serde_json::Error),
     #[error("signing engine: {0}")]
     Engine(#[from] SigningEngineError),
-}
-
-fn map_lookup(err: persistence::PersistenceError) -> OAuthError {
-    OAuthError::from(err)
 }
 
 #[cfg(test)]

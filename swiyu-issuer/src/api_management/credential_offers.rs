@@ -471,17 +471,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_issuer_id_accepts_valid_base58() {
-        assert!(parse_issuer_id("9hXq2vRtL8pK7f").is_ok());
-    }
-
-    #[test]
-    fn parse_issuer_id_rejects_invalid_character() {
-        let err = parse_issuer_id("notValid0").unwrap_err();
-        assert!(matches!(err, ApiError::InvalidInput { .. }));
-    }
-
-    #[test]
     fn parse_offer_id_rejects_invalid_character() {
         let err = parse_offer_id("notValid0").unwrap_err();
         assert!(matches!(err, ApiError::InvalidInput { .. }));

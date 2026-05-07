@@ -151,4 +151,17 @@ mod tests {
     fn resolve_list_limit_rejects_above_max() {
         assert!(resolve_list_limit(Some(MAX_LIST_LIMIT + 1)).is_err());
     }
+
+    #[test]
+    fn parse_issuer_id_accepts_valid_base58() {
+        assert!(parse_issuer_id("9hXq2vRtL8pK7f").is_ok());
+    }
+
+    #[test]
+    fn parse_issuer_id_rejects_invalid_character() {
+        assert!(matches!(
+            parse_issuer_id("notValid0").unwrap_err(),
+            ApiError::InvalidInput { .. }
+        ));
+    }
 }

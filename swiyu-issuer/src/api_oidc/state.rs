@@ -38,15 +38,15 @@ impl Config {
 pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<Config>,
-    pub engine: Arc<AnySigningEngine>,
+    pub signing_engine: Arc<AnySigningEngine>,
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, config: Config, engine: Arc<AnySigningEngine>) -> Self {
+    pub fn new(pool: PgPool, config: Config, signing_engine: Arc<AnySigningEngine>) -> Self {
         Self {
             pool,
             config: Arc::new(config),
-            engine,
+            signing_engine,
         }
     }
 }

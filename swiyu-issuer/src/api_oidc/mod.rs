@@ -10,6 +10,11 @@ pub use error::OidcError;
 pub use oauth_error::OAuthError;
 pub use state::{AppState, Config};
 
+use crate::domain::IssuerId;
+
+pub(super) const PRE_AUTHORIZED_GRANT_TYPE: &str =
+    "urn:ietf:params:oauth:grant-type:pre-authorized_code";
+
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -37,6 +42,12 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+pub(super) fn parse_issuer_id(raw: &str) -> Result<IssuerId, OidcError> {
+    IssuerId::from_bare(raw).map_err(|err| OidcError::InvalidInput {
+        details: format!("issuer_id path parameter: {err}"),
+    })
+}
+
 async fn healthz() -> &'static str {
     "ok"
 }
@@ -48,4 +59,22 @@ async fn readyz(State(state): State<AppState>) -> Result<&'static str, StatusCod
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     Ok("ok")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_issuer_id_accepts_valid_base58() {
+        assert!(parse_issuer_id("9hXq2vRtL8pK7f").is_ok());
+    }
+
+    #[test]
+    fn parse_issuer_id_rejects_invalid_character() {
+        assert!(matches!(
+            parse_issuer_id("notValid0").unwrap_err(),
+            OidcError::InvalidInput { .. }
+        ));
+    }
 }

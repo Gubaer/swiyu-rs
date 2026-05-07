@@ -3,7 +3,6 @@ use axum::extract::{Path, State};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use crate::domain::IssuerId;
 use crate::domain::vct::CATALOGUE;
 use crate::persistence;
 
@@ -16,33 +15,29 @@ use super::error::OidcError;
 /// `swiyu-didtool`'s assertion key emits.
 const SIGNING_ALG: &str = "ES256";
 
-/// OID4VCI's pre-authorised-code grant URI.
-const PRE_AUTHORIZED_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
-
-/// Wallet-facing OID4VCI metadata document.
-///
-/// Field order and naming follow the OID4VCI draft we target — see
-/// `impl_api_oidc.md` *Open* for the draft-version pinning question.
-/// `display` is an array of locale-keyed entries so the wallet can
-/// pick a localised name; the issuers table carries one optional
-/// `(display_name, logo_uri, locale)` triple, which maps to a
-/// single-element array (or omitted entirely if `display_name` is
-/// absent).
+/// Wallet-facing OID4VCI credential-issuer metadata document.
 #[derive(Debug, Serialize)]
 pub struct CredentialIssuerMetadata {
     pub credential_issuer: String,
     pub credential_endpoint: String,
     pub authorization_servers: Vec<String>,
     pub credential_configurations_supported: Value,
+    /// Localised display names for the issuer. Sourced from the issuer row's
+    /// `(display_name, logo_uri, locale)` triple; omitted entirely when
+    /// `display_name` is absent.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub display: Vec<DisplayEntry>,
 }
 
+/// One locale-keyed display entry for the issuer's human-readable identity.
 #[derive(Debug, Serialize)]
 pub struct DisplayEntry {
+    /// Human-readable issuer name.
     pub name: String,
+    /// BCP 47 language tag (e.g. `"en-US"`). Omitted when not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
+    /// Optional issuer logo. Omitted when not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo: Option<DisplayLogo>,
 }
@@ -61,7 +56,7 @@ pub async fn credential_issuer_metadata(
         "issuer metadata requested",
     );
 
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
 
     let mut conn = state
         .pool
@@ -95,20 +90,16 @@ pub async fn credential_issuer_metadata(
     }))
 }
 
-/// OAuth authorization server metadata document (RFC 8414 + the
-/// OID4VCI extensions). Required by the OID4VCI draft when the
-/// credential issuer is also the authorization server, which is the
-/// only mode this binary supports.
-///
-/// Field naming uses RFC 8414 spelling — note `pre-authorized_grant_
-/// anonymous_access_supported` carries a hyphen, not an underscore,
-/// per the OID4VCI registration of that metadata field.
+/// OAuth authorization server metadata document (RFC 8414 + OID4VCI extensions).
 #[derive(Debug, Serialize)]
 pub struct OauthAuthorizationServerMetadata {
+    /// Issuer identifier URL of this authorization server.
     pub issuer: String,
     pub token_endpoint: String,
     pub grant_types_supported: Vec<&'static str>,
     pub token_endpoint_auth_methods_supported: Vec<&'static str>,
+    /// Serialised with a hyphen per the OID4VCI metadata registration:
+    /// `pre-authorized_grant_anonymous_access_supported`.
     #[serde(rename = "pre-authorized_grant_anonymous_access_supported")]
     pub pre_authorized_grant_anonymous_access_supported: bool,
 }
@@ -122,7 +113,7 @@ pub async fn oauth_authorization_server_metadata(
         "oauth authorization-server metadata requested",
     );
 
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
 
     let mut conn = state
         .pool
@@ -145,18 +136,12 @@ pub async fn oauth_authorization_server_metadata(
     Ok(Json(OauthAuthorizationServerMetadata {
         issuer: issuer_url,
         token_endpoint,
-        grant_types_supported: vec![PRE_AUTHORIZED_GRANT_TYPE],
+        grant_types_supported: vec![super::PRE_AUTHORIZED_GRANT_TYPE],
         // Pre-auth flow does not authenticate the client at the token
         // endpoint; the pre-authorised code itself is the credential.
         token_endpoint_auth_methods_supported: vec!["none"],
         pre_authorized_grant_anonymous_access_supported: true,
     }))
-}
-
-fn parse_issuer_id(raw: &str) -> Result<IssuerId, OidcError> {
-    IssuerId::from_bare(raw).map_err(|err| OidcError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })
 }
 
 fn build_credential_configurations() -> Value {
@@ -185,17 +170,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_issuer_id_accepts_valid_base58() {
-        assert!(parse_issuer_id("9hXq2vRtL8pK7f").is_ok());
-    }
-
-    #[test]
-    fn parse_issuer_id_rejects_invalid_character() {
-        let err = parse_issuer_id("notValid0").unwrap_err();
-        assert!(matches!(err, OidcError::InvalidInput { .. }));
-    }
-
-    #[test]
     fn oauth_metadata_serializes_with_hyphenated_field_name() {
         // Round-trip the struct to make sure the OID4VCI-specific
         // hyphenated field name is honoured by serde's rename, not
@@ -203,7 +177,7 @@ mod tests {
         let m = OauthAuthorizationServerMetadata {
             issuer: "https://example.com/i/abc".to_string(),
             token_endpoint: "https://example.com/i/abc/token".to_string(),
-            grant_types_supported: vec![PRE_AUTHORIZED_GRANT_TYPE],
+            grant_types_supported: vec![super::super::PRE_AUTHORIZED_GRANT_TYPE],
             token_endpoint_auth_methods_supported: vec!["none"],
             pre_authorized_grant_anonymous_access_supported: true,
         };

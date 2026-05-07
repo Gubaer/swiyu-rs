@@ -4,31 +4,28 @@ use chrono::Utc;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::domain::{CredentialOfferId, CredentialOfferState, IssuerId};
+use crate::domain::{CredentialOfferId, CredentialOfferState};
 use crate::persistence;
 
 use super::AppState;
 use super::error::OidcError;
 
-const PRE_AUTHORIZED_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
-
-/// OID4VCI `CredentialOffer` body returned behind the
-/// `credential_offer_uri` from the deeplink.
-///
-/// `grants` is a JSON object whose keys are grant-type URIs; we
-/// emit a single entry for the pre-authorised-code grant. The body
-/// carries the bare pre-auth code (single-use bearer secret) — see
-/// `specs/impl_api_oidc.md` for the exposure window. Server-side
-/// the bare code lives in `credential_offers.pre_auth_code` until
-/// the offer's first terminal-state transition (`cancel` or
-/// `mark_issued`) NULLs it.
+/// OID4VCI `CredentialOffer` body returned behind the `credential_offer_uri` deeplink.
 #[derive(Debug, Serialize)]
 pub struct CredentialOfferBody {
     pub credential_issuer: String,
     pub credential_configuration_ids: Vec<String>,
+    /// JSON object keyed by grant-type URI; we emit a single pre-authorised-code entry
+    /// carrying the bare code (single-use bearer secret). The code lives in
+    /// `credential_offers.pre_auth_code` until `cancel` or `mark_issued` NULLs it.
     pub grants: Value,
 }
 
+/// `GET /i/{issuer_id}/credential-offer/{offer_id}`
+///
+/// Returns the OID4VCI credential-offer body that wallets fetch via the `credential_offer_uri`
+/// deeplink. Responds with `410 Gone` when the offer has expired and `404 Not Found` when it
+/// has already been issued or cancelled.
 pub async fn credential_offer(
     State(state): State<AppState>,
     Path((issuer_id_str, offer_id_str)): Path<(String, String)>,
@@ -39,7 +36,7 @@ pub async fn credential_offer(
         "credential offer fetch (wallet) requested",
     );
 
-    let issuer_id = parse_issuer_id(&issuer_id_str)?;
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
     let offer_id = parse_offer_id(&offer_id_str)?;
 
     let mut conn = state
@@ -61,8 +58,10 @@ pub async fn credential_offer(
         &issuer_id,
         &offer_id,
     )
+    // find_by_id collapses "wrong issuer" and "wrong offer" to NotFound —
+    // the wallet must not be able to probe offer existence across issuers.
     .await
-    .map_err(map_credential_offer_lookup)?;
+    .map_err(OidcError::from)?;
 
     // Map the observed state to the response code per spec:
     //   pending+unexpired -> 200 with the body
@@ -93,7 +92,7 @@ pub async fn credential_offer(
     let issuer_url = format!("{base}/i/{}", issuer_id.bare());
 
     let grants = json!({
-        PRE_AUTHORIZED_GRANT_TYPE: {
+        super::PRE_AUTHORIZED_GRANT_TYPE: {
             "pre-authorized_code": bare_code.as_str()
         }
     });
@@ -105,39 +104,15 @@ pub async fn credential_offer(
     }))
 }
 
-fn parse_issuer_id(raw: &str) -> Result<IssuerId, OidcError> {
-    IssuerId::from_bare(raw).map_err(|err| OidcError::InvalidInput {
-        details: format!("issuer_id path parameter: {err}"),
-    })
-}
-
 fn parse_offer_id(raw: &str) -> Result<CredentialOfferId, OidcError> {
     CredentialOfferId::from_bare(raw).map_err(|err| OidcError::InvalidInput {
         details: format!("offer_id path parameter: {err}"),
     })
 }
 
-/// `find_by_id` on `credential_offers` returns
-/// `PersistenceError::NotFound`; the default `From<PersistenceError>`
-/// for `OidcError` already maps that to `NotFound`. This helper
-/// exists to centralise the conversion in case the wallet path ever
-/// needs to distinguish "wrong issuer" from "wrong offer" — today
-/// it doesn't.
-fn map_credential_offer_lookup(err: persistence::PersistenceError) -> OidcError {
-    OidcError::from(err)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_issuer_id_rejects_invalid_character() {
-        assert!(matches!(
-            parse_issuer_id("notValid0").unwrap_err(),
-            OidcError::InvalidInput { .. }
-        ));
-    }
 
     #[test]
     fn parse_offer_id_rejects_invalid_character() {
