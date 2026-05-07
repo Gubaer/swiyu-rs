@@ -35,9 +35,9 @@ pub enum BuildError {
 }
 
 pub fn build_from_env(pool: PgPool) -> Result<AnySigningEngine, BuildError> {
-    let kind = env::var("SIGNING_ENGINE").unwrap_or_else(|_| "dev".to_string());
-    match kind.as_str() {
-        "dev" => Ok(AnySigningEngine::Dev(DevSigningEngine::new(pool))),
+    let kind = env::var("SIGNING_ENGINE").unwrap_or_default();
+    match kind.trim() {
+        "dev" | "" => Ok(AnySigningEngine::Dev(DevSigningEngine::new(pool))),
         "vault" => Ok(AnySigningEngine::Vault(build_vault()?)),
         other => Err(BuildError::UnknownKind(other.to_string())),
     }
