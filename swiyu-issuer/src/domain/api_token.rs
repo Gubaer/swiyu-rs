@@ -98,19 +98,17 @@ impl ApiTokenHash {
 }
 
 /// A persisted API token row.
-///
-/// The bare secret is never stored on this aggregate; only its
-/// [`ApiTokenHash`] is. A token is **valid** iff
-/// `revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now)`;
-/// see [`ApiToken::is_valid_at`].
 #[derive(Debug, Clone)]
 pub struct ApiToken {
     pub id: ApiTokenId,
     pub tenant_id: TenantId,
     pub name: String,
+    /// The bare secret is never stored; only its hash is persisted.
     pub token_hash: ApiTokenHash,
     pub created_at: DateTime<Utc>,
+    /// `None` means the token never expires.
     pub expires_at: Option<DateTime<Utc>>,
+    /// `None` means the token has not been revoked. See [`ApiToken::is_valid_at`].
     pub revoked_at: Option<DateTime<Utc>>,
     pub last_used_at: Option<DateTime<Utc>>,
 }
