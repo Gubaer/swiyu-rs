@@ -119,7 +119,7 @@ fn row_to_offer(row: &PgRow) -> Result<CredentialOffer, PersistenceError> {
         issuer_id: IssuerId::from_bare(issuer_id).map_err(integrity_from)?,
         vct,
         claims,
-        state: CredentialOfferState::parse(&state_str).map_err(integrity_from)?,
+        state: CredentialOfferState::try_from(state_str.as_str()).map_err(integrity_from)?,
         pre_auth_code: pre_auth_code.map(PreAuthCode::from_stored),
         expires_at,
         created_at,

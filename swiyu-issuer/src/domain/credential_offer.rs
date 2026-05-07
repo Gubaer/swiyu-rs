@@ -6,20 +6,16 @@ use super::ids::{CredentialOfferId, IssuerId, TenantId};
 use super::pre_auth_code::PreAuthCode;
 
 /// Lifecycle state of a `CredentialOffer`.
-///
-/// New offers start in `Pending`. Each offer transitions exactly
-/// once to one of the three terminal states: `Issued` when the
-/// wallet has picked up the offer and the credential has been
-/// issued, `Cancelled` if the offer is withdrawn before pickup,
-/// or `Expired` if `expires_at` is reached while still pending.
-///
-/// v0.1.0 evaluates expiry on read. A background sweeper that
-/// flips state on a timer lands in a later slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialOfferState {
+    /// Initial state. The wallet has not yet picked up the offer.
     Pending,
+    /// Terminal. The wallet picked up the offer and a credential was issued.
     Issued,
+    /// Terminal. The offer was withdrawn before the wallet picked it up.
     Cancelled,
+    /// Terminal. `expires_at` was reached while the offer was still pending.
+    /// Expiry is evaluated on read.
     Expired,
 }
 
@@ -32,8 +28,12 @@ impl CredentialOfferState {
             Self::Expired => "expired",
         }
     }
+}
 
-    pub fn parse(s: &str) -> Result<Self, DomainError> {
+impl TryFrom<&str> for CredentialOfferState {
+    type Error = DomainError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "pending" => Ok(Self::Pending),
             "issued" => Ok(Self::Issued),
@@ -336,13 +336,16 @@ mod tests {
             CredentialOfferState::Cancelled,
             CredentialOfferState::Expired,
         ] {
-            assert_eq!(CredentialOfferState::parse(state.as_str()).unwrap(), state);
+            assert_eq!(
+                CredentialOfferState::try_from(state.as_str()).unwrap(),
+                state
+            );
         }
     }
 
     #[test]
     fn state_parse_rejects_unknown() {
-        assert!(CredentialOfferState::parse("unknown").is_err());
+        assert!(CredentialOfferState::try_from("unknown").is_err());
     }
 
     #[test]

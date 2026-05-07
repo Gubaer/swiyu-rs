@@ -334,11 +334,13 @@ pub async fn list_offers(
 fn parse_state_filter(raw: Option<&str>) -> Result<Option<CredentialOfferState>, ApiError> {
     match raw {
         None => Ok(None),
-        Some(s) => CredentialOfferState::parse(s)
-            .map(Some)
-            .map_err(|err| ApiError::InvalidInput {
-                details: format!("state query parameter: {err}"),
-            }),
+        Some(s) => {
+            CredentialOfferState::try_from(s)
+                .map(Some)
+                .map_err(|err| ApiError::InvalidInput {
+                    details: format!("state query parameter: {err}"),
+                })
+        }
     }
 }
 
