@@ -19,7 +19,7 @@ pub const BITSTRING_BYTES: usize =
 /// Position of a credential within a status list, bounded by
 /// `SWIYU_STATUS_LIST_CAPACITY`.
 ///
-/// The constructor enforces the bound; the persistence layer relies on
+/// `TryFrom<u32>` enforces the bound; the persistence layer relies on
 /// the type-level guarantee that the value is within range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StatusListIndex(u32);
@@ -52,21 +52,6 @@ impl std::fmt::Display for StatusListIndex {
 }
 
 /// One status list owned by an issuer.
-///
-/// `committed_version` increments on every committed bit update
-/// (issuance or lifecycle op). `published_version` increments after a
-/// successful publish round to the SWIYU Status Registry. The
-/// difference drives the publish worker's "is this list dirty?"
-/// probe; see `aspect-credential-management.md` (Asynchronous
-/// execution / Phase 2).
-///
-/// `registry_entry_id` and `registry_url` are populated by the
-/// issuer-creation operation task once it has called
-/// `swiyu_registries::status::StatusRegistryClient::create_status_list_entry`
-/// (see `plan-credential-management.md` § "Eager registry-side
-/// provisioning at issuer-creation time"). Both stay `None` until then;
-/// a row with `registry_url = None` cannot be the source of a verifier-
-/// dereferenceable credential.
 #[derive(Debug, Clone)]
 pub struct StatusList {
     pub id: StatusListId,
@@ -80,7 +65,11 @@ pub struct StatusList {
     /// `SWIYU_STATUS_LIST_CAPACITY` a fresh status list is provisioned.
     pub allocated_count: u32,
 
+    /// Increments on every committed bit update (issuance or lifecycle op).
+    /// The difference from `published_version` drives the publish worker's
+    /// "is this list dirty?" probe.
     pub committed_version: u64,
+    /// Increments after a successful publish round to the SWIYU Status Registry.
     pub published_version: u64,
 
     pub last_publish_attempt_at: Option<DateTime<Utc>>,
@@ -90,15 +79,14 @@ pub struct StatusList {
 
     pub created_at: DateTime<Utc>,
 
-    /// Registry-side entry UUID returned by `create_status_list_entry`.
-    /// `None` until provisioned; the path segment of every subsequent
-    /// `update_status_list_entry` PUT.
+    /// Registry-side entry UUID. `None` until provisioned; used as the path
+    /// segment of every subsequent status-list update request.
     pub registry_entry_id: Option<String>,
 
-    /// `statusRegistryUrl` returned alongside `registry_entry_id`. The
-    /// `uri` value embedded in every issued credential's
-    /// `status.status_list` claim, and the `sub` of the published
-    /// `statuslist+jwt`. `None` until provisioned.
+    /// URL returned by the registry alongside `registry_entry_id`. Embedded
+    /// as the `uri` in every issued credential's status claim and as the `sub`
+    /// of the published `statuslist+jwt`. `None` until provisioned; a list
+    /// without this cannot back a verifier-dereferenceable credential.
     pub registry_url: Option<String>,
 }
 
