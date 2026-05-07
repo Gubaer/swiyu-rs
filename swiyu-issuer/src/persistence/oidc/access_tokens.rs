@@ -14,6 +14,7 @@ use sqlx::postgres::{PgConnection, PgRow};
 use crate::domain::{AccessToken, AccessTokenHash, CredentialOfferId, IssuerId, TenantId};
 
 use super::super::PersistenceError;
+use super::super::helpers::{integrity_from, map_database_error};
 
 pub async fn insert(
     conn: &mut PgConnection,
@@ -104,21 +105,4 @@ fn row_to_access_token(row: &PgRow) -> Result<AccessToken, PersistenceError> {
         offer_id: CredentialOfferId::from_bare(offer_id).map_err(integrity_from)?,
         expires_at,
     })
-}
-
-fn integrity_from(err: crate::domain::DomainError) -> PersistenceError {
-    PersistenceError::DataIntegrity {
-        details: err.to_string(),
-    }
-}
-
-fn map_database_error(err: sqlx::Error) -> PersistenceError {
-    if let Some(db_err) = err.as_database_error() {
-        // Postgres SQLSTATE 23505: unique_violation.
-        if db_err.code().as_deref() == Some("23505") {
-            let constraint = db_err.constraint().unwrap_or("unknown").to_string();
-            return PersistenceError::UniqueViolation { what: constraint };
-        }
-    }
-    PersistenceError::Db(err)
 }
