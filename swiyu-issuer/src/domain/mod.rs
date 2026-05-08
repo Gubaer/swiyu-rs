@@ -5,6 +5,7 @@ pub mod ids;
 pub mod issued_credential;
 pub mod issuer;
 pub mod nonce;
+pub mod oauth2;
 pub mod operation_task;
 pub mod pre_auth_code;
 pub mod signing_engine;
@@ -29,6 +30,7 @@ pub use ids::{
 pub use issued_credential::{INTEGRITY_HASH_LEN, IssuedCredential, IssuedCredentialState};
 pub use issuer::{Issuer, IssuerState};
 pub use nonce::{NonceHash, NonceSecret};
+pub use oauth2::{StaticTokenProvider, TokenProvider, TokenProviderError};
 pub use operation_task::{OperationTask, StepOutcome, StepResult, TaskState, TaskType};
 pub use pre_auth_code::PreAuthCode;
 pub use signing_engine::{
