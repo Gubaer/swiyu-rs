@@ -1,27 +1,23 @@
 //! OAuth2 token lifecycle for the SWIYU registries.
 //!
-//! Implements the partner side of the SWIYU OAuth2 flow as
-//! documented in `specs/aspect-oauth2.md` and `specs/impl-oauth2.md`.
-//! The protocol-side description (token endpoint, grant types, the
-//! four ePortal credentials, the empirical TTLs) lives in
-//! `swiyu-registries/specs/aspect-oauth2.md`.
-//!
 //! Core abstraction: a [`TokenProvider`] is the in-memory state
 //! machine for one OAuth2 credential set. Multi-tenant code holds
-//! one provider per tenant; a future `ProviderRegistry` (Phase 5)
-//! will own the `tenant_id → Arc<…>` map.
+//! one provider per tenant; a forthcoming `ProviderRegistry` will
+//! own the `tenant_id → Arc<…>` map.
 
 use std::future::Future;
 
 use thiserror::Error;
 
-use swiyu_registries::common::AccessToken;
+use swiyu_registries::common::{AccessToken, RegistryError};
 
 use crate::persistence::PersistenceError;
 
 pub mod static_provider;
+pub mod with_refreshed;
 
 pub use static_provider::StaticTokenProvider;
+pub use with_refreshed::with_refreshed_token;
 
 /// In-memory state machine for one OAuth2 credential set.
 ///
@@ -88,5 +84,27 @@ pub enum TokenProviderError {
 impl TokenProviderError {
     pub fn is_retryable(&self) -> bool {
         matches!(self, Self::Transport(_) | Self::Persistence(_))
+    }
+}
+
+/// Return type of [`with_refreshed_token`]: either the registry call
+/// itself failed, or the [`TokenProvider`] could not produce a token.
+///
+/// `is_retryable` defers to the inner error's classification — neither
+/// branch knows enough to override the other's judgement.
+#[derive(Debug, Error)]
+pub enum TokenAwareError {
+    #[error(transparent)]
+    Registry(#[from] RegistryError),
+    #[error(transparent)]
+    Token(#[from] TokenProviderError),
+}
+
+impl TokenAwareError {
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::Registry(e) => e.is_retryable(),
+            Self::Token(e) => e.is_retryable(),
+        }
     }
 }

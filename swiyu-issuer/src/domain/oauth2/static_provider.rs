@@ -52,8 +52,8 @@ mod tests {
         let token = provider.get().await.expect("get returns Ok");
         // The Debug impl masks the value. The actual round-trip from
         // construction → bearer header is exercised via wiremock in the
-        // OAuth2 integration tests (Phase 4); here we just confirm the
-        // provider is reachable through the trait and emits a token.
+        // OAuth2 integration tests; here we just confirm the provider
+        // is reachable through the trait and emits a token.
         assert_eq!(format!("{token:?}"), "AccessToken(***)");
     }
 
