@@ -1,5 +1,10 @@
 # Lessons Learned
 
+## Build and test workflow
+
+- Do not run `cargo build` or `cargo test` from the assistant. Ask the user to run them and report results back.
+- Do run `cargo fmt`, `cargo fmt --check`, and `cargo clippy -- -D warnings` from the assistant after code changes, and fix anything they flag before handing off.
+
 ## Doc Comments
 
 - When referring to a field name or identifier in a doc comment, use a bare backtick identifier: `` `kid` ``, not `` `"kid"` ``.
