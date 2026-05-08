@@ -33,6 +33,7 @@ use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
+use swiyu_registries::common::AccessToken;
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -211,6 +212,7 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
         Arc::clone(&registry),
         engine,
         MockStatusRegistry::new(),
+        AccessToken::new("test-token".into()),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -301,6 +303,7 @@ async fn rotates_only_authentication(pool: PgPool) {
         Arc::clone(&registry),
         engine,
         MockStatusRegistry::new(),
+        AccessToken::new("test-token".into()),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));

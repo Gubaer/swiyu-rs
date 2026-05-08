@@ -22,6 +22,7 @@ use swiyu_issuer::worker::test_support::{
     AllocateCall, CreateStatusListEntryCall, GenerateKeypairCall, GetPublicKeyCall, MockRegistry,
     MockSigningEngine, MockStatusRegistry, PublishCall, SignCall,
 };
+use swiyu_registries::common::AccessToken;
 use swiyu_registries::status::StatusListEntry;
 
 const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
@@ -233,6 +234,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
         registry,
         engine,
         status_registry,
+        AccessToken::new("test-token".into()),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -278,6 +280,7 @@ async fn shutdown_exits_idle_loop(pool: PgPool) {
         registry,
         engine,
         status_registry,
+        AccessToken::new("test-token".into()),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));

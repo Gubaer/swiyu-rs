@@ -1,6 +1,6 @@
 use tracing::Instrument;
 
-use crate::common::RegistryError;
+use crate::common::{AccessToken, RegistryError};
 use crate::identifier::IdentifierRegistryClient;
 
 /// Result of a successful identifier-entry allocation.
@@ -30,9 +30,8 @@ impl IdentifierRegistryClient {
     /// the call and check it before retrying; the client does not
     /// deduplicate.
     ///
-    /// Sends `Authorization: Bearer <token>` from the
-    /// [`AccessToken`](crate::common::AccessToken) supplied at
-    /// construction.
+    /// Sends `Authorization: Bearer <token>` from the supplied
+    /// [`AccessToken`](crate::common::AccessToken).
     ///
     /// Errors:
     /// - [`RegistryError::Transport`] for network failures before a
@@ -43,7 +42,11 @@ impl IdentifierRegistryClient {
     /// - [`RegistryError::Decode`] if the response body is not
     ///   JSON, is missing `identifierRegistryUrl`, or the URL does
     ///   not contain an extractable identifier segment.
-    pub async fn allocate_did(&self, partner_id: &str) -> Result<Allocation, RegistryError> {
+    pub async fn allocate_did(
+        &self,
+        token: &AccessToken,
+        partner_id: &str,
+    ) -> Result<Allocation, RegistryError> {
         let span = tracing::debug_span!(
             "allocate_did",
             partner_id = partner_id,
@@ -59,7 +62,7 @@ impl IdentifierRegistryClient {
             let response = self
                 .http
                 .post(&endpoint)
-                .bearer_auth(self.access_token.as_str())
+                .bearer_auth(token.as_str())
                 .send()
                 .await
                 .map_err(RegistryError::Transport)?;
@@ -123,7 +126,6 @@ fn extract_identifier(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::AccessToken;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -132,11 +134,11 @@ mod tests {
     const UUID: &str = "fce949f2-32c4-4915-8b60-0ee2f705231d";
 
     fn client(server: &MockServer) -> IdentifierRegistryClient {
-        IdentifierRegistryClient::with_http(
-            server.uri(),
-            AccessToken::new("test-token".to_string()),
-            reqwest::Client::new(),
-        )
+        IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new())
+    }
+
+    fn token() -> AccessToken {
+        AccessToken::new("test-token".to_string())
     }
 
     #[tokio::test]
@@ -153,7 +155,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let allocation = client(&server).allocate_did(PARTNER).await.unwrap();
+        let allocation = client(&server)
+            .allocate_did(&token(), PARTNER)
+            .await
+            .unwrap();
         assert_eq!(allocation.url, url);
         assert_eq!(allocation.identifier, UUID);
     }
@@ -167,7 +172,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = client(&server).allocate_did(PARTNER).await.unwrap_err();
+        let err = client(&server)
+            .allocate_did(&token(), PARTNER)
+            .await
+            .unwrap_err();
         match err {
             RegistryError::Decode(message) => {
                 assert!(
@@ -190,7 +198,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = client(&server).allocate_did(PARTNER).await.unwrap_err();
+        let err = client(&server)
+            .allocate_did(&token(), PARTNER)
+            .await
+            .unwrap_err();
         match err {
             RegistryError::Decode(message) => {
                 assert!(message.contains("cannot extract identifier"), "{message}")
@@ -208,7 +219,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = client(&server).allocate_did(PARTNER).await.unwrap_err();
+        let err = client(&server)
+            .allocate_did(&token(), PARTNER)
+            .await
+            .unwrap_err();
         match &err {
             RegistryError::HttpStatus { status, body } => {
                 assert_eq!(*status, 401);
@@ -228,7 +242,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = client(&server).allocate_did(PARTNER).await.unwrap_err();
+        let err = client(&server)
+            .allocate_did(&token(), PARTNER)
+            .await
+            .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 429, .. }));
         assert!(err.is_retryable());
     }
@@ -242,7 +259,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = client(&server).allocate_did(PARTNER).await.unwrap_err();
+        let err = client(&server)
+            .allocate_did(&token(), PARTNER)
+            .await
+            .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 503, .. }));
         assert!(err.is_retryable());
     }

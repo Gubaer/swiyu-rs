@@ -17,6 +17,7 @@ use swiyu_issuer::worker::StatusListPublisher;
 use swiyu_issuer::worker::test_support::{
     CreateStatusListEntryCall, MockStatusRegistry, UpdateStatusListEntryCall,
 };
+use swiyu_registries::common::AccessToken;
 use swiyu_registries::status::StatusListEntry;
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
@@ -126,8 +127,13 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
     let registry = MockStatusRegistry::new();
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
-    let mut publisher =
-        StatusListPublisher::new(pool.clone(), engine, registry, Box::new(ConstantRng(0)));
+    let mut publisher = StatusListPublisher::new(
+        pool.clone(),
+        engine,
+        registry,
+        AccessToken::new("test-token".into()),
+        Box::new(ConstantRng(0)),
+    );
     publisher.run_round(list).await.unwrap();
 
     let (published, committed, attempts) = fetch_publish_state(&pool, &list_id).await;
@@ -158,6 +164,7 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
         pool.clone(),
         engine,
         registry,
+        AccessToken::new("test-token".into()),
         Box::new(ConstantRng(u64::MAX)),
     );
     let err = publisher.run_round(list).await.unwrap_err();
@@ -197,8 +204,13 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
         body: "forbidden".into(),
     });
 
-    let mut publisher =
-        StatusListPublisher::new(pool.clone(), engine, registry, Box::new(ConstantRng(0)));
+    let mut publisher = StatusListPublisher::new(
+        pool.clone(),
+        engine,
+        registry,
+        AccessToken::new("test-token".into()),
+        Box::new(ConstantRng(0)),
+    );
     let err = publisher.run_round(list).await.unwrap_err();
     assert!(format!("{err}").contains("403"));
 
@@ -236,8 +248,13 @@ async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool)
     let registry = MockStatusRegistry::new();
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
-    let mut publisher =
-        StatusListPublisher::new(pool.clone(), engine, registry, Box::new(ConstantRng(0)));
+    let mut publisher = StatusListPublisher::new(
+        pool.clone(),
+        engine,
+        registry,
+        AccessToken::new("test-token".into()),
+        Box::new(ConstantRng(0)),
+    );
     // run_round still returns Ok(()) — our conditional UPDATE is a
     // no-op rather than an error.
     publisher.run_round(list).await.unwrap();

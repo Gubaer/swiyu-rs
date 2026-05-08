@@ -1,6 +1,6 @@
 use tracing::Instrument;
 
-use crate::common::RegistryError;
+use crate::common::{AccessToken, RegistryError};
 use crate::identifier::IdentifierRegistryClient;
 
 impl IdentifierRegistryClient {
@@ -17,9 +17,8 @@ impl IdentifierRegistryClient {
     /// application/jsonl+json`. The caller owns the line format —
     /// no newline is appended.
     ///
-    /// Sends `Authorization: Bearer <token>` from the
-    /// [`AccessToken`](crate::common::AccessToken) supplied at
-    /// construction.
+    /// Sends `Authorization: Bearer <token>` from the supplied
+    /// [`AccessToken`](crate::common::AccessToken).
     ///
     /// Errors:
     /// - [`RegistryError::Transport`] for network failures before a
@@ -29,6 +28,7 @@ impl IdentifierRegistryClient {
     ///   [`RegistryError::is_retryable`].
     pub async fn publish_log_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         identifier: &str,
         entry: &str,
@@ -50,7 +50,7 @@ impl IdentifierRegistryClient {
             let response = self
                 .http
                 .put(&endpoint)
-                .bearer_auth(self.access_token.as_str())
+                .bearer_auth(token.as_str())
                 .header("Content-Type", "application/jsonl+json")
                 .body(entry.to_string())
                 .send()
@@ -78,7 +78,6 @@ impl IdentifierRegistryClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::AccessToken;
     use wiremock::matchers::{body_string, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -89,11 +88,11 @@ mod tests {
         r#"["1-abc","2026-05-04T00:00:00Z",{"method":"did:tdw:0.3"},{"value":"did:tdw:abc"}]"#;
 
     fn client(server: &MockServer) -> IdentifierRegistryClient {
-        IdentifierRegistryClient::with_http(
-            server.uri(),
-            AccessToken::new("test-token".to_string()),
-            reqwest::Client::new(),
-        )
+        IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new())
+    }
+
+    fn token() -> AccessToken {
+        AccessToken::new("test-token".to_string())
     }
 
     #[tokio::test]
@@ -110,7 +109,7 @@ mod tests {
             .await;
 
         client(&server)
-            .publish_log_entry(PARTNER, IDENTIFIER, ENTRY)
+            .publish_log_entry(&token(), PARTNER, IDENTIFIER, ENTRY)
             .await
             .unwrap();
     }
@@ -125,7 +124,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .publish_log_entry(PARTNER, IDENTIFIER, ENTRY)
+            .publish_log_entry(&token(), PARTNER, IDENTIFIER, ENTRY)
             .await
             .unwrap_err();
         match &err {
@@ -148,7 +147,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .publish_log_entry(PARTNER, IDENTIFIER, ENTRY)
+            .publish_log_entry(&token(), PARTNER, IDENTIFIER, ENTRY)
             .await
             .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 503, .. }));

@@ -6,6 +6,7 @@ use zeroize::Zeroizing;
 /// overwritten on drop, and `Debug` is overridden to mask the value
 /// — `AccessToken` instances can appear in logs and span fields
 /// without leaking the secret.
+#[derive(Clone)]
 pub struct AccessToken(Zeroizing<String>);
 
 impl AccessToken {

@@ -1,6 +1,6 @@
 use tracing::Instrument;
 
-use crate::common::RegistryError;
+use crate::common::{AccessToken, RegistryError};
 use crate::status::StatusRegistryClient;
 
 impl StatusRegistryClient {
@@ -18,9 +18,8 @@ impl StatusRegistryClient {
     /// application/statuslist+jwt`. The caller owns producing and
     /// signing the JWT; this client treats it as opaque bytes.
     ///
-    /// Sends `Authorization: Bearer <token>` from the
-    /// [`AccessToken`](crate::common::AccessToken) supplied at
-    /// construction.
+    /// Sends `Authorization: Bearer <token>` from the supplied
+    /// [`AccessToken`](crate::common::AccessToken).
     ///
     /// Errors:
     /// - [`RegistryError::Transport`] for network failures before a
@@ -30,6 +29,7 @@ impl StatusRegistryClient {
     ///   [`RegistryError::is_retryable`].
     pub async fn update_status_list_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         entry_id: &str,
         status_list_jwt: &str,
@@ -51,7 +51,7 @@ impl StatusRegistryClient {
             let response = self
                 .http
                 .put(&endpoint)
-                .bearer_auth(self.access_token.as_str())
+                .bearer_auth(token.as_str())
                 .header("Content-Type", "application/statuslist+jwt")
                 .body(status_list_jwt.to_string())
                 .send()
@@ -79,7 +79,6 @@ impl StatusRegistryClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::AccessToken;
     use wiremock::matchers::{body_string, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -89,11 +88,11 @@ mod tests {
     const JWT: &str = "eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6e319.signature";
 
     fn client(server: &MockServer) -> StatusRegistryClient {
-        StatusRegistryClient::with_http(
-            server.uri(),
-            AccessToken::new("test-token".to_string()),
-            reqwest::Client::new(),
-        )
+        StatusRegistryClient::with_http(server.uri(), reqwest::Client::new())
+    }
+
+    fn token() -> AccessToken {
+        AccessToken::new("test-token".to_string())
     }
 
     #[tokio::test]
@@ -110,7 +109,7 @@ mod tests {
             .await;
 
         client(&server)
-            .update_status_list_entry(PARTNER, ENTRY_ID, JWT)
+            .update_status_list_entry(&token(), PARTNER, ENTRY_ID, JWT)
             .await
             .unwrap();
     }
@@ -125,7 +124,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .update_status_list_entry(PARTNER, ENTRY_ID, JWT)
+            .update_status_list_entry(&token(), PARTNER, ENTRY_ID, JWT)
             .await
             .unwrap_err();
         match &err {
@@ -148,7 +147,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .update_status_list_entry(PARTNER, ENTRY_ID, JWT)
+            .update_status_list_entry(&token(), PARTNER, ENTRY_ID, JWT)
             .await
             .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 403, .. }));
@@ -165,7 +164,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .update_status_list_entry(PARTNER, ENTRY_ID, JWT)
+            .update_status_list_entry(&token(), PARTNER, ENTRY_ID, JWT)
             .await
             .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 503, .. }));

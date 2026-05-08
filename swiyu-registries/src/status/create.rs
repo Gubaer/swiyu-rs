@@ -1,6 +1,6 @@
 use tracing::Instrument;
 
-use crate::common::RegistryError;
+use crate::common::{AccessToken, RegistryError};
 use crate::status::StatusRegistryClient;
 
 /// Result of a successful status-list-entry creation.
@@ -33,9 +33,8 @@ impl StatusRegistryClient {
     /// persist their intent before the call and check it before
     /// retrying; the client does not deduplicate.
     ///
-    /// Sends `Authorization: Bearer <token>` from the
-    /// [`AccessToken`](crate::common::AccessToken) supplied at
-    /// construction.
+    /// Sends `Authorization: Bearer <token>` from the supplied
+    /// [`AccessToken`](crate::common::AccessToken).
     ///
     /// Errors:
     /// - [`RegistryError::Transport`] for network failures before a
@@ -47,6 +46,7 @@ impl StatusRegistryClient {
     ///   or is missing `id` / `statusRegistryUrl`.
     pub async fn create_status_list_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
     ) -> Result<StatusListEntry, RegistryError> {
         let span = tracing::debug_span!(
@@ -64,7 +64,7 @@ impl StatusRegistryClient {
             let response = self
                 .http
                 .post(&endpoint)
-                .bearer_auth(self.access_token.as_str())
+                .bearer_auth(token.as_str())
                 .send()
                 .await
                 .map_err(RegistryError::Transport)?;
@@ -108,7 +108,6 @@ fn read_string(body: &serde_json::Value, field: &'static str) -> Result<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::AccessToken;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -118,11 +117,11 @@ mod tests {
     const REGISTRY_URL: &str = "https://status-registry.admin.ch/api/v1/statuslist/18fa7c77-9dd1-4e20-a147-fb1bec146085.jwt";
 
     fn client(server: &MockServer) -> StatusRegistryClient {
-        StatusRegistryClient::with_http(
-            server.uri(),
-            AccessToken::new("test-token".to_string()),
-            reqwest::Client::new(),
-        )
+        StatusRegistryClient::with_http(server.uri(), reqwest::Client::new())
+    }
+
+    fn token() -> AccessToken {
+        AccessToken::new("test-token".to_string())
     }
 
     #[tokio::test]
@@ -140,7 +139,7 @@ mod tests {
             .await;
 
         let entry = client(&server)
-            .create_status_list_entry(PARTNER)
+            .create_status_list_entry(&token(), PARTNER)
             .await
             .unwrap();
         assert_eq!(entry.id, ENTRY_ID);
@@ -159,7 +158,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .create_status_list_entry(PARTNER)
+            .create_status_list_entry(&token(), PARTNER)
             .await
             .unwrap_err();
         match err {
@@ -180,7 +179,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .create_status_list_entry(PARTNER)
+            .create_status_list_entry(&token(), PARTNER)
             .await
             .unwrap_err();
         match err {
@@ -204,7 +203,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .create_status_list_entry(PARTNER)
+            .create_status_list_entry(&token(), PARTNER)
             .await
             .unwrap_err();
         match err {
@@ -225,7 +224,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .create_status_list_entry(PARTNER)
+            .create_status_list_entry(&token(), PARTNER)
             .await
             .unwrap_err();
         match &err {
@@ -248,7 +247,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .create_status_list_entry(PARTNER)
+            .create_status_list_entry(&token(), PARTNER)
             .await
             .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 403, .. }));
@@ -265,7 +264,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .create_status_list_entry(PARTNER)
+            .create_status_list_entry(&token(), PARTNER)
             .await
             .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 503, .. }));

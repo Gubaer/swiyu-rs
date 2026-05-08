@@ -86,14 +86,10 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new(pool.clone(), Config { issuer_base_url })?;
     let app = router(state);
 
-    let registry_client =
-        IdentifierRegistryClient::new(registry_url, AccessToken::new(registry_token.clone()))?;
-    let status_registry_for_worker = StatusRegistryClient::new(
-        status_registry_url.clone(),
-        AccessToken::new(registry_token.clone()),
-    )?;
-    let status_registry_for_publisher =
-        StatusRegistryClient::new(status_registry_url, AccessToken::new(registry_token))?;
+    let access_token = AccessToken::new(registry_token);
+    let registry_client = IdentifierRegistryClient::new(registry_url)?;
+    let status_registry_for_worker = StatusRegistryClient::new(status_registry_url.clone())?;
+    let status_registry_for_publisher = StatusRegistryClient::new(status_registry_url)?;
     let signing_engine_for_worker = build_signing_engine_from_env(pool.clone())?;
     let signing_engine_for_publisher = build_signing_engine_from_env(pool.clone())?;
     let worker = Worker::new(
@@ -101,12 +97,14 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         registry_client,
         signing_engine_for_worker,
         status_registry_for_worker,
+        access_token.clone(),
         Box::new(OsRng),
     );
     let publisher = StatusListPublisher::new(
         pool.clone(),
         signing_engine_for_publisher,
         status_registry_for_publisher,
+        access_token,
         Box::new(OsRng),
     );
 

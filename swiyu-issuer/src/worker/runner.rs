@@ -11,6 +11,7 @@ use std::time::Duration;
 use chrono::Utc;
 use rand_core::RngCore;
 use sqlx::PgPool;
+use swiyu_registries::common::AccessToken;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -83,6 +84,7 @@ pub struct Worker<R, S, C> {
     registry: R,
     engine: S,
     status_registry: C,
+    access_token: AccessToken,
     rng: Box<dyn RngCore + Send + Sync>,
     config: WorkerConfig,
 }
@@ -98,6 +100,7 @@ where
         registry: R,
         engine: S,
         status_registry: C,
+        access_token: AccessToken,
         rng: Box<dyn RngCore + Send + Sync>,
     ) -> Self {
         Self {
@@ -105,6 +108,7 @@ where
             registry,
             engine,
             status_registry,
+            access_token,
             rng,
             config: WorkerConfig::default(),
         }
@@ -180,7 +184,7 @@ where
         let step_name: &str = task.step.as_deref().unwrap_or("allocate_did");
         let (outcome, next_step) = match step_name {
             "allocate_did" => (
-                execute_allocate_did(&tenant, &state, &self.registry).await,
+                execute_allocate_did(&tenant, &state, &self.registry, &self.access_token).await,
                 Some("generate_keys"),
             ),
             "generate_keys" => (
@@ -197,6 +201,7 @@ where
                     &state,
                     &self.registry,
                     &self.engine,
+                    &self.access_token,
                     entry_now,
                 )
                 .await,
@@ -221,7 +226,13 @@ where
                 )
             }
             "create_status_list_entry" => (
-                execute_create_status_list_entry(&tenant, &state, &self.status_registry).await,
+                execute_create_status_list_entry(
+                    &tenant,
+                    &state,
+                    &self.status_registry,
+                    &self.access_token,
+                )
+                .await,
                 Some("provision_status_list"),
             ),
             "provision_status_list" => {
@@ -347,6 +358,7 @@ where
                     &state,
                     &self.registry,
                     &self.engine,
+                    &self.access_token,
                     entry_now,
                 )
                 .await,
@@ -470,6 +482,7 @@ where
                     &state,
                     &self.registry,
                     &self.engine,
+                    &self.access_token,
                     entry_now,
                 )
                 .await,

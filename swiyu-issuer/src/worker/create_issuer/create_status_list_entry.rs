@@ -10,6 +10,7 @@
 //! against duplicate entries on retry.
 
 use serde_json::{Map, json};
+use swiyu_registries::common::AccessToken;
 
 use crate::domain::{StepOutcome, StepResult, Tenant};
 use crate::worker::create_issuer::CreateIssuerStateData;
@@ -19,6 +20,7 @@ pub async fn execute_create_status_list_entry<C: StatusRegistryFacade>(
     tenant: &Tenant,
     state: &CreateIssuerStateData,
     status_registry: &C,
+    token: &AccessToken,
 ) -> StepOutcome {
     if state.status_list_registry_entry_id.is_some() {
         return StepOutcome::Done(StepResult::default());
@@ -34,7 +36,10 @@ pub async fn execute_create_status_list_entry<C: StatusRegistryFacade>(
         }
     };
 
-    match status_registry.create_status_list_entry(partner_id).await {
+    match status_registry
+        .create_status_list_entry(token, partner_id)
+        .await
+    {
         Ok(entry) => {
             let mut patch = Map::new();
             patch.insert("status_list_registry_entry_id".into(), json!(entry.id));
@@ -71,6 +76,10 @@ mod tests {
         }
     }
 
+    fn token() -> AccessToken {
+        AccessToken::new("test-token".to_string())
+    }
+
     fn fixture_entry() -> StatusListEntry {
         StatusListEntry {
             id: "11111111-2222-3333-4444-555555555555".into(),
@@ -84,9 +93,13 @@ mod tests {
         let registry = MockStatusRegistry::new();
         registry.enqueue_create(CreateStatusListEntryCall::Ok(fixture_entry()));
 
-        let outcome =
-            execute_create_status_list_entry(&tenant, &CreateIssuerStateData::default(), &registry)
-                .await;
+        let outcome = execute_create_status_list_entry(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         let patch = match outcome {
             StepOutcome::Done(StepResult { state_data_patch }) => state_data_patch,
@@ -118,7 +131,7 @@ mod tests {
             status_list_registry_url: Some(fixture_entry().registry_url),
             ..CreateIssuerStateData::default()
         };
-        let outcome = execute_create_status_list_entry(&tenant, &state, &registry).await;
+        let outcome = execute_create_status_list_entry(&tenant, &state, &registry, &token()).await;
 
         match outcome {
             StepOutcome::Done(StepResult { state_data_patch }) => {
@@ -137,9 +150,13 @@ mod tests {
         };
         let registry = MockStatusRegistry::new();
 
-        let outcome =
-            execute_create_status_list_entry(&tenant, &CreateIssuerStateData::default(), &registry)
-                .await;
+        let outcome = execute_create_status_list_entry(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -159,9 +176,13 @@ mod tests {
             body: "service unavailable".into(),
         });
 
-        let outcome =
-            execute_create_status_list_entry(&tenant, &CreateIssuerStateData::default(), &registry)
-                .await;
+        let outcome = execute_create_status_list_entry(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Retry { error_code, .. } => {
@@ -180,9 +201,13 @@ mod tests {
             body: "forbidden".into(),
         });
 
-        let outcome =
-            execute_create_status_list_entry(&tenant, &CreateIssuerStateData::default(), &registry)
-                .await;
+        let outcome = execute_create_status_list_entry(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {

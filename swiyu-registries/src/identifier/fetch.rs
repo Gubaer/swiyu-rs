@@ -20,9 +20,7 @@ impl IdentifierRegistryClient {
     ///
     /// Idempotent and **unauthenticated**: this endpoint is what any
     /// DID verifier reads from, and the client deliberately does not
-    /// send the `Authorization` header here even when an
-    /// [`AccessToken`](crate::common::AccessToken) was supplied at
-    /// construction. Safe to retry.
+    /// send an `Authorization` header here. Safe to retry.
     ///
     /// Errors:
     /// - [`RegistryError::Transport`] for network failures or
@@ -65,18 +63,13 @@ impl IdentifierRegistryClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::AccessToken;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const ENDPOINT: &str = "/api/v1/did/fce949f2-32c4-4915-8b60-0ee2f705231d/did.jsonl";
 
     fn client(server: &MockServer) -> IdentifierRegistryClient {
-        IdentifierRegistryClient::with_http(
-            server.uri(),
-            AccessToken::new("test-token".to_string()),
-            reqwest::Client::new(),
-        )
+        IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new())
     }
 
     // The wiremock-driven tests target `fetch_log_at_url` directly

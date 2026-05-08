@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use swiyu_core::did::DID;
 use swiyu_core::didlog::{DIDLog, DIDLogEntry};
-use swiyu_registries::common::RegistryError;
+use swiyu_registries::common::{AccessToken, RegistryError};
 use swiyu_registries::identifier::{Allocation, IdentifierRegistryClient};
 use swiyu_registries::status::{StatusListEntry, StatusRegistryClient};
 
@@ -65,11 +65,13 @@ pub fn build_updated_log(prev_raw: &str, new_line: &str) -> String {
 pub trait RegistryFacade: Send + Sync {
     fn allocate_did(
         &self,
+        token: &AccessToken,
         partner_id: &str,
     ) -> impl Future<Output = Result<Allocation, RegistryError>> + Send;
 
     fn publish_log_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         identifier: &str,
         entry: &str,
@@ -84,18 +86,20 @@ pub trait RegistryFacade: Send + Sync {
 impl RegistryFacade for IdentifierRegistryClient {
     fn allocate_did(
         &self,
+        token: &AccessToken,
         partner_id: &str,
     ) -> impl Future<Output = Result<Allocation, RegistryError>> + Send {
-        IdentifierRegistryClient::allocate_did(self, partner_id)
+        IdentifierRegistryClient::allocate_did(self, token, partner_id)
     }
 
     fn publish_log_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         identifier: &str,
         entry: &str,
     ) -> impl Future<Output = Result<(), RegistryError>> + Send {
-        IdentifierRegistryClient::publish_log_entry(self, partner_id, identifier, entry)
+        IdentifierRegistryClient::publish_log_entry(self, token, partner_id, identifier, entry)
     }
 
     async fn fetch_log(&self, did: &DID) -> Result<FetchedLog, RegistryError> {
@@ -114,18 +118,20 @@ impl RegistryFacade for IdentifierRegistryClient {
 impl<T: RegistryFacade + ?Sized> RegistryFacade for Arc<T> {
     fn allocate_did(
         &self,
+        token: &AccessToken,
         partner_id: &str,
     ) -> impl Future<Output = Result<Allocation, RegistryError>> + Send {
-        T::allocate_did(self, partner_id)
+        T::allocate_did(self, token, partner_id)
     }
 
     fn publish_log_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         identifier: &str,
         entry: &str,
     ) -> impl Future<Output = Result<(), RegistryError>> + Send {
-        T::publish_log_entry(self, partner_id, identifier, entry)
+        T::publish_log_entry(self, token, partner_id, identifier, entry)
     }
 
     fn fetch_log(
@@ -144,11 +150,13 @@ impl<T: RegistryFacade + ?Sized> RegistryFacade for Arc<T> {
 pub trait StatusRegistryFacade: Send + Sync {
     fn create_status_list_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
     ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send;
 
     fn update_status_list_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         entry_id: &str,
         status_list_jwt: &str,
@@ -158,35 +166,45 @@ pub trait StatusRegistryFacade: Send + Sync {
 impl StatusRegistryFacade for StatusRegistryClient {
     fn create_status_list_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
     ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send {
-        StatusRegistryClient::create_status_list_entry(self, partner_id)
+        StatusRegistryClient::create_status_list_entry(self, token, partner_id)
     }
 
     fn update_status_list_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         entry_id: &str,
         status_list_jwt: &str,
     ) -> impl Future<Output = Result<(), RegistryError>> + Send {
-        StatusRegistryClient::update_status_list_entry(self, partner_id, entry_id, status_list_jwt)
+        StatusRegistryClient::update_status_list_entry(
+            self,
+            token,
+            partner_id,
+            entry_id,
+            status_list_jwt,
+        )
     }
 }
 
 impl<T: StatusRegistryFacade + ?Sized> StatusRegistryFacade for Arc<T> {
     fn create_status_list_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
     ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send {
-        T::create_status_list_entry(self, partner_id)
+        T::create_status_list_entry(self, token, partner_id)
     }
 
     fn update_status_list_entry(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         entry_id: &str,
         status_list_jwt: &str,
     ) -> impl Future<Output = Result<(), RegistryError>> + Send {
-        T::update_status_list_entry(self, partner_id, entry_id, status_list_jwt)
+        T::update_status_list_entry(self, token, partner_id, entry_id, status_list_jwt)
     }
 }

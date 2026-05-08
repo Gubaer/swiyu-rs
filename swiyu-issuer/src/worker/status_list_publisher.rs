@@ -16,7 +16,7 @@ use std::time::Duration as StdDuration;
 use chrono::{Duration, Utc};
 use rand_core::RngCore;
 use sqlx::PgPool;
-use swiyu_registries::common::RegistryError;
+use swiyu_registries::common::{AccessToken, RegistryError};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -67,6 +67,7 @@ pub struct StatusListPublisher<S, C> {
     pool: PgPool,
     engine: S,
     status_registry: C,
+    access_token: AccessToken,
     rng: Box<dyn RngCore + Send + Sync>,
     config: PublisherConfig,
 }
@@ -80,12 +81,14 @@ where
         pool: PgPool,
         engine: S,
         status_registry: C,
+        access_token: AccessToken,
         rng: Box<dyn RngCore + Send + Sync>,
     ) -> Self {
         Self {
             pool,
             engine,
             status_registry,
+            access_token,
             rng,
             config: PublisherConfig::default(),
         }
@@ -200,7 +203,7 @@ where
 
         match self
             .status_registry
-            .update_status_list_entry(&partner_id, &registry_entry_id, &jwt)
+            .update_status_list_entry(&self.access_token, &partner_id, &registry_entry_id, &jwt)
             .await
         {
             Ok(()) => {

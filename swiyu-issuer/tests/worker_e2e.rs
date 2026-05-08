@@ -121,11 +121,11 @@ fn pending_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
 }
 
 fn build_registry_client(server: &MockServer) -> IdentifierRegistryClient {
-    IdentifierRegistryClient::with_http(
-        server.uri(),
-        AccessToken::new("test-token".into()),
-        reqwest::Client::new(),
-    )
+    IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new())
+}
+
+fn test_access_token() -> AccessToken {
+    AccessToken::new("test-token".into())
 }
 
 async fn wait_for_task_state(
@@ -191,6 +191,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
         status_registry_with_one_ok(),
+        test_access_token(),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -282,6 +283,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
         status_registry_with_one_ok(),
+        test_access_token(),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -352,6 +354,7 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
         status_registry_with_one_ok(),
+        test_access_token(),
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));

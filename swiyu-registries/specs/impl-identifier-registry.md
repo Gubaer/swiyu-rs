@@ -26,25 +26,24 @@ Code added by this slice:
 - `swiyu-registries/src/identifier/publish.rs` — `publish_log_entry` operation, request/response types.
 - `swiyu-registries/src/identifier/fetch.rs` — `fetch_log` operation, response type. Out of scope for v1 in `swiyu-issuer`, but added in this crate so verifier-side flows can pick it up without a second pass over the module layout.
 - `swiyu-registries/src/common/error.rs` — already contains `RegistryError`; extended with one variant if a registry-specific failure mode emerges (none required by the v1 endpoints).
-- `swiyu-registries/src/common/auth.rs` — `AccessToken` newtype that wraps the bearer token in `zeroize::Zeroizing` so it does not leak into logs or panics. Constructed from a `String` by the caller (typically from an env var read in the binary's startup path).
+- `swiyu-registries/src/common/auth.rs` — `AccessToken` newtype that wraps the bearer token in `zeroize::Zeroizing` so it does not leak into logs or panics. Constructed from a `String` by the caller and supplied per call to the protected operations (see *Authentication* below).
 
-The crate stays env-agnostic: no `std::env::var` calls inside `swiyu-registries`. Consumers (e.g. the `issuer-mgmt` binary) read `SWIYU_IDENTIFIER_REGISTRY_URL`, `SWIYU_PARTNER_ID`, and `SWIYU_ACCESS_TOKEN` themselves and pass them as constructor arguments. This matches the contract already documented in [`../../swiyu-issuer/specs/impl-issuer.md`](../../swiyu-issuer/specs/impl-issuer.md#configuration).
+The crate stays env-agnostic: no `std::env::var` calls inside `swiyu-registries`. Consumers (e.g. the `issuer-mgmt` binary) read `SWIYU_IDENTIFIER_REGISTRY_URL` and `SWIYU_PARTNER_ID` themselves and pass them as constructor arguments. The bearer token is loaded by the consumer (today from `SWIYU_ACCESS_TOKEN`; in future from a `TokenProvider` in `swiyu-issuer`) and threaded into the per-call argument. This matches the contract already documented in [`../../swiyu-issuer/specs/impl-issuer.md`](../../swiyu-issuer/specs/impl-issuer.md#configuration).
 
 ## Client surface
 
 ```rust
 pub struct IdentifierRegistryClient {
     base_url: String,
-    access_token: AccessToken,
     http: reqwest::Client,
 }
 
 impl IdentifierRegistryClient {
-    pub fn new(base_url: String, access_token: AccessToken) -> Result<Self, RegistryError>;
-    pub fn with_http(base_url: String, access_token: AccessToken, http: reqwest::Client) -> Self;
+    pub fn new(base_url: String) -> Result<Self, RegistryError>;
+    pub fn with_http(base_url: String, http: reqwest::Client) -> Self;
 
-    pub async fn allocate_did(&self, partner_id: &str) -> Result<Allocation, RegistryError>;
-    pub async fn publish_log_entry(&self, partner_id: &str, identifier: &str, entry: &str) -> Result<(), RegistryError>;
+    pub async fn allocate_did(&self, token: &AccessToken, partner_id: &str) -> Result<Allocation, RegistryError>;
+    pub async fn publish_log_entry(&self, token: &AccessToken, partner_id: &str, identifier: &str, entry: &str) -> Result<(), RegistryError>;
     pub async fn fetch_log(&self, identifier: &str) -> Result<String, RegistryError>;
 }
 ```
@@ -53,7 +52,7 @@ impl IdentifierRegistryClient {
 
 Methods take `&self` so the client is cheaply shareable; `reqwest::Client` is itself `Clone` and internally `Arc`-ed, so a single `IdentifierRegistryClient` can serve a worker pool without further wrapping.
 
-`partner_id` is a per-call argument rather than a constructor field. The first consumer (`swiyu-issuer`) pins one partner per process today, but a verifier service may eventually talk to the registry on behalf of multiple partners; threading it through call sites costs nothing and avoids rebuilding the client to switch tenants.
+The `AccessToken` is a per-call argument rather than a constructor field, mirroring `partner_id`. This keeps the client tenant-agnostic: a single instance can serve every tenant in a multi-tenant process by being handed the right token at each call. `fetch_log` is unauthenticated and takes no token argument.
 
 ### `Allocation`
 
@@ -95,7 +94,7 @@ The registry's response for `allocate_did` is parsed by reading the JSON field `
 
 ## Authentication
 
-The bearer token is supplied at construction and reused for every authenticated request. v1 assumes a static, long-lived token (the SWIYU integration registry issues one per partner). Token rotation, OAuth2 client-credentials refresh, and per-request token override are out of scope; if needed they land as a follow-up that takes a `Fn() -> AccessToken` provider instead of a stored token.
+The bearer token is supplied per call by the caller. The crate carries no OAuth2 state and does not cache or refresh tokens — that lives in `swiyu-issuer` (see [`../../swiyu-issuer/specs/aspect-oauth2.md`](../../swiyu-issuer/specs/aspect-oauth2.md)). The protocol-side picture is documented in [`aspect-oauth2.md`](aspect-oauth2.md).
 
 A 401 from the registry surfaces as `RegistryError::HttpStatus { status: 401, body }`. `is_retryable()` returns `false` for it: a stale token is a configuration problem and retrying will not help. Callers (the worker) classify it as terminal.
 

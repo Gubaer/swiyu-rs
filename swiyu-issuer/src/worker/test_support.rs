@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use serde_json::Value;
 use swiyu_core::did::DID;
 use swiyu_core::didlog::DIDLogEntry;
-use swiyu_registries::common::RegistryError;
+use swiyu_registries::common::{AccessToken, RegistryError};
 use swiyu_registries::identifier::Allocation;
 use swiyu_registries::status::StatusListEntry;
 
@@ -84,6 +84,7 @@ impl MockRegistry {
 impl RegistryFacade for MockRegistry {
     fn allocate_did(
         &self,
+        _token: &AccessToken,
         partner_id: &str,
     ) -> impl Future<Output = Result<Allocation, RegistryError>> + Send {
         self.allocate_invocations
@@ -104,6 +105,7 @@ impl RegistryFacade for MockRegistry {
 
     fn publish_log_entry(
         &self,
+        _token: &AccessToken,
         partner_id: &str,
         identifier: &str,
         entry: &str,
@@ -196,6 +198,7 @@ impl MockStatusRegistry {
 impl StatusRegistryFacade for MockStatusRegistry {
     fn create_status_list_entry(
         &self,
+        _token: &AccessToken,
         partner_id: &str,
     ) -> impl Future<Output = Result<StatusListEntry, RegistryError>> + Send {
         self.create_invocations
@@ -216,6 +219,7 @@ impl StatusRegistryFacade for MockStatusRegistry {
 
     fn update_status_list_entry(
         &self,
+        _token: &AccessToken,
         partner_id: &str,
         entry_id: &str,
         status_list_jwt: &str,

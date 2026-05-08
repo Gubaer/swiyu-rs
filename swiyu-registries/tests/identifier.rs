@@ -15,12 +15,12 @@ const TOKEN: &str = "test-token";
 
 async fn fixture() -> (MockServer, IdentifierRegistryClient) {
     let server = MockServer::start().await;
-    let client = IdentifierRegistryClient::with_http(
-        server.uri(),
-        AccessToken::new(TOKEN.to_string()),
-        reqwest::Client::new(),
-    );
+    let client = IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new());
     (server, client)
+}
+
+fn token() -> AccessToken {
+    AccessToken::new(TOKEN.to_string())
 }
 
 #[tokio::test]
@@ -40,7 +40,7 @@ async fn allocate_did_returns_allocation() {
         .mount(&server)
         .await;
 
-    let allocation = client.allocate_did(PARTNER).await.unwrap();
+    let allocation = client.allocate_did(&token(), PARTNER).await.unwrap();
     assert_eq!(allocation.url, registry_url);
     assert_eq!(allocation.identifier, IDENTIFIER);
 }
@@ -63,7 +63,7 @@ async fn publish_log_entry_succeeds() {
         .await;
 
     client
-        .publish_log_entry(PARTNER, IDENTIFIER, entry)
+        .publish_log_entry(&token(), PARTNER, IDENTIFIER, entry)
         .await
         .unwrap();
 }

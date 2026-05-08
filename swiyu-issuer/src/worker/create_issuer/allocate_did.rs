@@ -6,6 +6,7 @@
 //! returns immediately with no patch and no further registry call.
 
 use serde_json::{Map, json};
+use swiyu_registries::common::AccessToken;
 
 use crate::domain::{StepOutcome, StepResult, Tenant};
 use crate::worker::create_issuer::CreateIssuerStateData;
@@ -15,6 +16,7 @@ pub async fn execute_allocate_did<R: RegistryFacade>(
     tenant: &Tenant,
     state: &CreateIssuerStateData,
     registry: &R,
+    token: &AccessToken,
 ) -> StepOutcome {
     if state.assigned_did_url.is_some() {
         return StepOutcome::Done(StepResult::default());
@@ -30,7 +32,7 @@ pub async fn execute_allocate_did<R: RegistryFacade>(
         }
     };
 
-    match registry.allocate_did(partner_id).await {
+    match registry.allocate_did(token, partner_id).await {
         Ok(allocation) => {
             let mut patch = Map::new();
             patch.insert("assigned_did_url".into(), json!(allocation.url));
@@ -67,6 +69,10 @@ mod tests {
         }
     }
 
+    fn token() -> AccessToken {
+        AccessToken::new("test-token".to_string())
+    }
+
     fn fixture_allocation() -> Allocation {
         Allocation {
             url: "https://reg.example/api/v1/did/abc/did.jsonl".into(),
@@ -80,8 +86,13 @@ mod tests {
         let registry = MockRegistry::new();
         registry.enqueue_allocate(AllocateCall::Ok(fixture_allocation()));
 
-        let outcome =
-            execute_allocate_did(&tenant, &CreateIssuerStateData::default(), &registry).await;
+        let outcome = execute_allocate_did(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Done(result) => {
@@ -113,7 +124,7 @@ mod tests {
             ..CreateIssuerStateData::default()
         };
 
-        let outcome = execute_allocate_did(&tenant, &state, &registry).await;
+        let outcome = execute_allocate_did(&tenant, &state, &registry, &token()).await;
 
         match outcome {
             StepOutcome::Done(result) => assert!(result.state_data_patch.is_empty()),
@@ -130,8 +141,13 @@ mod tests {
         };
         let registry = MockRegistry::new();
 
-        let outcome =
-            execute_allocate_did(&tenant, &CreateIssuerStateData::default(), &registry).await;
+        let outcome = execute_allocate_did(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -151,8 +167,13 @@ mod tests {
             body: "service unavailable".into(),
         });
 
-        let outcome =
-            execute_allocate_did(&tenant, &CreateIssuerStateData::default(), &registry).await;
+        let outcome = execute_allocate_did(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Retry { error_code, .. } => {
@@ -171,8 +192,13 @@ mod tests {
             body: "unauthorized".into(),
         });
 
-        let outcome =
-            execute_allocate_did(&tenant, &CreateIssuerStateData::default(), &registry).await;
+        let outcome = execute_allocate_did(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -188,8 +214,13 @@ mod tests {
         let registry = MockRegistry::new();
         registry.enqueue_allocate(AllocateCall::Decode("malformed json".into()));
 
-        let outcome =
-            execute_allocate_did(&tenant, &CreateIssuerStateData::default(), &registry).await;
+        let outcome = execute_allocate_did(
+            &tenant,
+            &CreateIssuerStateData::default(),
+            &registry,
+            &token(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {

@@ -8,7 +8,7 @@ pub use allocate::Allocation;
 
 use std::time::Duration;
 
-use crate::common::{AccessToken, RegistryError};
+use crate::common::RegistryError;
 
 /// Async HTTP client for the SWIYU Identifier Registry.
 ///
@@ -20,15 +20,17 @@ use crate::common::{AccessToken, RegistryError};
 ///
 /// Methods take `&self`, and `reqwest::Client` is internally
 /// `Arc`-shared, so a single instance can serve a worker pool
-/// without further wrapping.
+/// without further wrapping. The `AccessToken` for protected
+/// operations is supplied per call rather than held on the client,
+/// so a single instance can serve every tenant in a multi-tenant
+/// process.
 pub struct IdentifierRegistryClient {
     base_url: String,
-    access_token: AccessToken,
     http: reqwest::Client,
 }
 
 impl IdentifierRegistryClient {
-    pub fn new(base_url: String, access_token: AccessToken) -> Result<Self, RegistryError> {
+    pub fn new(base_url: String) -> Result<Self, RegistryError> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
@@ -39,15 +41,11 @@ impl IdentifierRegistryClient {
             ))
             .build()
             .map_err(RegistryError::Transport)?;
-        Ok(Self::with_http(base_url, access_token, http))
+        Ok(Self::with_http(base_url, http))
     }
 
-    pub fn with_http(base_url: String, access_token: AccessToken, http: reqwest::Client) -> Self {
-        Self {
-            base_url,
-            access_token,
-            http,
-        }
+    pub fn with_http(base_url: String, http: reqwest::Client) -> Self {
+        Self { base_url, http }
     }
 
     pub fn base_url(&self) -> &str {

@@ -24,21 +24,20 @@ The `status` feature gates the entire `status` module from `lib.rs`. `RegistryEr
 ```rust
 pub struct StatusRegistryClient {
     base_url: String,
-    access_token: AccessToken,
     http: reqwest::Client,
 }
 
 impl StatusRegistryClient {
-    pub fn new(base_url: String, access_token: AccessToken) -> Result<Self, RegistryError>;
-    pub fn with_http(base_url: String, access_token: AccessToken, http: reqwest::Client) -> Self;
+    pub fn new(base_url: String) -> Result<Self, RegistryError>;
+    pub fn with_http(base_url: String, http: reqwest::Client) -> Self;
 
-    pub async fn create_status_list_entry(&self, partner_id: &str) -> Result<StatusListEntry, RegistryError>;
-    pub async fn update_status_list_entry(&self, partner_id: &str, entry_id: &str, status_list_jwt: &str) -> Result<(), RegistryError>;
-    pub async fn list_status_list_entries(&self, partner_id: &str, params: ListParams) -> Result<StatusListEntriesPage, RegistryError>;
+    pub async fn create_status_list_entry(&self, token: &AccessToken, partner_id: &str) -> Result<StatusListEntry, RegistryError>;
+    pub async fn update_status_list_entry(&self, token: &AccessToken, partner_id: &str, entry_id: &str, status_list_jwt: &str) -> Result<(), RegistryError>;
+    pub async fn list_status_list_entries(&self, token: &AccessToken, partner_id: &str, params: ListParams) -> Result<StatusListEntriesPage, RegistryError>;
 }
 ```
 
-`partner_id` and `entry_id` are per-call arguments rather than constructor fields, matching the identifier client. The first consumer (`swiyu-issuer`) pins one partner per process today, but threading them through call sites costs nothing and lets a verifier service or admin tool address multiple tenants without rebuilding the client.
+`token`, `partner_id` and `entry_id` are all per-call arguments rather than constructor fields, matching the identifier client. The client carries no tenant or auth state, so a single instance can serve every tenant in a multi-tenant process by being handed the right token at each call.
 
 ### `StatusListEntry`
 
@@ -103,7 +102,7 @@ The path keeps the trailing slash on `status-list-entries/` exactly as the OpenA
 
 ## Authentication
 
-All three operations send `Authorization: Bearer <token>` from the [`AccessToken`](../src/common/auth.rs) supplied at construction. Unlike the identifier registry's `fetch_log`, there is no public unauthenticated path on this API. The verifier-side dereference of the published `registry_url` is a separate concern handled by the consumer — it is just an HTTPS GET of a public URL and does not belong on this client.
+All three operations send `Authorization: Bearer <token>` from the [`AccessToken`](../src/common/auth.rs) supplied per call by the caller. Unlike the identifier registry's `fetch_log`, there is no public unauthenticated path on this API. The verifier-side dereference of the published `registry_url` is a separate concern handled by the consumer — it is just an HTTPS GET of a public URL and does not belong on this client. Acquisition and refresh of the bearer token is owned by `swiyu-issuer`; see [`../../swiyu-issuer/specs/aspect-oauth2.md`](../../swiyu-issuer/specs/aspect-oauth2.md).
 
 A 401 from the registry surfaces as `RegistryError::HttpStatus { status: 401, body }` and `is_retryable()` returns `false`: a stale or wrong token is a configuration problem and retrying will not help. A 403 means the token is valid but cannot act on the requested partner / entry; same treatment. A 404 on `update` means the entry does not exist (or does not belong to this partner), also non-retryable. 429 and 5xx are retryable per the existing `is_retryable` rules.
 

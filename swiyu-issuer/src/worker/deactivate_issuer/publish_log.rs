@@ -24,6 +24,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, json};
 
 use swiyu_core::did::DID;
+use swiyu_registries::common::AccessToken;
 
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant};
 use crate::worker::registry::{RegistryFacade, build_updated_log};
@@ -38,6 +39,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     state: &DeactivateIssuerStateData,
     registry: &R,
     engine: &S,
+    token: &AccessToken,
     now: DateTime<Utc>,
 ) -> StepOutcome {
     if state.log_published {
@@ -123,7 +125,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     let updated_log = build_updated_log(&fetched.raw, &new_line);
 
     match registry
-        .publish_log_entry(partner_id, &identifier, &updated_log)
+        .publish_log_entry(token, partner_id, &identifier, &updated_log)
         .await
     {
         Ok(()) => StepOutcome::Done(state_patch_log_published()),
@@ -215,6 +217,10 @@ mod tests {
         DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
     }
 
+    fn token() -> AccessToken {
+        AccessToken::new("test-token".to_string())
+    }
+
     fn fixture_genesis_entry() -> DIDLogEntry {
         DIDLogEntry::new_genesis(
             &LogEntryFormat::TDW03,
@@ -271,6 +277,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -306,6 +313,7 @@ mod tests {
             &fixture_state(true),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -339,6 +347,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -365,6 +374,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -393,6 +403,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -422,6 +433,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -451,6 +463,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -477,6 +490,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -505,6 +519,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -534,6 +549,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -563,6 +579,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;
@@ -591,6 +608,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
+            &token(),
             fixture_now(),
         )
         .await;

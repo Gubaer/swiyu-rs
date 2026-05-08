@@ -19,12 +19,12 @@ const REGISTRY_URL: &str =
 
 async fn fixture() -> (MockServer, StatusRegistryClient) {
     let server = MockServer::start().await;
-    let client = StatusRegistryClient::with_http(
-        server.uri(),
-        AccessToken::new(TOKEN.to_string()),
-        reqwest::Client::new(),
-    );
+    let client = StatusRegistryClient::with_http(server.uri(), reqwest::Client::new());
     (server, client)
+}
+
+fn token() -> AccessToken {
+    AccessToken::new(TOKEN.to_string())
 }
 
 #[tokio::test]
@@ -43,7 +43,10 @@ async fn create_status_list_entry_returns_entry() {
         .mount(&server)
         .await;
 
-    let entry = client.create_status_list_entry(PARTNER).await.unwrap();
+    let entry = client
+        .create_status_list_entry(&token(), PARTNER)
+        .await
+        .unwrap();
     assert_eq!(entry.id, ENTRY_ID);
     assert_eq!(entry.registry_url, REGISTRY_URL);
 }
@@ -65,7 +68,7 @@ async fn update_status_list_entry_succeeds() {
         .await;
 
     client
-        .update_status_list_entry(PARTNER, ENTRY_ID, jwt)
+        .update_status_list_entry(&token(), PARTNER, ENTRY_ID, jwt)
         .await
         .unwrap();
 }
@@ -98,7 +101,7 @@ async fn list_status_list_entries_returns_page() {
         .await;
 
     let page = client
-        .list_status_list_entries(PARTNER, ListParams::default())
+        .list_status_list_entries(&token(), PARTNER, ListParams::default())
         .await
         .unwrap();
     assert_eq!(page.entries.len(), 1);

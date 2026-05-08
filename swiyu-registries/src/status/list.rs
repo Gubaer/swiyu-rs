@@ -1,6 +1,6 @@
 use tracing::Instrument;
 
-use crate::common::RegistryError;
+use crate::common::{AccessToken, RegistryError};
 use crate::status::StatusRegistryClient;
 
 /// Pagination and sort parameters for
@@ -64,11 +64,11 @@ impl StatusRegistryClient {
     ///
     /// Idempotent and safe to retry.
     ///
-    /// Sends `Authorization: Bearer <token>` from the
-    /// [`AccessToken`](crate::common::AccessToken) supplied at
-    /// construction. Pagination is encoded as the `page`, `size` and
-    /// (zero or more) `sort` query parameters, matching the Spring
-    /// conventions of the upstream service.
+    /// Sends `Authorization: Bearer <token>` from the supplied
+    /// [`AccessToken`](crate::common::AccessToken). Pagination is
+    /// encoded as the `page`, `size` and (zero or more) `sort` query
+    /// parameters, matching the Spring conventions of the upstream
+    /// service.
     ///
     /// Errors:
     /// - [`RegistryError::Transport`] for network failures before a
@@ -81,6 +81,7 @@ impl StatusRegistryClient {
     ///   pagination/entry field has the wrong type.
     pub async fn list_status_list_entries(
         &self,
+        token: &AccessToken,
         partner_id: &str,
         params: ListParams,
     ) -> Result<StatusListEntriesPage, RegistryError> {
@@ -109,7 +110,7 @@ impl StatusRegistryClient {
             let response = self
                 .http
                 .get(&endpoint)
-                .bearer_auth(self.access_token.as_str())
+                .bearer_auth(token.as_str())
                 .query(&query)
                 .send()
                 .await
@@ -200,7 +201,6 @@ fn read_u64(value: &serde_json::Value, field: &'static str) -> Result<u64, Regis
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::AccessToken;
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -209,11 +209,11 @@ mod tests {
     const ENTRY_ID: &str = "18fa7c77-9dd1-4e20-a147-fb1bec146085";
 
     fn client(server: &MockServer) -> StatusRegistryClient {
-        StatusRegistryClient::with_http(
-            server.uri(),
-            AccessToken::new("test-token".to_string()),
-            reqwest::Client::new(),
-        )
+        StatusRegistryClient::with_http(server.uri(), reqwest::Client::new())
+    }
+
+    fn token() -> AccessToken {
+        AccessToken::new("test-token".to_string())
     }
 
     fn page_body(content: serde_json::Value) -> serde_json::Value {
@@ -252,7 +252,7 @@ mod tests {
             .await;
 
         let page = client(&server)
-            .list_status_list_entries(PARTNER, ListParams::default())
+            .list_status_list_entries(&token(), PARTNER, ListParams::default())
             .await
             .unwrap();
         assert_eq!(page.entries.len(), 1);
@@ -286,7 +286,7 @@ mod tests {
             sort: vec!["createdAt,desc".to_string()],
         };
         client(&server)
-            .list_status_list_entries(PARTNER, params)
+            .list_status_list_entries(&token(), PARTNER, params)
             .await
             .unwrap();
     }
@@ -306,7 +306,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .list_status_list_entries(PARTNER, ListParams::default())
+            .list_status_list_entries(&token(), PARTNER, ListParams::default())
             .await
             .unwrap_err();
         match err {
@@ -334,7 +334,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .list_status_list_entries(PARTNER, ListParams::default())
+            .list_status_list_entries(&token(), PARTNER, ListParams::default())
             .await
             .unwrap_err();
         match err {
@@ -356,7 +356,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .list_status_list_entries(PARTNER, ListParams::default())
+            .list_status_list_entries(&token(), PARTNER, ListParams::default())
             .await
             .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 401, .. }));
@@ -373,7 +373,7 @@ mod tests {
             .await;
 
         let err = client(&server)
-            .list_status_list_entries(PARTNER, ListParams::default())
+            .list_status_list_entries(&token(), PARTNER, ListParams::default())
             .await
             .unwrap_err();
         assert!(matches!(err, RegistryError::HttpStatus { status: 503, .. }));

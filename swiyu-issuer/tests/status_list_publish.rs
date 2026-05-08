@@ -34,11 +34,11 @@ fn update_path() -> String {
 }
 
 fn build_status_client(server: &MockServer) -> StatusRegistryClient {
-    StatusRegistryClient::with_http(
-        server.uri(),
-        AccessToken::new("test-token".into()),
-        reqwest::Client::new(),
-    )
+    StatusRegistryClient::with_http(server.uri(), reqwest::Client::new())
+}
+
+fn test_access_token() -> AccessToken {
+    AccessToken::new("test-token".into())
 }
 
 fn registry_url_for(server: &MockServer) -> String {
@@ -164,6 +164,7 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
         pool.clone(),
         engine,
         build_status_client(&server),
+        test_access_token(),
         Box::new(ConstantRng(0)),
     );
     publisher.run_round(list).await.unwrap();
@@ -230,6 +231,7 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
         pool.clone(),
         engine,
         build_status_client(&server),
+        test_access_token(),
         Box::new(ConstantRng(0)),
     );
 
@@ -289,6 +291,7 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
         pool.clone(),
         engine,
         build_status_client(&server),
+        test_access_token(),
         Box::new(ConstantRng(0)),
     );
     publisher.run_round(list).await.unwrap();
