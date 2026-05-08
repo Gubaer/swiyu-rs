@@ -31,6 +31,13 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
+# The workspace `.cargo/config.toml` selects clang + mold as the
+# linker. Install both so the cargo-chef builder image can honour
+# that configuration; without them the build fails with
+# `linker `clang` not found`.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends clang mold \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=planner /app/recipe.json recipe.json
 # Build only third-party dependencies. This layer is reused unless
 # Cargo.lock or any crate's Cargo.toml changes.
