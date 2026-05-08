@@ -128,6 +128,9 @@ mod tests {
         Tenant {
             id: TenantId::generate(),
             partner_id: partner_id.map(str::to_string),
+            oauth_client_id: None,
+            oauth_client_secret: None,
+            oauth_refresh_token: None,
         }
     }
 

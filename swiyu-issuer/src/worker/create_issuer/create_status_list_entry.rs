@@ -73,6 +73,9 @@ mod tests {
         Tenant {
             id: TenantId::generate(),
             partner_id: Some(partner_id.into()),
+            oauth_client_id: None,
+            oauth_client_secret: None,
+            oauth_refresh_token: None,
         }
     }
 
@@ -147,6 +150,9 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::generate(),
             partner_id: None,
+            oauth_client_id: None,
+            oauth_client_secret: None,
+            oauth_refresh_token: None,
         };
         let registry = MockStatusRegistry::new();
 
