@@ -64,6 +64,16 @@ impl Default for PublisherConfig {
 /// Construct one per process at startup with shared dependencies
 /// (Postgres pool, signing engine, status-registry client), then
 /// `tokio::spawn(publisher.run(shutdown))` to launch.
+///
+/// # Type Parameters
+/// - `S`: signing engine implementing [`SigningEngine`]. Production
+///   passes [`crate::domain::DevSigningEngine`] or
+///   [`crate::domain::VaultSigningEngine`]; tests pass an in-memory
+///   mock.
+/// - `C`: status-registry facade implementing
+///   [`StatusRegistryFacade`]. Production passes
+///   [`swiyu_registries::status::StatusRegistryClient`]; tests pass
+///   an in-memory mock.
 pub struct StatusListPublisher<S, C> {
     pool: PgPool,
     engine: S,
