@@ -10,7 +10,7 @@ use crate::domain::{
 use crate::persistence::{self, PersistenceError};
 use sqlx::PgPool;
 
-use super::log_builder::{BuildError, build_log_entry};
+use super::didlog_builder::{BuildError, build_log_entry};
 use super::{CreateIssuerInput, CreateIssuerStateData};
 
 /// Records the DID, its three [`crate::domain::KeyPairId`]s, and the

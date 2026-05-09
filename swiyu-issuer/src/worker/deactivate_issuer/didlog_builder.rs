@@ -3,7 +3,7 @@
 //!
 //! Used by `execute_build_deactivation_log` (validation) and
 //! `execute_publish_log` (regenerate-and-PUT). Mirrors
-//! `create_issuer::log_builder::build_log_entry` in shape and
+//! `create_issuer::didlog_builder::build_log_entry` in shape and
 //! determinism guarantees: given the same `issuer`, the same fetched
 //! tail of log entries, the same key material, and the same `now`,
 //! the produced entry is byte-identical, so the publish step can
@@ -123,7 +123,7 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
     // proof slot at index 4. The entryHash must be computed over
     // the 4-element preliminary form (no proof slot), per the
     // did:tdw 0.3 spec — same discipline as create_issuer's
-    // log_builder. Strip first, then append the real proof at the
+    // didlog_builder. Strip first, then append the real proof at the
     // end.
     let mut entry_value = Value::from(entry_template);
     strip_proof_slot(&mut entry_value, &LogEntryFormat::TDW03);
@@ -153,7 +153,7 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
 
     // The DID Toolbox (Java) signs only the document content (entry[3]["value"]
     // for did:tdw 0.3), not the entire entry. Mirroring that — same as
-    // create_issuer's log_builder — keeps signature bytes interoperable.
+    // create_issuer's didlog_builder — keeps signature bytes interoperable.
     let document_for_hash = entry_value[3]["value"].clone();
 
     let vm_id = format!("did:key:{authorized_multikey}#{authorized_multikey}");

@@ -1,7 +1,7 @@
 //! `publish_log` step executor for `RotateKeys`.
 //!
 //! Re-fetches the DIDLog tail and re-derives the rotation entry
-//! through `log_builder::build_rotation_entry`, then PUTs the
+//! through `didlog_builder::build_rotation_entry`, then PUTs the
 //! signed line to the SWIYU Identifier Registry. Idempotent on
 //! resume: a second invocation observing
 //! `state_data.log_published == true` returns immediately with no
@@ -32,7 +32,7 @@ use crate::worker::registry_facades::{
 };
 use crate::worker::registry_identifier;
 
-use super::log_builder::{BuildError, build_rotation_entry};
+use super::didlog_builder::{BuildError, build_rotation_entry};
 use super::state::RotateKeysStateData;
 
 pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(

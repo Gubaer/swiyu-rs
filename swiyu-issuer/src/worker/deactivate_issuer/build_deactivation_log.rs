@@ -27,7 +27,7 @@ use swiyu_core::did::DID;
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult};
 use crate::worker::registry_facades::RegistryFacade;
 
-use super::log_builder::{BuildError, build_deactivation_entry};
+use super::didlog_builder::{BuildError, build_deactivation_entry};
 
 pub async fn execute_build_deactivation_log<R: RegistryFacade, S: SigningEngine>(
     issuer: &Issuer,

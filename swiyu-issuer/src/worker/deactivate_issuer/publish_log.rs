@@ -1,7 +1,7 @@
 //! `publish_log` step executor for `DeactivateIssuer`.
 //!
 //! Re-fetches the DIDLog tail and re-derives the deactivation entry
-//! through `log_builder::build_deactivation_entry`, then PUTs the
+//! through `didlog_builder::build_deactivation_entry`, then PUTs the
 //! signed line to the SWIYU Identifier Registry. Idempotent on
 //! resume: a second invocation observing `state_data.log_published
 //! == true` returns immediately with no patch and no further engine,
@@ -33,7 +33,7 @@ use crate::worker::registry_facades::{
     RegistryFacade, build_updated_didlog, publish_log_entry_with_refresh,
 };
 
-use super::log_builder::{BuildError, build_deactivation_entry};
+use super::didlog_builder::{BuildError, build_deactivation_entry};
 use super::state::DeactivateIssuerStateData;
 use crate::worker::registry_identifier;
 

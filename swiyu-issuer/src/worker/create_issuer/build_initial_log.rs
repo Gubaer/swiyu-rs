@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use crate::domain::{SigningEngine, SigningEngineError, StepOutcome, StepResult};
 
 use super::CreateIssuerStateData;
-use super::log_builder::{BuildError, build_log_entry};
+use super::didlog_builder::{BuildError, build_log_entry};
 
 /// Constructs the entry deterministically from the inputs (key
 /// triple, allocation URL, pinned `now`) and validates that every

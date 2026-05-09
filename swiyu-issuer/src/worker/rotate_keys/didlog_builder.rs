@@ -3,7 +3,7 @@
 //!
 //! Used by `execute_build_rotation_log` (validation) and
 //! `execute_publish_log` (regenerate-and-PUT). Mirrors
-//! `deactivate_issuer::log_builder::build_deactivation_entry` in
+//! `deactivate_issuer::didlog_builder::build_deactivation_entry` in
 //! shape and determinism guarantees: given the same `issuer`, the
 //! same `new_triple`, the same fetched tail of log entries, the
 //! same key material, and the same `now`, the produced entry is

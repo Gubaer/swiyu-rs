@@ -11,10 +11,10 @@ use crate::worker::outcome::from_token_aware_error;
 use crate::worker::registry_facades::{RegistryFacade, publish_log_entry_with_refresh};
 
 use super::CreateIssuerStateData;
-use super::log_builder::{BuildError, build_log_entry};
+use super::didlog_builder::{BuildError, build_log_entry};
 
 /// Re-derives the genesis entry through
-/// [`super::log_builder::build_log_entry`] and sends it to the
+/// [`super::didlog_builder::build_log_entry`] and sends it to the
 /// registry. The entry itself is not stored in `state_data` —
 /// re-derivation is deterministic given the same key triple,
 /// allocation URL, and `now`, which the dispatch loop pins to

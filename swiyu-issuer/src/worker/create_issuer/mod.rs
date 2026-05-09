@@ -12,8 +12,8 @@
 pub mod allocate_did;
 pub mod build_initial_log;
 pub mod create_status_list_entry;
+pub mod didlog_builder;
 pub mod generate_keys;
-pub mod log_builder;
 pub mod persist_issuer;
 pub mod provision_status_list;
 pub mod publish_log;

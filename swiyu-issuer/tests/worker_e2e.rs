@@ -56,7 +56,7 @@ fn publish_path() -> String {
 }
 
 /// The URL the registry returns in the allocate response. Picked so
-/// log_builder's URL parser can derive a clean did:tdw host/path.
+/// didlog_builder's URL parser can derive a clean did:tdw host/path.
 fn registry_url_in_response() -> String {
     format!("https://reg.test/api/v1/did/{REGISTRY_UUID}/did.jsonl")
 }
