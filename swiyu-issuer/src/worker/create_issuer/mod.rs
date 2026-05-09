@@ -1,4 +1,13 @@
-//! `CreateIssuer` task-type executor and supporting types.
+//! `CreateIssuer` saga: the multi-step task that runs on
+//! `POST /api/v1/issuers`.
+//!
+//! Allocates a DID at the SWIYU Identifier Registry, generates the
+//! three keypairs (authorized / authentication / assertion), signs
+//! and publishes the genesis DIDLog entry, persists the issuer row,
+//! and provisions a status-list entry. Each step is one submodule
+//! exporting one `execute_*` function; the dispatch loop in
+//! [`crate::worker::runner`] sequences them and persists progress in
+//! `operation_tasks` so a crash mid-saga resumes from the same step.
 
 pub mod allocate_did;
 pub mod build_initial_log;
