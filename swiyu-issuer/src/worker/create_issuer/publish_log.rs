@@ -1,12 +1,5 @@
-//! `publish_log` step executor.
-//!
-//! Re-derives the genesis entry through `log_builder::build_log_entry`
-//! and PUTs it to the SWIYU Identifier Registry. Idempotent on resume:
-//! a second invocation observing `state_data.log_published == true`
-//! returns immediately with no patch and no further engine or registry
-//! call. The entry itself is not stored in `state_data` — re-derivation
-//! is deterministic given the same key triple, allocation URL, and
-//! `now`, which the dispatch loop pins to `task.created_at`.
+//! Step 4 of the `CreateIssuer` saga: PUT the signed genesis DIDLog
+//! entry to the SWIYU Identifier Registry.
 
 use chrono::{DateTime, Utc};
 use serde_json::{Map, json};
@@ -20,6 +13,14 @@ use crate::worker::registry_facades::{RegistryFacade, publish_log_entry_with_ref
 use super::CreateIssuerStateData;
 use super::log_builder::{BuildError, build_log_entry};
 
+/// Re-derives the genesis entry through
+/// [`super::log_builder::build_log_entry`] and sends it to the
+/// registry. The entry itself is not stored in `state_data` —
+/// re-derivation is deterministic given the same key triple,
+/// allocation URL, and `now`, which the dispatch loop pins to
+/// `task.created_at`. On saga resume this step short-circuits when
+/// `state_data.log_published == true`, returning [`StepOutcome::Done`]
+/// with no further engine or registry call.
 pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     tenant: &Tenant,
     state: &CreateIssuerStateData,

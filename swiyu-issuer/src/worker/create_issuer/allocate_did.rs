@@ -1,9 +1,5 @@
-//! `allocate_did` step executor.
-//!
-//! Calls `RegistryFacade::allocate_did(partner_id)` and records the
-//! returned URL and identifier in `state_data`. Idempotent on resume:
-//! a second invocation observing `state_data.assigned_did_url` set
-//! returns immediately with no patch and no further registry call.
+//! Step 1 of the `CreateIssuer` saga: claim a DID at the SWIYU
+//! Identifier Registry.
 
 use serde_json::{Map, json};
 
@@ -12,6 +8,13 @@ use crate::worker::create_issuer::CreateIssuerStateData;
 use crate::worker::outcome::from_token_aware_error;
 use crate::worker::registry_facades::{RegistryFacade, allocate_did_with_refresh};
 
+/// Calls [`RegistryFacade::allocate_did`] and records the returned
+/// URL and identifier in `state_data` so subsequent steps have
+/// something to anchor on. The SWIYU API call is *not* idempotent —
+/// a second call would mint a second DID — so on saga resume this
+/// step short-circuits when `state_data.assigned_did_url` is already
+/// set, returning [`StepOutcome::Done`] with no patch and no further
+/// registry call.
 pub async fn execute_allocate_did<R: RegistryFacade>(
     tenant: &Tenant,
     state: &CreateIssuerStateData,

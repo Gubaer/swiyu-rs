@@ -1,10 +1,5 @@
-//! `provision_status_list` step executor.
-//!
-//! Inserts the issuer's first `status_lists` row using the registry
-//! coordinates recorded by `create_status_list_entry`, and re-points
-//! `issuers.current_status_list_id` at it. Idempotent on resume: a
-//! second invocation observing `issuers.current_status_list_id`
-//! already set returns immediately.
+//! Step 7 (final) of the `CreateIssuer` saga: insert the issuer's
+//! first local `status_lists` row and link it from the issuer.
 
 use sqlx::PgPool;
 
@@ -12,6 +7,12 @@ use crate::domain::{IssuerId, StepOutcome, StepResult};
 use crate::persistence::{self, PersistenceError};
 use crate::worker::create_issuer::CreateIssuerStateData;
 
+/// Uses the registry coordinates recorded by
+/// `execute_create_status_list_entry` to populate the row, then
+/// re-points `issuers.current_status_list_id` at it so credential
+/// issuance can find the entry. On saga resume this step
+/// short-circuits when `issuers.current_status_list_id` is already
+/// set, returning [`StepOutcome::Done`].
 pub async fn execute_provision_status_list(
     pool: &PgPool,
     issuer_id: &IssuerId,

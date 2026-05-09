@@ -1,11 +1,6 @@
-//! `build_initial_log` step executor.
-//!
-//! Constructs the genesis DIDLog entry locally and validates that
-//! every dependency works (key material is present and well-formed,
-//! the SigningEngine is responsive). The entry itself is discarded —
-//! `publish_log` regenerates it deterministically from the same
-//! inputs. The point of this step is to fail fast before
-//! `publish_log` makes a network round-trip.
+//! Step 3 of the `CreateIssuer` saga: build the genesis DIDLog entry
+//! locally so any failure surfaces *before* `publish_log` makes a
+//! network round-trip.
 
 use chrono::{DateTime, Utc};
 
@@ -14,6 +9,12 @@ use crate::domain::{SigningEngine, SigningEngineError, StepOutcome, StepResult};
 use super::CreateIssuerStateData;
 use super::log_builder::{BuildError, build_log_entry};
 
+/// Constructs the entry deterministically from the inputs (key
+/// triple, allocation URL, pinned `now`) and validates that every
+/// dependency works: the key material is present and well-formed,
+/// and the [`SigningEngine`] is responsive. The entry itself is
+/// discarded — `publish_log` regenerates it from the same inputs,
+/// producing byte-identical output.
 pub async fn execute_build_initial_log<S: SigningEngine>(
     state: &CreateIssuerStateData,
     engine: &S,

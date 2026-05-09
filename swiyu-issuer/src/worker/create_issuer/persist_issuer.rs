@@ -1,12 +1,5 @@
-//! `persist_issuer` step executor.
-//!
-//! Inserts the `issuers` row that records the just-published DID,
-//! its three `KeyPairId`s, and the BA-supplied description and
-//! display name. Idempotent on resume: a second invocation observing
-//! a row with the task's pre-allocated `issuer_id` already present
-//! returns immediately. The unique-violation race window between the
-//! existence check and the insert is also treated as success — the
-//! row is the row we were going to write.
+//! Step 5 of the `CreateIssuer` saga: insert the local `issuers` row
+//! that mirrors the just-published DID.
 
 use chrono::{DateTime, Utc};
 
@@ -20,6 +13,13 @@ use sqlx::PgPool;
 use super::log_builder::{BuildError, build_log_entry};
 use super::{CreateIssuerInput, CreateIssuerStateData};
 
+/// Records the DID, its three [`crate::domain::KeyPairId`]s, and the
+/// BA-supplied description and display name. On saga resume this
+/// step short-circuits when a row with the task's pre-allocated
+/// `issuer_id` is already present, returning [`StepOutcome::Done`].
+/// The unique-violation race window between the existence check and
+/// the insert is also treated as success — the row is the row we
+/// were going to write.
 pub async fn execute_persist_issuer<S: SigningEngine>(
     pool: &PgPool,
     tenant_id: &TenantId,

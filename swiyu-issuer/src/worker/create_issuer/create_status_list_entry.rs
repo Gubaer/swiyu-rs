@@ -1,13 +1,5 @@
-//! `create_status_list_entry` step executor.
-//!
-//! Calls `StatusRegistryFacade::create_status_list_entry(partner_id)`
-//! and records the returned `id` and `registry_url` in `state_data`.
-//! Idempotent on resume: a second invocation observing
-//! `state_data.status_list_registry_entry_id` set returns immediately
-//! with no patch and no further registry call. The registry call is
-//! **not idempotent** server-side (every successful call mints a fresh
-//! entry), so the state-data marker is the load-bearing safeguard
-//! against duplicate entries on retry.
+//! Step 6 of the `CreateIssuer` saga: allocate the issuer's first
+//! status-list entry at the SWIYU Status Registry.
 
 use serde_json::{Map, json};
 
@@ -18,6 +10,14 @@ use crate::worker::registry_facades::{
     StatusRegistryFacade, create_status_list_entry_with_refresh,
 };
 
+/// Calls [`StatusRegistryFacade::create_status_list_entry`] and
+/// records the returned `id` and `registry_url` in `state_data`. The
+/// registry call is *not* idempotent server-side — each successful
+/// call mints a fresh entry — so on saga resume this step
+/// short-circuits when `state_data.status_list_registry_entry_id` is
+/// already set, returning [`StepOutcome::Done`] with no further
+/// registry call. The state-data marker is the load-bearing
+/// safeguard against duplicate entries on retry.
 pub async fn execute_create_status_list_entry<C: StatusRegistryFacade>(
     tenant: &Tenant,
     state: &CreateIssuerStateData,

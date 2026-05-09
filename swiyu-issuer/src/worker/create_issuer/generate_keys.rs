@@ -1,16 +1,6 @@
-//! `generate_keys` step executor.
-//!
-//! Generates the issuer's three key pairs (Authorized, Authentication,
-//! Assertion) through the `SigningEngine` and records the resulting
-//! `KeyTriple` in `state_data`. Idempotent on resume: a second
-//! invocation observing `state_data.key_ids` set returns immediately
-//! with no patch and no further engine calls.
-//!
-//! The plan accepts orphan keys created by a crash mid-step: a
-//! partial run leaves earlier-generated private keys inside the
-//! engine; on retry the executor generates a fresh triple, the
-//! orphans are cleaned up by a future periodic job rather than at
-//! retry time.
+//! Step 2 of the `CreateIssuer` saga: generate the three keypairs
+//! (Authorized, Authentication, Assertion) the DID Document
+//! references.
 
 use serde_json::{Map, json};
 
@@ -18,6 +8,17 @@ use crate::domain::{KeyRole, SigningEngine, SigningEngineError, StepOutcome, Ste
 
 use super::{CreateIssuerStateData, KeyTriple};
 
+/// Calls the [`SigningEngine`] three times and records the resulting
+/// [`KeyTriple`] in `state_data` so subsequent steps can sign with
+/// the private keys and embed the public keys in the DID Document.
+/// On saga resume this step short-circuits when `state_data.key_ids`
+/// is already set, returning [`StepOutcome::Done`] with no further
+/// engine calls.
+///
+/// A partial run leaves earlier-generated private keys inside the
+/// engine; on retry the executor generates a fresh triple and the
+/// orphans are cleaned up by a future periodic job rather than at
+/// retry time.
 pub async fn execute_generate_keys<S: SigningEngine>(
     state: &CreateIssuerStateData,
     engine: &S,
