@@ -25,7 +25,7 @@ use chrono::{DateTime, Utc};
 use swiyu_core::did::DID;
 
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult};
-use crate::worker::registry::RegistryFacade;
+use crate::worker::registry_facades::RegistryFacade;
 
 use super::log_builder::{BuildError, build_deactivation_entry};
 

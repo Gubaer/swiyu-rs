@@ -6,17 +6,17 @@
 //! returns immediately with no patch and no further registry call.
 
 use serde_json::{Map, json};
-use swiyu_registries::common::AccessToken;
 
-use crate::domain::{StepOutcome, StepResult, Tenant};
+use crate::domain::{StepOutcome, StepResult, Tenant, TokenProvider};
 use crate::worker::create_issuer::CreateIssuerStateData;
-use crate::worker::registry::RegistryFacade;
+use crate::worker::registry_facades::{RegistryFacade, allocate_did_with_refresh};
+use crate::worker::token_outcome::token_aware_error_to_outcome;
 
 pub async fn execute_allocate_did<R: RegistryFacade>(
     tenant: &Tenant,
     state: &CreateIssuerStateData,
     registry: &R,
-    token: &AccessToken,
+    provider: &impl TokenProvider,
 ) -> StepOutcome {
     if state.assigned_did_url.is_some() {
         return StepOutcome::Done(StepResult::default());
@@ -32,7 +32,9 @@ pub async fn execute_allocate_did<R: RegistryFacade>(
         }
     };
 
-    match registry.allocate_did(token, partner_id).await {
+    let result = allocate_did_with_refresh(provider, registry, partner_id).await;
+
+    match result {
         Ok(allocation) => {
             let mut patch = Map::new();
             patch.insert("assigned_did_url".into(), json!(allocation.url));
@@ -41,14 +43,7 @@ pub async fn execute_allocate_did<R: RegistryFacade>(
                 state_data_patch: patch,
             })
         }
-        Err(e) if e.is_retryable() => StepOutcome::Retry {
-            error_code: "registry_unavailable".into(),
-            error_message: e.to_string(),
-        },
-        Err(e) => StepOutcome::Terminal {
-            error_code: "registry_rejected".into(),
-            error_message: e.to_string(),
-        },
+        Err(e) => token_aware_error_to_outcome(e, "registry_unavailable", "registry_rejected"),
     }
 }
 
@@ -57,9 +52,10 @@ mod tests {
     use super::*;
 
     use serde_json::Value;
+    use swiyu_registries::common::AccessToken;
     use swiyu_registries::identifier::Allocation;
 
-    use crate::domain::TenantId;
+    use crate::domain::{StaticTokenProvider, TenantId};
     use crate::worker::test_support::{AllocateCall, MockRegistry};
 
     fn tenant_with_partner(partner_id: &str) -> Tenant {
@@ -72,8 +68,8 @@ mod tests {
         }
     }
 
-    fn token() -> AccessToken {
-        AccessToken::new("test-token".to_string())
+    fn token_provider() -> StaticTokenProvider {
+        StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
     }
 
     fn fixture_allocation() -> Allocation {
@@ -93,7 +89,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 
@@ -127,7 +123,7 @@ mod tests {
             ..CreateIssuerStateData::default()
         };
 
-        let outcome = execute_allocate_did(&tenant, &state, &registry, &token()).await;
+        let outcome = execute_allocate_did(&tenant, &state, &registry, &token_provider()).await;
 
         match outcome {
             StepOutcome::Done(result) => assert!(result.state_data_patch.is_empty()),
@@ -151,7 +147,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 
@@ -177,7 +173,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 
@@ -191,18 +187,22 @@ mod tests {
 
     #[tokio::test]
     async fn registry_4xx_is_terminal() {
+        // 400 rather than 401: a 401 now triggers a one-shot
+        // refresh-and-retry through `with_refreshed_token`, so it is
+        // no longer a single-call terminal failure. Any other 4xx
+        // still maps straight to Terminal.
         let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_allocate(AllocateCall::HttpStatus {
-            status: 401,
-            body: "unauthorized".into(),
+            status: 400,
+            body: "bad request".into(),
         });
 
         let outcome = execute_allocate_did(
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 
@@ -224,7 +224,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 

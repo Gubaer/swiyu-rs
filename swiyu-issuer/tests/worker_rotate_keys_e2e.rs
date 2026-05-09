@@ -14,6 +14,9 @@
 //! verify the predecessor signature, so a minimal but well-formed
 //! TDW 0.3 entry is enough to drive the saga.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,18 +25,18 @@ use rand_core::RngCore;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
+use wiremock::MockServer;
 
 use swiyu_core::didlog::DIDLogEntry;
 use swiyu_issuer::domain::{
     DevSigningEngine, Issuer, IssuerId, IssuerState, KeyPairId, KeyRole, OperationTask,
-    SigningEngine, TaskId, TaskState, TaskType, TenantId,
+    ProviderRegistry, SigningEngine, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::{issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-use swiyu_registries::common::AccessToken;
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -72,12 +75,24 @@ impl RngCore for ConstantRng {
 }
 
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: &str) {
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, $2)")
-        .bind(tenant_id.bare())
-        .bind(partner_id)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(tenant_id.bare())
+    .bind(partner_id)
+    .bind("test-client")
+    .bind("test-secret")
+    .bind("test-refresh")
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn build_provider_setup(pool: &PgPool) -> (MockServer, Arc<ProviderRegistry>) {
+    let server = common::oauth::mock_token_endpoint().await;
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    (server, providers)
 }
 
 /// Builds a minimal but parseable did:tdw 0.3 genesis entry for
@@ -206,13 +221,14 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
         Arc::clone(&registry),
         engine,
         MockStatusRegistry::new(),
-        AccessToken::new("test-token".into()),
+        providers,
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -297,13 +313,14 @@ async fn rotates_only_authentication(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
         Arc::clone(&registry),
         engine,
         MockStatusRegistry::new(),
-        AccessToken::new("test-token".into()),
+        providers,
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));

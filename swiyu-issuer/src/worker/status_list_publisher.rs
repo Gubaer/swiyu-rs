@@ -11,12 +11,12 @@
 //! The loop runs until its [`CancellationToken`] fires; on shutdown it
 //! finishes the in-flight round and exits.
 
+use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use chrono::{Duration, Utc};
 use rand_core::RngCore;
 use sqlx::PgPool;
-use swiyu_registries::common::{AccessToken, RegistryError};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -24,10 +24,11 @@ use tracing::{debug, error, info, warn};
 use crate::domain::SigningEngine;
 use crate::domain::StatusList;
 use crate::domain::status_list::wrapper::{BuildError, build_signed};
+use crate::domain::{ProviderRegistry, TokenAwareError};
 use crate::persistence::{self, PersistenceError};
 
 use super::backoff::backoff_delay;
-use super::registry::StatusRegistryFacade;
+use super::registry_facades::{StatusRegistryFacade, update_status_list_entry_with_refresh};
 
 /// Default sleep between dispatch-loop polls when no dirty list is
 /// runnable. Mirrors `runner::DEFAULT_POLL_INTERVAL`.
@@ -67,7 +68,10 @@ pub struct StatusListPublisher<S, C> {
     pool: PgPool,
     engine: S,
     status_registry: C,
-    access_token: AccessToken,
+    /// Per-tenant `TokenProvider` cache. `run_round` resolves the
+    /// provider for the issuer's tenant once per round and wraps the
+    /// `update_status_list_entry` call in `with_refreshed_token`.
+    providers: Arc<ProviderRegistry>,
     rng: Box<dyn RngCore + Send + Sync>,
     config: PublisherConfig,
 }
@@ -81,14 +85,14 @@ where
         pool: PgPool,
         engine: S,
         status_registry: C,
-        access_token: AccessToken,
+        providers: Arc<ProviderRegistry>,
         rng: Box<dyn RngCore + Send + Sync>,
     ) -> Self {
         Self {
             pool,
             engine,
             status_registry,
-            access_token,
+            providers,
             rng,
             config: PublisherConfig::default(),
         }
@@ -201,11 +205,17 @@ where
             }
         };
 
-        match self
-            .status_registry
-            .update_status_list_entry(&self.access_token, &partner_id, &registry_entry_id, &jwt)
-            .await
-        {
+        let provider = self.providers.provider_for(&issuer.tenant_id).await;
+        let update = update_status_list_entry_with_refresh(
+            &*provider,
+            &self.status_registry,
+            &partner_id,
+            &registry_entry_id,
+            &jwt,
+        )
+        .await;
+
+        match update {
             Ok(()) => {
                 let won = persistence::status_lists::record_publish_success(
                     &mut conn,
@@ -229,25 +239,21 @@ where
                 }
                 Ok(())
             }
-            Err(e) if e.is_retryable() => {
-                let attempts = list.publish_attempts.saturating_add(1);
-                let delay = backoff_delay(attempts, &mut *self.rng);
-                let next =
-                    now + Duration::from_std(delay).unwrap_or(self.config.terminal_retry_after);
-                warn!(list_id = %list_id, error = %e, attempts, "publish round retryable failure");
-                persistence::status_lists::record_publish_failure(
-                    &mut conn,
-                    &list_id,
-                    &e.to_string(),
-                    next,
-                    now,
-                )
-                .await?;
-                Err(PublisherError::Registry(e))
-            }
             Err(e) => {
-                let next = now + self.config.terminal_retry_after;
-                error!(list_id = %list_id, error = %e, "publish round terminal failure; long retry scheduled");
+                let retryable = e.is_retryable();
+                let next = if retryable {
+                    let attempts = list.publish_attempts.saturating_add(1);
+                    let delay = backoff_delay(attempts, &mut *self.rng);
+                    now + Duration::from_std(delay).unwrap_or(self.config.terminal_retry_after)
+                } else {
+                    now + self.config.terminal_retry_after
+                };
+                if retryable {
+                    let attempts = list.publish_attempts.saturating_add(1);
+                    warn!(list_id = %list_id, error = %e, attempts, "publish round retryable failure");
+                } else {
+                    error!(list_id = %list_id, error = %e, "publish round terminal failure; long retry scheduled");
+                }
                 persistence::status_lists::record_publish_failure(
                     &mut conn,
                     &list_id,
@@ -256,7 +262,7 @@ where
                     now,
                 )
                 .await?;
-                Err(PublisherError::Registry(e))
+                Err(PublisherError::TokenAware(e))
             }
         }
     }
@@ -266,8 +272,8 @@ where
 pub enum PublisherError {
     #[error(transparent)]
     Persistence(#[from] PersistenceError),
-    #[error("registry: {0}")]
-    Registry(RegistryError),
+    #[error(transparent)]
+    TokenAware(TokenAwareError),
     #[error("wrapper build: {0}")]
     Build(BuildError),
     #[error("inconsistent state: {0}")]

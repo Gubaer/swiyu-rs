@@ -32,7 +32,7 @@ pub use issuer::{Issuer, IssuerState};
 pub use nonce::{NonceHash, NonceSecret};
 pub use oauth2::{
     AnyTokenProvider, OAuth2TokenProvider, ProviderRegistry, StaticTokenProvider, TokenAwareError,
-    TokenProvider, TokenProviderError, with_refreshed_token,
+    TokenProvider, TokenProviderError,
 };
 pub use operation_task::{OperationTask, StepOutcome, StepResult, TaskState, TaskType};
 pub use pre_auth_code::PreAuthCode;

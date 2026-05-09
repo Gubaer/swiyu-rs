@@ -10,6 +10,9 @@
 //! real. Complements the in-memory mock-based tests in
 //! `tests/worker_run.rs`.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use std::time::Duration;
 
 use chrono::{DateTime, Timelike, Utc};
@@ -26,7 +29,6 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence::{issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{CreateStatusListEntryCall, MockStatusRegistry};
-use swiyu_registries::common::AccessToken;
 use swiyu_registries::identifier::IdentifierRegistryClient;
 use swiyu_registries::status::StatusListEntry;
 
@@ -88,12 +90,18 @@ impl RngCore for ConstantRng {
 }
 
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: &str) {
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, $2)")
-        .bind(tenant_id.bare())
-        .bind(partner_id)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(tenant_id.bare())
+    .bind(partner_id)
+    .bind("test-client")
+    .bind("test-secret")
+    .bind("test-refresh")
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 fn pending_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
@@ -124,8 +132,19 @@ fn build_registry_client(server: &MockServer) -> IdentifierRegistryClient {
     IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new())
 }
 
-fn test_access_token() -> AccessToken {
-    AccessToken::new("test-token".into())
+/// Spawn a wiremock token endpoint and build a `ProviderRegistry`
+/// pointed at it. The returned `MockServer` must be kept alive for
+/// the duration of the worker run; once it drops, the bound port
+/// closes and any further `provider.get()` calls would fail.
+async fn build_provider_setup(
+    pool: &PgPool,
+) -> (
+    MockServer,
+    std::sync::Arc<swiyu_issuer::domain::ProviderRegistry>,
+) {
+    let server = common::oauth::mock_token_endpoint().await;
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    (server, providers)
 }
 
 async fn wait_for_task_state(
@@ -185,13 +204,14 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
         status_registry_with_one_ok(),
-        test_access_token(),
+        providers,
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -275,6 +295,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let shutdown = CancellationToken::new();
     // ConstantRng(0) → backoff_delay returns 0ms, so the retry fires on
     // the very next poll without waiting on real exponential backoff.
@@ -283,7 +304,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
         status_registry_with_one_ok(),
-        test_access_token(),
+        providers,
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -348,13 +369,14 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
         build_registry_client(&server),
         DevSigningEngine::new(pool.clone()),
         status_registry_with_one_ok(),
-        test_access_token(),
+        providers,
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));

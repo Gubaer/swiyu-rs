@@ -10,10 +10,12 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::{Map, json};
-use swiyu_registries::common::AccessToken;
 
-use crate::domain::{SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant};
-use crate::worker::registry::RegistryFacade;
+use crate::domain::{
+    SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant, TokenProvider,
+};
+use crate::worker::registry_facades::{RegistryFacade, publish_log_entry_with_refresh};
+use crate::worker::token_outcome::token_aware_error_to_outcome;
 
 use super::CreateIssuerStateData;
 use super::log_builder::{BuildError, build_log_entry};
@@ -23,7 +25,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     state: &CreateIssuerStateData,
     registry: &R,
     engine: &S,
-    token: &AccessToken,
+    provider: &impl TokenProvider,
     now: DateTime<Utc>,
 ) -> StepOutcome {
     if state.log_published {
@@ -68,10 +70,10 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
 
     let line = serde_json::to_string(&entry).expect("entry value serialises");
 
-    match registry
-        .publish_log_entry(token, partner_id, identifier, &line)
-        .await
-    {
+    let result =
+        publish_log_entry_with_refresh(provider, registry, partner_id, identifier, &line).await;
+
+    match result {
         Ok(()) => {
             let mut patch = Map::new();
             patch.insert("log_published".into(), json!(true));
@@ -79,14 +81,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
                 state_data_patch: patch,
             })
         }
-        Err(e) if e.is_retryable() => StepOutcome::Retry {
-            error_code: "registry_unavailable".into(),
-            error_message: e.to_string(),
-        },
-        Err(e) => StepOutcome::Terminal {
-            error_code: "registry_rejected".into(),
-            error_message: e.to_string(),
-        },
+        Err(e) => token_aware_error_to_outcome(e, "registry_unavailable", "registry_rejected"),
     }
 }
 
@@ -94,9 +89,12 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
 mod tests {
     use super::*;
 
+    use swiyu_registries::common::AccessToken;
     use uuid::Uuid;
 
-    use crate::domain::{KeyAlgorithm, KeyPairId, RawPublicKey, Signature, TenantId};
+    use crate::domain::{
+        KeyAlgorithm, KeyPairId, RawPublicKey, Signature, StaticTokenProvider, TenantId,
+    };
     use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{
         AllocateCall, GetPublicKeyCall, MockRegistry, MockSigningEngine, PublishCall, SignCall,
@@ -138,8 +136,8 @@ mod tests {
         DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
     }
 
-    fn token() -> AccessToken {
-        AccessToken::new("test-token".to_string())
+    fn token_provider() -> StaticTokenProvider {
+        StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
     }
 
     fn fixture_ed25519_pk() -> RawPublicKey {
@@ -187,7 +185,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -219,7 +217,7 @@ mod tests {
             &fixture_state(true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -243,7 +241,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -267,8 +265,15 @@ mod tests {
             ..fixture_state(false)
         };
 
-        let outcome =
-            execute_publish_log(&tenant, &state, &registry, &engine, &token(), fixture_now()).await;
+        let outcome = execute_publish_log(
+            &tenant,
+            &state,
+            &registry,
+            &engine,
+            &token_provider(),
+            fixture_now(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -289,8 +294,15 @@ mod tests {
             ..fixture_state(false)
         };
 
-        let outcome =
-            execute_publish_log(&tenant, &state, &registry, &engine, &token(), fixture_now()).await;
+        let outcome = execute_publish_log(
+            &tenant,
+            &state,
+            &registry,
+            &engine,
+            &token_provider(),
+            fixture_now(),
+        )
+        .await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -312,7 +324,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -341,7 +353,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -369,7 +381,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -400,7 +412,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;

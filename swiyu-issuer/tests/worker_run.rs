@@ -3,6 +3,9 @@
 //! Exercises the dispatch loop end-to-end against a real Postgres pool
 //! (`sqlx::test`) and the in-memory mocks from `worker::test_support`.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use std::time::Duration;
 
 use chrono::{DateTime, Timelike, Utc};
@@ -11,10 +14,11 @@ use serde_json::json;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use wiremock::MockServer;
 
 use swiyu_issuer::domain::{
-    GeneratedKeyPair, IssuerId, KeyAlgorithm, KeyPairId, OperationTask, RawPublicKey, Signature,
-    TaskId, TaskState, TaskType, TenantId,
+    GeneratedKeyPair, IssuerId, KeyAlgorithm, KeyPairId, OperationTask, ProviderRegistry,
+    RawPublicKey, Signature, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::{issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
@@ -22,7 +26,6 @@ use swiyu_issuer::worker::test_support::{
     AllocateCall, CreateStatusListEntryCall, GenerateKeypairCall, GetPublicKeyCall, MockRegistry,
     MockSigningEngine, MockStatusRegistry, PublishCall, SignCall,
 };
-use swiyu_registries::common::AccessToken;
 use swiyu_registries::status::StatusListEntry;
 
 const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
@@ -146,12 +149,24 @@ fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
 }
 
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: Option<&str>) {
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, $2)")
-        .bind(tenant_id.bare())
-        .bind(partner_id)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(tenant_id.bare())
+    .bind(partner_id)
+    .bind("test-client")
+    .bind("test-secret")
+    .bind("test-refresh")
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn build_provider_setup(pool: &PgPool) -> (MockServer, std::sync::Arc<ProviderRegistry>) {
+    let server = common::oauth::mock_token_endpoint().await;
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    (server, providers)
 }
 
 fn pending_create_issuer_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
@@ -228,13 +243,14 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     load_happy_path_mocks(&registry, &engine);
     let status_registry = status_registry_with_one_ok();
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
         registry,
         engine,
         status_registry,
-        AccessToken::new("test-token".into()),
+        providers,
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));
@@ -274,13 +290,14 @@ async fn shutdown_exits_idle_loop(pool: PgPool) {
     let registry = MockRegistry::new();
     let engine = MockSigningEngine::new();
     let status_registry = MockStatusRegistry::new();
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
         registry,
         engine,
         status_registry,
-        AccessToken::new("test-token".into()),
+        providers,
         Box::new(ConstantRng(0)),
     )
     .with_poll_interval(Duration::from_millis(20));

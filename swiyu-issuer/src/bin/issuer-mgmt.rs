@@ -1,20 +1,35 @@
 use std::env;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 use chrono::Duration;
 use clap::{Parser, Subcommand};
 use rand_core::OsRng;
+use reqwest::Client;
 use sqlx::PgPool;
 use swiyu_issuer::api_management::{AppState, Config, router};
-use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, TenantId, build_signing_engine_from_env};
+use swiyu_issuer::domain::{
+    ApiToken, ApiTokenSecret, ProviderRegistry, TenantId, build_signing_engine_from_env,
+};
 use swiyu_issuer::persistence;
 use swiyu_issuer::worker::{StatusListPublisher, Worker};
-use swiyu_registries::common::AccessToken;
 use swiyu_registries::identifier::IdentifierRegistryClient;
 use swiyu_registries::status::StatusRegistryClient;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
+
+/// Default fraction of `expires_in` after which the OAuth2 access token
+/// is pre-emptively refreshed. 0.75 means refresh once 75% of the
+/// lifetime has elapsed (i.e. while ~25% remains).
+const DEFAULT_TOKEN_REFRESH_FRACTION: f64 = 0.75;
+/// Default HTTP timeout (seconds) for the OAuth2 token endpoint.
+const DEFAULT_TOKEN_HTTP_TIMEOUT_SECS: u64 = 15;
+/// Default `expires_in` to assume when computing the safety margin
+/// before any successful grant has produced a real value. The SWIYU
+/// authorization server returns access tokens with a 1-hour lifetime.
+const DEFAULT_TOKEN_LIFETIME_SECS: i64 = 3600;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -77,8 +92,11 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "SWIYU_IDENTIFIER_REGISTRY_URL must be set")?;
     let status_registry_url = env::var("SWIYU_STATUS_REGISTRY_URL")
         .map_err(|_| "SWIYU_STATUS_REGISTRY_URL must be set")?;
-    let registry_token =
-        env::var("SWIYU_ACCESS_TOKEN").map_err(|_| "SWIYU_ACCESS_TOKEN must be set")?;
+    let token_url = env::var("SWIYU_TOKEN_URL").map_err(|_| "SWIYU_TOKEN_URL must be set")?;
+    let token_refresh_fraction =
+        parse_token_refresh_fraction(env::var("SWIYU_TOKEN_REFRESH_FRACTION").ok().as_deref())?;
+    let token_http_timeout =
+        parse_token_http_timeout(env::var("SWIYU_TOKEN_HTTP_TIMEOUT_SECS").ok().as_deref())?;
 
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
@@ -86,25 +104,38 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new(pool.clone(), Config { issuer_base_url })?;
     let app = router(state);
 
-    let access_token = AccessToken::new(registry_token);
     let registry_client = IdentifierRegistryClient::new(registry_url)?;
     let status_registry_for_worker = StatusRegistryClient::new(status_registry_url.clone())?;
     let status_registry_for_publisher = StatusRegistryClient::new(status_registry_url)?;
     let signing_engine_for_worker = build_signing_engine_from_env(pool.clone())?;
     let signing_engine_for_publisher = build_signing_engine_from_env(pool.clone())?;
+    // The safety margin is the fraction of the assumed token lifetime
+    // *not yet elapsed* when we still consider the token fresh. With a
+    // default 1-hour lifetime and a 0.75 refresh fraction, the margin
+    // is 25% of the lifetime — i.e. 15 minutes.
+    let safety_margin = Duration::seconds(
+        (DEFAULT_TOKEN_LIFETIME_SECS as f64 * (1.0 - token_refresh_fraction)) as i64,
+    );
+    let token_http_client = Client::builder().timeout(token_http_timeout).build()?;
+    let providers = Arc::new(ProviderRegistry::new(
+        pool.clone(),
+        token_http_client,
+        token_url,
+        safety_margin,
+    ));
     let worker = Worker::new(
         pool.clone(),
         registry_client,
         signing_engine_for_worker,
         status_registry_for_worker,
-        access_token.clone(),
+        Arc::clone(&providers),
         Box::new(OsRng),
     );
     let publisher = StatusListPublisher::new(
         pool.clone(),
         signing_engine_for_publisher,
         status_registry_for_publisher,
-        access_token,
+        providers,
         Box::new(OsRng),
     );
 
@@ -172,6 +203,39 @@ async fn mint_token(
     );
 
     Ok(())
+}
+
+/// Validates `SWIYU_TOKEN_REFRESH_FRACTION` against the safe range
+/// `[0.5, 0.95]`. A value below 0.5 refreshes too aggressively
+/// (wasted token-endpoint traffic); above 0.95 leaves no headroom for
+/// a refresh round-trip before the access token elapses. Failure is
+/// surfaced at startup rather than silently clamped.
+fn parse_token_refresh_fraction(raw: Option<&str>) -> Result<f64, String> {
+    let Some(s) = raw else {
+        return Ok(DEFAULT_TOKEN_REFRESH_FRACTION);
+    };
+    let value: f64 = s
+        .parse()
+        .map_err(|err| format!("SWIYU_TOKEN_REFRESH_FRACTION is not a number: {err}"))?;
+    if !(0.5..=0.95).contains(&value) {
+        return Err(format!(
+            "SWIYU_TOKEN_REFRESH_FRACTION must be in [0.5, 0.95], got {value}"
+        ));
+    }
+    Ok(value)
+}
+
+fn parse_token_http_timeout(raw: Option<&str>) -> Result<StdDuration, String> {
+    let Some(s) = raw else {
+        return Ok(StdDuration::from_secs(DEFAULT_TOKEN_HTTP_TIMEOUT_SECS));
+    };
+    let secs: u64 = s
+        .parse()
+        .map_err(|err| format!("SWIYU_TOKEN_HTTP_TIMEOUT_SECS is not an integer: {err}"))?;
+    if secs == 0 {
+        return Err("SWIYU_TOKEN_HTTP_TIMEOUT_SECS must be greater than 0".into());
+    }
+    Ok(StdDuration::from_secs(secs))
 }
 
 /// Wraps `humantime::parse_duration` and converts to `chrono::Duration`.

@@ -4,6 +4,12 @@
 //! machine for one OAuth2 credential set. Multi-tenant code holds
 //! one provider per tenant; the [`ProviderRegistry`] owns the
 //! `tenant_id → Arc<…>` map.
+//!
+//! The per-method 401-retry wrappers (`allocate_did_with_refresh`,
+//! …) live in [`crate::worker::registry_facades`] rather than here:
+//! they pair `TokenProvider` with `RegistryFacade` and would invert
+//! the domain → worker dependency direction if placed in this
+//! module.
 
 use std::future::Future;
 
@@ -16,12 +22,10 @@ use crate::persistence::PersistenceError;
 pub mod oauth2_provider;
 pub mod registry;
 pub mod static_provider;
-pub mod with_refreshed;
 
 pub use oauth2_provider::OAuth2TokenProvider;
 pub use registry::ProviderRegistry;
 pub use static_provider::StaticTokenProvider;
-pub use with_refreshed::with_refreshed_token;
 
 /// In-memory state machine for one OAuth2 credential set.
 ///
@@ -91,7 +95,8 @@ impl TokenProviderError {
     }
 }
 
-/// Return type of [`with_refreshed_token`]: either the registry call
+/// Error returned by the per-method `*_with_refresh` helpers in
+/// [`crate::worker::registry_facades`]: either the registry call
 /// itself failed, or the [`TokenProvider`] could not produce a token.
 ///
 /// `is_retryable` defers to the inner error's classification — neither

@@ -6,17 +6,17 @@
 //! per-step executor, and applies the resulting outcome through the
 //! persistence layer.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
 use rand_core::RngCore;
 use sqlx::PgPool;
-use swiyu_registries::common::AccessToken;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::domain::{OperationTask, SigningEngine, StepOutcome, TaskType};
+use crate::domain::{OperationTask, ProviderRegistry, SigningEngine, StepOutcome, TaskType};
 use crate::persistence::{self, PersistenceError};
 
 use super::create_issuer::{
@@ -31,7 +31,7 @@ use super::deactivate_issuer::{
     publish_log::execute_publish_log as execute_deactivate_publish_log,
 };
 use super::dispatch::apply_outcome;
-use super::registry::{RegistryFacade, StatusRegistryFacade};
+use super::registry_facades::{RegistryFacade, StatusRegistryFacade};
 use super::rotate_keys::{
     RotateKeysInput, RotateKeysStateData, build_rotation_log::execute_build_rotation_log,
     generate_new_keys::execute_generate_new_keys,
@@ -84,7 +84,10 @@ pub struct Worker<R, S, C> {
     registry: R,
     engine: S,
     status_registry: C,
-    access_token: AccessToken,
+    /// Per-tenant `TokenProvider` cache. Each protected registry call
+    /// resolves the provider for `task.tenant_id` once per task and
+    /// passes it (as `&AnyTokenProvider`) into the per-step executor.
+    providers: Arc<ProviderRegistry>,
     rng: Box<dyn RngCore + Send + Sync>,
     config: WorkerConfig,
 }
@@ -100,7 +103,7 @@ where
         registry: R,
         engine: S,
         status_registry: C,
-        access_token: AccessToken,
+        providers: Arc<ProviderRegistry>,
         rng: Box<dyn RngCore + Send + Sync>,
     ) -> Self {
         Self {
@@ -108,7 +111,7 @@ where
             registry,
             engine,
             status_registry,
-            access_token,
+            providers,
             rng,
             config: WorkerConfig::default(),
         }
@@ -176,6 +179,8 @@ where
             .ok_or_else(|| WorkerError::Decode(format!("tenant {} not found", task.tenant_id)))?;
         drop(conn);
 
+        let provider = self.providers.provider_for(&task.tenant_id).await;
+
         // Pin `now` for the proof construction to `task.created_at` so
         // build_initial_log, publish_log, and persist_issuer all see the
         // same value and re-runs produce byte-identical SCID/entryHash.
@@ -184,7 +189,7 @@ where
         let step_name: &str = task.step.as_deref().unwrap_or("allocate_did");
         let (outcome, next_step) = match step_name {
             "allocate_did" => (
-                execute_allocate_did(&tenant, &state, &self.registry, &self.access_token).await,
+                execute_allocate_did(&tenant, &state, &self.registry, &*provider).await,
                 Some("generate_keys"),
             ),
             "generate_keys" => (
@@ -201,7 +206,7 @@ where
                     &state,
                     &self.registry,
                     &self.engine,
-                    &self.access_token,
+                    &*provider,
                     entry_now,
                 )
                 .await,
@@ -230,7 +235,7 @@ where
                     &tenant,
                     &state,
                     &self.status_registry,
-                    &self.access_token,
+                    &*provider,
                 )
                 .await,
                 Some("provision_status_list"),
@@ -339,6 +344,8 @@ where
                 })?;
         drop(conn);
 
+        let provider = self.providers.provider_for(&task.tenant_id).await;
+
         // Pin `now` to task.created_at so a re-run after a crash
         // produces a byte-identical signed entry — same discipline
         // the create_issuer saga uses.
@@ -358,7 +365,7 @@ where
                     &state,
                     &self.registry,
                     &self.engine,
-                    &self.access_token,
+                    &*provider,
                     entry_now,
                 )
                 .await,
@@ -453,6 +460,8 @@ where
                 })?;
         drop(conn);
 
+        let provider = self.providers.provider_for(&task.tenant_id).await;
+
         // Pin `now` to task.created_at so a re-run after a crash
         // produces a byte-identical signed entry — same discipline
         // the create_issuer and deactivate_issuer sagas use.
@@ -482,7 +491,7 @@ where
                     &state,
                     &self.registry,
                     &self.engine,
-                    &self.access_token,
+                    &*provider,
                     entry_now,
                 )
                 .await,

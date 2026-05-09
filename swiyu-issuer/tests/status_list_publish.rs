@@ -8,6 +8,11 @@
 //! Complements the in-memory mock-based tests in
 //! `tests/status_list_publisher.rs`.
 
+#[path = "common/mod.rs"]
+mod common;
+
+use std::sync::Arc;
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use rand_core::RngCore;
@@ -17,12 +22,11 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swiyu_core::statuslist::{StatusListJwtPayload, StatusValue};
 use swiyu_issuer::domain::{
-    DevSigningEngine, Issuer, IssuerId, IssuerState, KeyRole, SigningEngine, StatusList,
-    StatusListId, StatusListIndex, StatusValue as IssuerStatusValue, TenantId,
+    DevSigningEngine, Issuer, IssuerId, IssuerState, KeyRole, ProviderRegistry, SigningEngine,
+    StatusList, StatusListId, StatusListIndex, StatusValue as IssuerStatusValue, TenantId,
 };
 use swiyu_issuer::persistence::{self, status_lists};
 use swiyu_issuer::worker::StatusListPublisher;
-use swiyu_registries::common::AccessToken;
 use swiyu_registries::status::StatusRegistryClient;
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
@@ -37,8 +41,10 @@ fn build_status_client(server: &MockServer) -> StatusRegistryClient {
     StatusRegistryClient::with_http(server.uri(), reqwest::Client::new())
 }
 
-fn test_access_token() -> AccessToken {
-    AccessToken::new("test-token".into())
+async fn build_provider_setup(pool: &PgPool) -> (MockServer, Arc<ProviderRegistry>) {
+    let server = common::oauth::mock_token_endpoint().await;
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    (server, providers)
 }
 
 fn registry_url_for(server: &MockServer) -> String {
@@ -75,12 +81,18 @@ async fn seeded_environment(
     server: &MockServer,
 ) -> (Issuer, StatusList, DevSigningEngine) {
     let tenant_id = TenantId::generate();
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, $2)")
-        .bind(tenant_id.bare())
-        .bind(PARTNER_ID)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(tenant_id.bare())
+    .bind(PARTNER_ID)
+    .bind("test-client")
+    .bind("test-secret")
+    .bind("test-refresh")
+    .execute(pool)
+    .await
+    .unwrap();
 
     let engine = DevSigningEngine::new(pool.clone());
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
@@ -160,11 +172,12 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
     let list_id = list.id.clone();
     let target = list.committed_version;
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
         build_status_client(&server),
-        test_access_token(),
+        providers,
         Box::new(ConstantRng(0)),
     );
     publisher.run_round(list).await.unwrap();
@@ -227,11 +240,12 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
     let list_id = list.id.clone();
     let target = list.committed_version;
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
         build_status_client(&server),
-        test_access_token(),
+        providers,
         Box::new(ConstantRng(0)),
     );
 
@@ -287,11 +301,12 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
         .await
         .unwrap();
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
         build_status_client(&server),
-        test_access_token(),
+        providers,
         Box::new(ConstantRng(0)),
     );
     publisher.run_round(list).await.unwrap();

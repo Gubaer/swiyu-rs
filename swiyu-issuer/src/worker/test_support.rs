@@ -22,7 +22,7 @@ use crate::domain::{
     SigningEngineError,
 };
 
-use super::registry::{FetchedLog, RegistryFacade, StatusRegistryFacade};
+use super::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllocateCall {

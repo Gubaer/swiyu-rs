@@ -22,11 +22,15 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, json};
 
 use swiyu_core::did::DID;
-use swiyu_registries::common::AccessToken;
 
-use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant};
-use crate::worker::registry::{RegistryFacade, build_updated_log};
+use crate::domain::{
+    Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant, TokenProvider,
+};
+use crate::worker::registry_facades::{
+    RegistryFacade, build_updated_didlog, publish_log_entry_with_refresh,
+};
 use crate::worker::registry_identifier;
+use crate::worker::token_outcome::token_aware_error_to_outcome;
 
 use super::log_builder::{BuildError, build_rotation_entry};
 use super::state::RotateKeysStateData;
@@ -37,7 +41,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     state: &RotateKeysStateData,
     registry: &R,
     engine: &S,
-    token: &AccessToken,
+    provider: &impl TokenProvider,
     now: DateTime<Utc>,
 ) -> StepOutcome {
     if state.log_published {
@@ -126,26 +130,24 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    // The SWIYU registry's PUT endpoint replaces the whole log, not
-    // appends. We send the prior entries verbatim followed by the
-    // new one — see `build_updated_log` and swiyu-didtool's
-    // matching shape in `cmd/update.rs::build_updated_log`.
+    // The SWIYU registry's PUT endpoint replaces the whole DIDLog,
+    // not appends. We send the prior entries verbatim followed by
+    // the new one — see `build_updated_didlog`.
     let new_line = serde_json::to_string(&entry).expect("entry value serialises");
-    let updated_log = build_updated_log(&fetched.raw, &new_line);
+    let updated_didlog = build_updated_didlog(&fetched.raw, &new_line);
 
-    match registry
-        .publish_log_entry(token, partner_id, &identifier, &updated_log)
-        .await
-    {
+    let result = publish_log_entry_with_refresh(
+        provider,
+        registry,
+        partner_id,
+        &identifier,
+        &updated_didlog,
+    )
+    .await;
+
+    match result {
         Ok(()) => StepOutcome::Done(state_patch_log_published()),
-        Err(e) if e.is_retryable() => StepOutcome::Retry {
-            error_code: "registry_unavailable".into(),
-            error_message: e.to_string(),
-        },
-        Err(e) => StepOutcome::Terminal {
-            error_code: "registry_rejected".into(),
-            error_message: e.to_string(),
-        },
+        Err(e) => token_aware_error_to_outcome(e, "registry_unavailable", "registry_rejected"),
     }
 }
 
@@ -161,13 +163,15 @@ fn state_patch_log_published() -> StepResult {
 mod tests {
     use super::*;
 
+    use swiyu_registries::common::AccessToken;
     use uuid::Uuid;
 
     use swiyu_core::diddoc::public_keys::P256PublicKey;
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
     use crate::domain::{
-        Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature, TenantId,
+        Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature,
+        StaticTokenProvider, TenantId,
     };
     use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{
@@ -236,8 +240,8 @@ mod tests {
         }
     }
 
-    fn token() -> AccessToken {
-        AccessToken::new("test-token".to_string())
+    fn token_provider() -> StaticTokenProvider {
+        StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
     }
 
     fn fixture_now() -> DateTime<Utc> {
@@ -303,7 +307,7 @@ mod tests {
             &fixture_state(false, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -339,7 +343,7 @@ mod tests {
             &fixture_state(true, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -386,7 +390,7 @@ mod tests {
             &fixture_state(false, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -412,7 +416,7 @@ mod tests {
             &fixture_state(false, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -438,7 +442,7 @@ mod tests {
             &fixture_state(false, false),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -468,7 +472,7 @@ mod tests {
             &fixture_state(false, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -498,7 +502,7 @@ mod tests {
             &fixture_state(false, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -525,7 +529,7 @@ mod tests {
             &fixture_state(false, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -556,7 +560,7 @@ mod tests {
             &fixture_state(false, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;
@@ -586,7 +590,7 @@ mod tests {
             &fixture_state(false, true),
             &registry,
             &engine,
-            &token(),
+            &token_provider(),
             fixture_now(),
         )
         .await;

@@ -4,20 +4,25 @@
 //! and the real `DevSigningEngine`, with `MockStatusRegistry` standing
 //! in for the SWIYU Status Registry.
 
+#[path = "common/mod.rs"]
+mod common;
+
+use std::sync::Arc;
+
 use chrono::Utc;
 use rand_core::RngCore;
 use sqlx::PgPool;
+use wiremock::MockServer;
 
 use swiyu_issuer::domain::{
-    DevSigningEngine, Issuer, IssuerId, IssuerState, KeyRole, SigningEngine, StatusList,
-    StatusListId, StatusListIndex, StatusValue, TenantId,
+    DevSigningEngine, Issuer, IssuerId, IssuerState, KeyRole, ProviderRegistry, SigningEngine,
+    StatusList, StatusListId, StatusListIndex, StatusValue, TenantId,
 };
 use swiyu_issuer::persistence::{self, status_lists};
 use swiyu_issuer::worker::StatusListPublisher;
 use swiyu_issuer::worker::test_support::{
     CreateStatusListEntryCall, MockStatusRegistry, UpdateStatusListEntryCall,
 };
-use swiyu_registries::common::AccessToken;
 use swiyu_registries::status::StatusListEntry;
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
@@ -46,14 +51,26 @@ impl RngCore for ConstantRng {
     }
 }
 
+async fn build_provider_setup(pool: &PgPool) -> (MockServer, Arc<ProviderRegistry>) {
+    let server = common::oauth::mock_token_endpoint().await;
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    (server, providers)
+}
+
 async fn seeded_environment(pool: &PgPool) -> (Issuer, StatusList, DevSigningEngine) {
     let tenant_id = TenantId::generate();
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, $2)")
-        .bind(tenant_id.bare())
-        .bind(PARTNER_ID)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(tenant_id.bare())
+    .bind(PARTNER_ID)
+    .bind("test-client")
+    .bind("test-secret")
+    .bind("test-refresh")
+    .execute(pool)
+    .await
+    .unwrap();
 
     let engine = DevSigningEngine::new(pool.clone());
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
@@ -127,11 +144,12 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
     let registry = MockStatusRegistry::new();
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
         registry,
-        AccessToken::new("test-token".into()),
+        providers,
         Box::new(ConstantRng(0)),
     );
     publisher.run_round(list).await.unwrap();
@@ -160,11 +178,12 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
         body: "service unavailable".into(),
     });
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
         registry,
-        AccessToken::new("test-token".into()),
+        providers,
         Box::new(ConstantRng(u64::MAX)),
     );
     let err = publisher.run_round(list).await.unwrap_err();
@@ -204,11 +223,12 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
         body: "forbidden".into(),
     });
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
         registry,
-        AccessToken::new("test-token".into()),
+        providers,
         Box::new(ConstantRng(0)),
     );
     let err = publisher.run_round(list).await.unwrap_err();
@@ -248,11 +268,12 @@ async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool)
     let registry = MockStatusRegistry::new();
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
+    let (_token_server, providers) = build_provider_setup(&pool).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
         registry,
-        AccessToken::new("test-token".into()),
+        providers,
         Box::new(ConstantRng(0)),
     );
     // run_round still returns Ok(()) — our conditional UPDATE is a

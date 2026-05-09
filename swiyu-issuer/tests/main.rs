@@ -1,3 +1,9 @@
+// Tests that construct a `Worker` or `StatusListPublisher` each
+// include `tests/common/mod.rs` directly via `#[path]`. They are
+// compiled as standalone Cargo test targets only, not as submodules
+// of this aggregator, to avoid the `clippy::duplicate_mod` lint that
+// fires when the same `common/mod.rs` is loaded multiple times into
+// one compilation unit.
 mod api_create_issuer;
 mod api_deactivate_issuer;
 mod api_get_issuer;
@@ -16,13 +22,7 @@ mod mark_deactivated;
 mod operation_tasks_persistence;
 mod persist_issuer;
 mod provision_status_list;
-mod status_list_publish;
-mod status_list_publisher;
 mod status_lists_persistence;
 mod swap_keys;
 mod tenants_persistence;
 mod vault_signing_engine;
-mod worker_deactivate_e2e;
-mod worker_e2e;
-mod worker_rotate_keys_e2e;
-mod worker_run;

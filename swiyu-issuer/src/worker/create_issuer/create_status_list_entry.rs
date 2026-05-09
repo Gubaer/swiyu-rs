@@ -10,17 +10,19 @@
 //! against duplicate entries on retry.
 
 use serde_json::{Map, json};
-use swiyu_registries::common::AccessToken;
 
-use crate::domain::{StepOutcome, StepResult, Tenant};
+use crate::domain::{StepOutcome, StepResult, Tenant, TokenProvider};
 use crate::worker::create_issuer::CreateIssuerStateData;
-use crate::worker::registry::StatusRegistryFacade;
+use crate::worker::registry_facades::{
+    StatusRegistryFacade, create_status_list_entry_with_refresh,
+};
+use crate::worker::token_outcome::token_aware_error_to_outcome;
 
 pub async fn execute_create_status_list_entry<C: StatusRegistryFacade>(
     tenant: &Tenant,
     state: &CreateIssuerStateData,
     status_registry: &C,
-    token: &AccessToken,
+    provider: &impl TokenProvider,
 ) -> StepOutcome {
     if state.status_list_registry_entry_id.is_some() {
         return StepOutcome::Done(StepResult::default());
@@ -36,10 +38,9 @@ pub async fn execute_create_status_list_entry<C: StatusRegistryFacade>(
         }
     };
 
-    match status_registry
-        .create_status_list_entry(token, partner_id)
-        .await
-    {
+    let result = create_status_list_entry_with_refresh(provider, status_registry, partner_id).await;
+
+    match result {
         Ok(entry) => {
             let mut patch = Map::new();
             patch.insert("status_list_registry_entry_id".into(), json!(entry.id));
@@ -48,14 +49,11 @@ pub async fn execute_create_status_list_entry<C: StatusRegistryFacade>(
                 state_data_patch: patch,
             })
         }
-        Err(e) if e.is_retryable() => StepOutcome::Retry {
-            error_code: "status_registry_unavailable".into(),
-            error_message: e.to_string(),
-        },
-        Err(e) => StepOutcome::Terminal {
-            error_code: "status_registry_rejected".into(),
-            error_message: e.to_string(),
-        },
+        Err(e) => token_aware_error_to_outcome(
+            e,
+            "status_registry_unavailable",
+            "status_registry_rejected",
+        ),
     }
 }
 
@@ -64,9 +62,10 @@ mod tests {
     use super::*;
 
     use serde_json::Value;
+    use swiyu_registries::common::AccessToken;
     use swiyu_registries::status::StatusListEntry;
 
-    use crate::domain::TenantId;
+    use crate::domain::{StaticTokenProvider, TenantId};
     use crate::worker::test_support::{CreateStatusListEntryCall, MockStatusRegistry};
 
     fn tenant_with_partner(partner_id: &str) -> Tenant {
@@ -79,8 +78,8 @@ mod tests {
         }
     }
 
-    fn token() -> AccessToken {
-        AccessToken::new("test-token".to_string())
+    fn token_provider() -> StaticTokenProvider {
+        StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
     }
 
     fn fixture_entry() -> StatusListEntry {
@@ -100,7 +99,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 
@@ -134,7 +133,8 @@ mod tests {
             status_list_registry_url: Some(fixture_entry().registry_url),
             ..CreateIssuerStateData::default()
         };
-        let outcome = execute_create_status_list_entry(&tenant, &state, &registry, &token()).await;
+        let outcome =
+            execute_create_status_list_entry(&tenant, &state, &registry, &token_provider()).await;
 
         match outcome {
             StepOutcome::Done(StepResult { state_data_patch }) => {
@@ -160,7 +160,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 
@@ -186,7 +186,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 
@@ -211,7 +211,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token(),
+            &token_provider(),
         )
         .await;
 
