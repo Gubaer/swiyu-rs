@@ -26,11 +26,11 @@ use swiyu_core::did::DID;
 use crate::domain::{
     Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant, TokenProvider,
 };
+use crate::worker::outcome::from_token_aware_error;
 use crate::worker::registry_facades::{
     RegistryFacade, build_updated_didlog, publish_log_entry_with_refresh,
 };
 use crate::worker::registry_identifier;
-use crate::worker::token_outcome::token_aware_error_to_outcome;
 
 use super::log_builder::{BuildError, build_rotation_entry};
 use super::state::RotateKeysStateData;
@@ -147,7 +147,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
 
     match result {
         Ok(()) => StepOutcome::Done(state_patch_log_published()),
-        Err(e) => token_aware_error_to_outcome(e, "registry_unavailable", "registry_rejected"),
+        Err(e) => from_token_aware_error(e, "registry_unavailable", "registry_rejected"),
     }
 }
 

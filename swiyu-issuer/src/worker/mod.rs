@@ -6,12 +6,11 @@
 pub mod backoff;
 pub mod create_issuer;
 pub mod deactivate_issuer;
-pub mod dispatch;
+pub mod outcome;
 pub mod registry_facades;
 pub mod rotate_keys;
 pub mod runner;
 pub mod status_list_publisher;
-pub mod token_outcome;
 
 /// Pulls the SWIYU registry UUID out of a parsed issuer DID.
 ///

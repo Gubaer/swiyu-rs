@@ -28,7 +28,7 @@ use super::deactivate_issuer::{
     mark_deactivated::execute_mark_deactivated,
     publish_log::execute_publish_log as execute_deactivate_publish_log,
 };
-use super::dispatch::apply_outcome;
+use super::outcome::apply as apply_outcome;
 use super::registry_facades::{RegistryFacade, StatusRegistryFacade};
 use super::rotate_keys::{
     RotateKeysInput, RotateKeysStateData, build_rotation_log::execute_build_rotation_log,

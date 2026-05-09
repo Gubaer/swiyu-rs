@@ -1,4 +1,4 @@
-//! Integration tests for `worker::dispatch::apply_outcome`.
+//! Integration tests for `worker::outcome::apply`.
 //!
 //! Exercises the four StepOutcome → persistence-call paths against a
 //! real Postgres pool. Migrations and a clean database are provided
@@ -14,7 +14,7 @@ use swiyu_issuer::domain::{
     OperationTask, StepOutcome, StepResult, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::operation_tasks;
-use swiyu_issuer::worker::dispatch;
+use swiyu_issuer::worker::outcome;
 
 // Postgres TIMESTAMPTZ stores microsecond precision; truncate so a
 // roundtrip through the DB compares equal to the value we passed in.
@@ -97,7 +97,7 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
 
     let mut conn = pool.acquire().await.unwrap();
     let mut rng = FixedRng(0);
-    dispatch::apply_outcome(
+    outcome::apply(
         &mut conn,
         &task,
         Some("generate_keys"),
@@ -135,7 +135,7 @@ async fn retry_within_cap_increments_attempts_and_schedules(pool: PgPool) {
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
     let mut rng = FixedRng(u64::MAX);
-    dispatch::apply_outcome(
+    outcome::apply(
         &mut conn,
         &task,
         None,
@@ -172,7 +172,7 @@ async fn retry_past_cap_marks_failed(pool: PgPool) {
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
     let mut rng = FixedRng(0);
-    dispatch::apply_outcome(
+    outcome::apply(
         &mut conn,
         &task,
         None,
@@ -206,7 +206,7 @@ async fn terminal_marks_failed_immediately(pool: PgPool) {
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
     let mut rng = FixedRng(0);
-    dispatch::apply_outcome(
+    outcome::apply(
         &mut conn,
         &task,
         None,

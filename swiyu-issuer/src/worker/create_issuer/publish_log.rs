@@ -14,8 +14,8 @@ use serde_json::{Map, json};
 use crate::domain::{
     SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant, TokenProvider,
 };
+use crate::worker::outcome::from_token_aware_error;
 use crate::worker::registry_facades::{RegistryFacade, publish_log_entry_with_refresh};
-use crate::worker::token_outcome::token_aware_error_to_outcome;
 
 use super::CreateIssuerStateData;
 use super::log_builder::{BuildError, build_log_entry};
@@ -81,7 +81,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
                 state_data_patch: patch,
             })
         }
-        Err(e) => token_aware_error_to_outcome(e, "registry_unavailable", "registry_rejected"),
+        Err(e) => from_token_aware_error(e, "registry_unavailable", "registry_rejected"),
     }
 }
 

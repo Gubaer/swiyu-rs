@@ -13,10 +13,10 @@ use serde_json::{Map, json};
 
 use crate::domain::{StepOutcome, StepResult, Tenant, TokenProvider};
 use crate::worker::create_issuer::CreateIssuerStateData;
+use crate::worker::outcome::from_token_aware_error;
 use crate::worker::registry_facades::{
     StatusRegistryFacade, create_status_list_entry_with_refresh,
 };
-use crate::worker::token_outcome::token_aware_error_to_outcome;
 
 pub async fn execute_create_status_list_entry<C: StatusRegistryFacade>(
     tenant: &Tenant,
@@ -49,11 +49,9 @@ pub async fn execute_create_status_list_entry<C: StatusRegistryFacade>(
                 state_data_patch: patch,
             })
         }
-        Err(e) => token_aware_error_to_outcome(
-            e,
-            "status_registry_unavailable",
-            "status_registry_rejected",
-        ),
+        Err(e) => {
+            from_token_aware_error(e, "status_registry_unavailable", "status_registry_rejected")
+        }
     }
 }
 
