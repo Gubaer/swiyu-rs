@@ -45,7 +45,7 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
 fn state_with_triple(triple: KeyTriple) -> RotateKeysStateData {
     RotateKeysStateData {
         new_key_triple: Some(triple),
-        log_published: true,
+        didlog_published: true,
     }
 }
 

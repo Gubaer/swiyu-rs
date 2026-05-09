@@ -1,16 +1,16 @@
-//! `build_rotation_log` step executor.
+//! `build_rotation_didlog` step executor.
 //!
 //! Fetches the current DIDLog tail from the registry and constructs
 //! the rotation entry locally to validate that every dependency
 //! works (issuer is still `Active`, the registry is reachable, the
 //! tail entry has the right shape, the new keys have the right
 //! algorithms, the outgoing Authorized key is present and signs
-//! cleanly). The entry itself is discarded — `publish_log`
+//! cleanly). The entry itself is discarded — `publish_didlog`
 //! re-derives it deterministically from the same inputs. The point
-//! of this step is to fail fast before `publish_log` makes a second
+//! of this step is to fail fast before `publish_didlog` makes a second
 //! registry round-trip.
 //!
-//! Error classification mirrors `build_deactivation_log`:
+//! Error classification mirrors `build_deactivation_didlog`:
 //! - retryable [`RegistryError`] from the tail fetch → `Retry`
 //! - non-retryable [`RegistryError`] from the tail fetch → `Terminal`
 //! - signing-engine backend error → `Retry`
@@ -28,7 +28,7 @@ use crate::worker::registry_facades::RegistryFacade;
 use super::didlog_builder::{BuildError, build_rotation_entry};
 use super::state::RotateKeysStateData;
 
-pub async fn execute_build_rotation_log<R: RegistryFacade, S: SigningEngine>(
+pub async fn execute_build_rotation_didlog<R: RegistryFacade, S: SigningEngine>(
     issuer: &Issuer,
     state: &RotateKeysStateData,
     registry: &R,
@@ -74,11 +74,11 @@ pub async fn execute_build_rotation_log<R: RegistryFacade, S: SigningEngine>(
     match build_rotation_entry(issuer, new_triple, &log, engine, now).await {
         Ok(_entry) => StepOutcome::Done(StepResult::default()),
         Err(BuildError::Engine(SigningEngineError::Backend(_))) => StepOutcome::Retry {
-            error_code: "build_rotation_log_failed".into(),
+            error_code: "build_rotation_didlog_failed".into(),
             error_message: "signing-engine backend error".into(),
         },
         Err(e) => StepOutcome::Terminal {
-            error_code: e.error_code("build_rotation_log_failed").into(),
+            error_code: e.error_code("build_rotation_didlog_failed").into(),
             error_message: e.to_string(),
         },
     }
@@ -215,9 +215,9 @@ mod tests {
 
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
-        let outcome = execute_build_rotation_log(
+        let outcome = execute_build_rotation_didlog(
             &fixture_issuer(),
             &state,
             &registry,
@@ -242,9 +242,9 @@ mod tests {
 
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
-        execute_build_rotation_log(&fixture_issuer(), &state, &registry, &engine, fixture_now())
+        execute_build_rotation_didlog(&fixture_issuer(), &state, &registry, &engine, fixture_now())
             .await;
 
         let sign_calls = engine.sign_invocations.lock().unwrap();
@@ -264,7 +264,7 @@ mod tests {
         let engine = MockSigningEngine::new();
 
         let state = RotateKeysStateData::default();
-        let outcome = execute_build_rotation_log(
+        let outcome = execute_build_rotation_didlog(
             &fixture_issuer(),
             &state,
             &registry,
@@ -292,10 +292,10 @@ mod tests {
         let engine = MockSigningEngine::new();
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
 
-        let outcome = execute_build_rotation_log(
+        let outcome = execute_build_rotation_didlog(
             &fixture_issuer(),
             &state,
             &registry,
@@ -322,10 +322,10 @@ mod tests {
         let engine = MockSigningEngine::new();
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
 
-        let outcome = execute_build_rotation_log(
+        let outcome = execute_build_rotation_didlog(
             &fixture_issuer(),
             &state,
             &registry,
@@ -349,10 +349,10 @@ mod tests {
         let engine = MockSigningEngine::new();
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
 
-        let outcome = execute_build_rotation_log(
+        let outcome = execute_build_rotation_didlog(
             &fixture_issuer(),
             &state,
             &registry,
@@ -374,7 +374,7 @@ mod tests {
         // Saga-resume short-circuit: registry tail's updateKeys[0]
         // already matches the new authorized's multikey. The build
         // step itself reports this as Terminal (the resume path is
-        // expected to land in publish_log, not build_rotation_log).
+        // expected to land in publish_didlog, not build_rotation_didlog).
         let registry = MockRegistry::new();
 
         // Genesis whose updateKeys[0] already matches the multikey
@@ -400,9 +400,9 @@ mod tests {
 
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
-        let outcome = execute_build_rotation_log(
+        let outcome = execute_build_rotation_didlog(
             &fixture_issuer(),
             &state,
             &registry,
@@ -429,10 +429,10 @@ mod tests {
 
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
         let outcome =
-            execute_build_rotation_log(&issuer, &state, &registry, &engine, fixture_now()).await;
+            execute_build_rotation_didlog(&issuer, &state, &registry, &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -452,10 +452,10 @@ mod tests {
 
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
         let outcome =
-            execute_build_rotation_log(&issuer, &state, &registry, &engine, fixture_now()).await;
+            execute_build_rotation_didlog(&issuer, &state, &registry, &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -478,9 +478,9 @@ mod tests {
 
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
-        let outcome = execute_build_rotation_log(
+        let outcome = execute_build_rotation_didlog(
             &fixture_issuer(),
             &state,
             &registry,
@@ -491,7 +491,7 @@ mod tests {
 
         match outcome {
             StepOutcome::Retry { error_code, .. } => {
-                assert_eq!(error_code, "build_rotation_log_failed");
+                assert_eq!(error_code, "build_rotation_didlog_failed");
             }
             other => panic!("expected Retry, got {other:?}"),
         }
@@ -509,9 +509,9 @@ mod tests {
 
         let state = RotateKeysStateData {
             new_key_triple: Some(new_triple_all_three()),
-            log_published: false,
+            didlog_published: false,
         };
-        let outcome = execute_build_rotation_log(
+        let outcome = execute_build_rotation_didlog(
             &fixture_issuer(),
             &state,
             &registry,

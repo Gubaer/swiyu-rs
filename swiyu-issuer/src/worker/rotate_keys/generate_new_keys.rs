@@ -4,7 +4,7 @@
 //! fresh key pair and slots its `KeyPairId` into the new triple.
 //! Non-rotated roles carry the issuer's current ids forward
 //! unchanged. The triple is recorded in `state_data.new_key_triple`
-//! so a crash between this step and `build_rotation_log` does not
+//! so a crash between this step and `build_rotation_didlog` does not
 //! strand the freshly generated keys: a re-run sees the populated
 //! field and short-circuits.
 //!
@@ -233,7 +233,7 @@ mod tests {
                 authentication: fixture_kid(0x02),
                 assertion: fixture_kid(0x03),
             }),
-            log_published: false,
+            didlog_published: false,
         };
 
         let outcome = execute_generate_new_keys(&issuer, &input, &state, &engine).await;

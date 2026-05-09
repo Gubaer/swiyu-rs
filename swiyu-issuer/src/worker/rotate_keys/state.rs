@@ -10,7 +10,7 @@
 //! and crashes. `new_key_triple` records the key ids the saga has
 //! decided on (rotated → new ids freshly minted by the
 //! SigningEngine, non-rotated → the issuer's existing ids), so a
-//! crash between `generate_new_keys` and `build_rotation_log` does
+//! crash between `generate_new_keys` and `build_rotation_didlog` does
 //! not strand the freshly generated keys: the resume sees the
 //! populated triple and skips engine traffic.
 
@@ -134,12 +134,12 @@ pub struct RotateKeysStateData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_key_triple: Option<KeyTriple>,
 
-    /// Set to `true` once `publish_log` has succeeded. The registry's
+    /// Set to `true` once `publish_didlog` has succeeded. The registry's
     /// PUT endpoint returns no body, so the worker records a boolean
     /// rather than a server-supplied identifier — same pattern as
     /// `CreateIssuer` and `DeactivateIssuer`.
     #[serde(default, skip_serializing_if = "crate::worker::is_false")]
-    pub log_published: bool,
+    pub didlog_published: bool,
 }
 
 #[cfg(test)]
@@ -249,7 +249,7 @@ mod tests {
     fn state_data_default_is_empty() {
         let s = RotateKeysStateData::default();
         assert!(s.new_key_triple.is_none());
-        assert!(!s.log_published);
+        assert!(!s.didlog_published);
     }
 
     #[test]
@@ -261,10 +261,10 @@ mod tests {
     }
 
     #[test]
-    fn state_data_round_trips_when_log_published() {
+    fn state_data_round_trips_when_didlog_published() {
         let original = RotateKeysStateData {
             new_key_triple: None,
-            log_published: true,
+            didlog_published: true,
         };
         let v = serde_json::to_value(&original).unwrap();
         let parsed: RotateKeysStateData = serde_json::from_value(v).unwrap();

@@ -1,22 +1,20 @@
-//! `publish_log` step executor for `DeactivateIssuer`.
+//! `publish_didlog` step executor for `RotateKeys`.
 //!
-//! Re-fetches the DIDLog tail and re-derives the deactivation entry
-//! through `didlog_builder::build_deactivation_entry`, then PUTs the
+//! Re-fetches the DIDLog tail and re-derives the rotation entry
+//! through `didlog_builder::build_rotation_entry`, then PUTs the
 //! signed line to the SWIYU Identifier Registry. Idempotent on
-//! resume: a second invocation observing `state_data.log_published
-//! == true` returns immediately with no patch and no further engine,
-//! registry, or signing call.
+//! resume: a second invocation observing
+//! `state_data.didlog_published == true` returns immediately with no
+//! patch and no further engine, registry, or signing call.
 //!
 //! Saga-resume after a crash *between* a successful PUT and the
 //! state-patch write is handled by inspecting the registry's tail
-//! itself: `build_deactivation_entry` returns
-//! [`BuildError::AlreadyDeactivated`] when the registry already
-//! holds a deactivation entry, and this executor maps that to
-//! `Done` with the same `log_published = true` patch the success
-//! path produces. A registry-side error response on the PUT
-//! itself (some 4xx with a body identifying the DID as already
-//! deactivated) would be a second place to land that branch; the
-//! concrete error shape lands during integration testing.
+//! itself: `build_rotation_entry` returns
+//! [`BuildError::AlreadyRotated`] when the registry tail's
+//! `updateKeys[0]` already matches the multikey of
+//! `state.new_key_triple.authorized` (i.e. the rotation entry was
+//! already published). This executor maps that to `Done` with the
+//! same `didlog_published = true` patch the success path produces.
 
 use std::str::FromStr;
 
@@ -32,23 +30,33 @@ use crate::worker::outcome::from_token_aware_error;
 use crate::worker::registry_facades::{
     RegistryFacade, build_updated_didlog, publish_log_entry_with_refresh,
 };
-
-use super::didlog_builder::{BuildError, build_deactivation_entry};
-use super::state::DeactivateIssuerStateData;
 use crate::worker::registry_identifier;
 
-pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
+use super::didlog_builder::{BuildError, build_rotation_entry};
+use super::state::RotateKeysStateData;
+
+pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
     tenant: &Tenant,
     issuer: &Issuer,
-    state: &DeactivateIssuerStateData,
+    state: &RotateKeysStateData,
     registry: &R,
     engine: &S,
     provider: &impl TokenProvider,
     now: DateTime<Utc>,
 ) -> StepOutcome {
-    if state.log_published {
+    if state.didlog_published {
         return StepOutcome::Done(StepResult::default());
     }
+
+    let new_triple = match state.new_key_triple.as_ref() {
+        Some(t) => t,
+        None => {
+            return StepOutcome::Terminal {
+                error_code: "missing_state".into(),
+                error_message: "state_data missing new_key_triple".into(),
+            };
+        }
+    };
 
     let partner_id = match tenant.partner_id.as_deref() {
         Some(p) => p,
@@ -98,24 +106,25 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    let entry = match build_deactivation_entry(issuer, &fetched.entries, engine, now).await {
+    let entry = match build_rotation_entry(issuer, new_triple, &fetched.entries, engine, now).await
+    {
         Ok(e) => e,
         // Saga resume: a previous publish already wrote the
-        // deactivation entry; the registry tail is already
-        // deactivated. Mark the step Done and let mark_deactivated
-        // run.
-        Err(BuildError::AlreadyDeactivated) => {
-            return StepOutcome::Done(state_patch_log_published());
+        // rotation entry; the registry tail's updateKeys[0]
+        // already matches the new authorized's multikey. Mark
+        // the step Done and let swap_keys run.
+        Err(BuildError::AlreadyRotated) => {
+            return StepOutcome::Done(state_patch_didlog_published());
         }
         Err(BuildError::Engine(SigningEngineError::Backend(_))) => {
             return StepOutcome::Retry {
-                error_code: "publish_log_failed".into(),
+                error_code: "publish_didlog_failed".into(),
                 error_message: "signing-engine backend error".into(),
             };
         }
         Err(e) => {
             return StepOutcome::Terminal {
-                error_code: e.error_code("publish_log_failed").into(),
+                error_code: e.error_code("publish_didlog_failed").into(),
                 error_message: e.to_string(),
             };
         }
@@ -137,14 +146,14 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     .await;
 
     match result {
-        Ok(()) => StepOutcome::Done(state_patch_log_published()),
+        Ok(()) => StepOutcome::Done(state_patch_didlog_published()),
         Err(e) => from_token_aware_error(e, "registry_unavailable", "registry_rejected"),
     }
 }
 
-fn state_patch_log_published() -> StepResult {
+fn state_patch_didlog_published() -> StepResult {
     let mut patch = Map::new();
-    patch.insert("log_published".into(), json!(true));
+    patch.insert("didlog_published".into(), json!(true));
     StepResult {
         state_data_patch: patch,
     }
@@ -157,7 +166,6 @@ mod tests {
     use swiyu_registries::common::AccessToken;
     use uuid::Uuid;
 
-    use swiyu_core::diddoc::DIDDoc;
     use swiyu_core::diddoc::public_keys::P256PublicKey;
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
@@ -168,6 +176,7 @@ mod tests {
         Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature,
         StaticTokenProvider, TenantId,
     };
+    use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{FetchLogCall, MockRegistry, PublishCall};
 
     fn fixture_kid(byte: u8) -> KeyPairId {
@@ -207,8 +216,19 @@ mod tests {
         }
     }
 
-    fn fixture_state(log_published: bool) -> DeactivateIssuerStateData {
-        DeactivateIssuerStateData { log_published }
+    fn fixture_state(didlog_published: bool, with_triple: bool) -> RotateKeysStateData {
+        RotateKeysStateData {
+            new_key_triple: with_triple.then(new_triple_all_three),
+            didlog_published,
+        }
+    }
+
+    fn new_triple_all_three() -> KeyTriple {
+        KeyTriple {
+            authorized: fixture_kid(0xAA),
+            authentication: fixture_kid(0xBB),
+            assertion: fixture_kid(0xCC),
+        }
     }
 
     fn fixture_tenant(partner_id: Option<&str>) -> Tenant {
@@ -221,18 +241,18 @@ mod tests {
         }
     }
 
-    fn fixture_now() -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
-    }
-
     fn token_provider() -> StaticTokenProvider {
         StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
+    }
+
+    fn fixture_now() -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
     }
 
     fn fixture_genesis_entry() -> DIDLogEntry {
         DIDLogEntry::new_genesis(
             &LogEntryFormat::TDW03,
-            "z6Mk-authorized-fixture",
+            "z6Mk-old-authorized",
             &fixture_did(),
             &fixture_p256(),
             &fixture_p256(),
@@ -240,20 +260,20 @@ mod tests {
         )
     }
 
-    fn fixture_deactivation_entry() -> DIDLogEntry {
-        let prev_doc = DIDDoc::new_genesis(&fixture_did(), &fixture_p256(), &fixture_p256());
-        DIDLogEntry::new_deactivation(
-            &LogEntryFormat::TDW03,
-            "1-QmPrev",
-            &prev_doc,
-            "2026-05-04T13:00:00Z",
-        )
-    }
-
-    fn fixture_ed25519_pk() -> RawPublicKey {
+    fn fixture_ed25519_pk(seed: u8) -> RawPublicKey {
         RawPublicKey {
             algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0xab; 32],
+            bytes: vec![seed; 32],
+        }
+    }
+
+    fn fixture_p256_pk() -> RawPublicKey {
+        let mut bytes = vec![0x04];
+        bytes.extend_from_slice(&[0xcd; 32]);
+        bytes.extend_from_slice(&[0xef; 32]);
+        RawPublicKey {
+            algorithm: KeyAlgorithm::EcdsaP256,
+            bytes,
         }
     }
 
@@ -266,23 +286,26 @@ mod tests {
 
     fn engine_for_happy_path() -> MockSigningEngine {
         let engine = MockSigningEngine::new();
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
+        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk(0xAA))); // new authorized
+        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk())); // new authentication
+        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk())); // new assertion
+        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk(0x11))); // outgoing authorized
         engine.enqueue_sign(SignCall::Ok(fixture_signature()));
         engine
     }
 
     #[tokio::test]
-    async fn happy_path_publishes_and_marks_log_published() {
+    async fn happy_path_publishes_and_marks_didlog_published() {
         let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
         registry.enqueue_publish(PublishCall::Ok);
         let engine = engine_for_happy_path();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(false),
+            &fixture_state(false, true),
             &registry,
             &engine,
             &token_provider(),
@@ -292,7 +315,7 @@ mod tests {
 
         match outcome {
             StepOutcome::Done(result) => {
-                assert_eq!(result.state_data_patch["log_published"], json!(true));
+                assert_eq!(result.state_data_patch["didlog_published"], json!(true));
             }
             other => panic!("expected Done, got {other:?}"),
         }
@@ -315,10 +338,10 @@ mod tests {
         // No fetch_log or publish queued — a second call would panic.
         let engine = MockSigningEngine::new();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(true),
+            &fixture_state(true, true),
             &registry,
             &engine,
             &token_provider(),
@@ -332,27 +355,40 @@ mod tests {
         }
         assert!(registry.fetch_log_invocations.lock().unwrap().is_empty());
         assert!(registry.publish_invocations.lock().unwrap().is_empty());
-        assert!(engine.public_key_invocations.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn already_deactivated_tail_is_done_with_patch() {
-        // Saga resume: the previous publish_log already pushed the
-        // deactivation entry, but state_data.log_published wasn't
-        // recorded. Re-running the step must observe the deactivated
-        // tail and return Done with the patch, *not* republish.
+    async fn already_rotated_tail_is_done_with_patch() {
+        // Saga resume: the previous publish_didlog already pushed the
+        // rotation entry. The registry tail's updateKeys[0] already
+        // matches the new authorized's multikey. Re-running the step
+        // must observe that and return Done with the patch, *not*
+        // republish.
         let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
         let registry = MockRegistry::new();
-        registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
-            fixture_genesis_entry(),
-            fixture_deactivation_entry(),
-        ]));
-        let engine = MockSigningEngine::new();
 
-        let outcome = execute_publish_log(
+        let new_authorized_multikey =
+            swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey(&[0xAA; 32]);
+        let already_rotated_tail = DIDLogEntry::new_genesis(
+            &LogEntryFormat::TDW03,
+            &new_authorized_multikey,
+            &fixture_did(),
+            &fixture_p256(),
+            &fixture_p256(),
+            "2026-05-04T12:00:00Z",
+        );
+        registry.enqueue_fetch_log(FetchLogCall::Ok(vec![already_rotated_tail]));
+
+        let engine = MockSigningEngine::new();
+        // The check happens after fetching the three new public keys.
+        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk(0xAA)));
+        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
+        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
+
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(false),
+            &fixture_state(false, true),
             &registry,
             &engine,
             &token_provider(),
@@ -362,12 +398,11 @@ mod tests {
 
         match outcome {
             StepOutcome::Done(result) => {
-                assert_eq!(result.state_data_patch["log_published"], json!(true));
+                assert_eq!(result.state_data_patch["didlog_published"], json!(true));
             }
             other => panic!("expected Done, got {other:?}"),
         }
         assert!(registry.publish_invocations.lock().unwrap().is_empty());
-        assert!(engine.public_key_invocations.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -376,10 +411,10 @@ mod tests {
         let registry = MockRegistry::new();
         let engine = MockSigningEngine::new();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(false),
+            &fixture_state(false, true),
             &registry,
             &engine,
             &token_provider(),
@@ -394,21 +429,18 @@ mod tests {
             other => panic!("expected Terminal, got {other:?}"),
         }
         assert!(registry.fetch_log_invocations.lock().unwrap().is_empty());
-        assert!(registry.publish_invocations.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn unparseable_did_is_terminal() {
+    async fn missing_new_key_triple_is_terminal() {
         let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
         let registry = MockRegistry::new();
         let engine = MockSigningEngine::new();
-        let mut issuer = fixture_issuer();
-        issuer.did = "not a did".into();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
-            &issuer,
-            &fixture_state(false),
+            &fixture_issuer(),
+            &fixture_state(false, false),
             &registry,
             &engine,
             &token_provider(),
@@ -418,7 +450,7 @@ mod tests {
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "invalid_issuer_did");
+                assert_eq!(error_code, "missing_state");
             }
             other => panic!("expected Terminal, got {other:?}"),
         }
@@ -435,10 +467,10 @@ mod tests {
         });
         let engine = MockSigningEngine::new();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(false),
+            &fixture_state(false, true),
             &registry,
             &engine,
             &token_provider(),
@@ -465,10 +497,10 @@ mod tests {
         });
         let engine = MockSigningEngine::new();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(false),
+            &fixture_state(false, true),
             &registry,
             &engine,
             &token_provider(),
@@ -492,10 +524,10 @@ mod tests {
         let engine = MockSigningEngine::new();
         engine.enqueue_public_key(GetPublicKeyCall::Backend("hsm offline".into()));
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(false),
+            &fixture_state(false, true),
             &registry,
             &engine,
             &token_provider(),
@@ -505,39 +537,11 @@ mod tests {
 
         match outcome {
             StepOutcome::Retry { error_code, .. } => {
-                assert_eq!(error_code, "publish_log_failed");
+                assert_eq!(error_code, "publish_didlog_failed");
             }
             other => panic!("expected Retry, got {other:?}"),
         }
         assert!(registry.publish_invocations.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn sign_key_not_found_is_terminal() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
-        let registry = MockRegistry::new();
-        registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
-        let engine = MockSigningEngine::new();
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-        engine.enqueue_sign(SignCall::NotFound(fixture_kid(0x11)));
-
-        let outcome = execute_publish_log(
-            &tenant,
-            &fixture_issuer(),
-            &fixture_state(false),
-            &registry,
-            &engine,
-            &token_provider(),
-            fixture_now(),
-        )
-        .await;
-
-        match outcome {
-            StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "publish_log_failed");
-            }
-            other => panic!("expected Terminal, got {other:?}"),
-        }
     }
 
     #[tokio::test]
@@ -551,10 +555,10 @@ mod tests {
         });
         let engine = engine_for_happy_path();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(false),
+            &fixture_state(false, true),
             &registry,
             &engine,
             &token_provider(),
@@ -581,10 +585,10 @@ mod tests {
         });
         let engine = engine_for_happy_path();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_issuer(),
-            &fixture_state(false),
+            &fixture_state(false, true),
             &registry,
             &engine,
             &token_provider(),
@@ -598,35 +602,5 @@ mod tests {
             }
             other => panic!("expected Terminal, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn issuer_not_active_is_terminal() {
-        // build_deactivation_entry rejects non-Active issuers.
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
-        let registry = MockRegistry::new();
-        registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
-        let engine = MockSigningEngine::new();
-        let mut issuer = fixture_issuer();
-        issuer.state = Some(IssuerState::Deactivated);
-
-        let outcome = execute_publish_log(
-            &tenant,
-            &issuer,
-            &fixture_state(false),
-            &registry,
-            &engine,
-            &token_provider(),
-            fixture_now(),
-        )
-        .await;
-
-        match outcome {
-            StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "issuer_not_active");
-            }
-            other => panic!("expected Terminal, got {other:?}"),
-        }
-        assert!(registry.publish_invocations.lock().unwrap().is_empty());
     }
 }

@@ -37,7 +37,7 @@ use crate::domain::oauth2::{TokenAwareError, TokenProvider};
 /// A successful `fetch_log` result.
 pub struct FetchedLog {
     /// Raw JSONL body as returned by the registry. Kept verbatim so
-    /// publish_log can PUT the prior entries back unchanged —
+    /// publish_didlog can PUT the prior entries back unchanged —
     /// re-serialising the parsed entries would risk key-ordering or
     /// whitespace drift that would corrupt the entryHash chain.
     pub raw: String,

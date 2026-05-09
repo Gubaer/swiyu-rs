@@ -206,7 +206,7 @@ async fn wait_for_task_state(
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     let registry = Arc::new(MockRegistry::new());
-    // Two fetch_log calls: build_rotation_log + publish_log.
+    // Two fetch_log calls: build_rotation_didlog + publish_didlog.
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
     registry.enqueue_publish(PublishCall::Ok);
@@ -247,7 +247,7 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     handle.await.unwrap();
 
     assert_eq!(final_task.state, TaskState::Completed);
-    assert_eq!(final_task.state_data["log_published"], json!(true));
+    assert_eq!(final_task.state_data["didlog_published"], json!(true));
 
     // The three key columns on the issuer row changed to fresh ids.
     let mut conn = pool.acquire().await.unwrap();

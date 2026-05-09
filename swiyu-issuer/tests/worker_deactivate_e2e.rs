@@ -240,11 +240,11 @@ async fn wait_for_task_state(
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) {
     let registry = Arc::new(MockRegistry::new());
-    // Two fetch_log calls: one in build_deactivation_log, one in
-    // publish_log.
+    // Two fetch_log calls: one in build_deactivation_didlog, one in
+    // publish_didlog.
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
-    // One publish_log_entry call from publish_log.
+    // One publish_log_entry call from publish_didlog.
     registry.enqueue_publish(PublishCall::Ok);
 
     let tenant_id = TenantId::generate();
@@ -288,7 +288,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
 
     assert_eq!(final_task.state, TaskState::Completed);
     assert_eq!(final_task.result_issuer_id, Some(issuer_id.clone()));
-    assert_eq!(final_task.state_data["log_published"], json!(true));
+    assert_eq!(final_task.state_data["didlog_published"], json!(true));
 
     let mut conn = pool.acquire().await.unwrap();
     let loaded_issuer = issuers::find_by_id(&mut conn, &issuer_id)
@@ -319,7 +319,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
 
     // Registry got exactly one publish_log_entry call. The wire form
     // is a single JSONL line (the deactivation entry only — the
-    // publish_log step builds the full updated log itself, but the
+    // publish_didlog step builds the full updated log itself, but the
     // mock records what the worker passed to publish_log_entry, which
     // is the concatenated JSONL body). Inspect the LAST line, which
     // is the new deactivation entry.

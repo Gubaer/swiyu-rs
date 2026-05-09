@@ -238,7 +238,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
         final_task.state_data["assigned_identifier"],
         json!(REGISTRY_UUID)
     );
-    assert_eq!(final_task.state_data["log_published"], json!(true));
+    assert_eq!(final_task.state_data["didlog_published"], json!(true));
 
     let mut conn = pool.acquire().await.unwrap();
     let issuer = issuers::find_by_id(&mut conn, &issuer_id)

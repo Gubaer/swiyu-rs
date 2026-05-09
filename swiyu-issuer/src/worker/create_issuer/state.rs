@@ -36,7 +36,7 @@ pub struct CreateIssuerStateData {
     /// `https://identifier-reg.swiyu.admin.ch/api/v1/did/<UUID>/did.jsonl`).
     /// Set by `allocate_did`; when present that step is skipped on resume.
     /// The host/path component of the DID is derived from this URL; the
-    /// final DID with SCID is computed during `build_initial_log` and not
+    /// final DID with SCID is computed during `build_initial_didlog` and not
     /// stored separately, since it is deterministic from this URL plus the
     /// key triple.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -53,11 +53,11 @@ pub struct CreateIssuerStateData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_ids: Option<KeyTriple>,
 
-    /// Set to `true` once `publish_log` has succeeded; when `true` that step
+    /// Set to `true` once `publish_didlog` has succeeded; when `true` that step
     /// is skipped on resume. The registry's PUT endpoint returns no body, so
     /// the worker records a boolean rather than a server-supplied identifier.
     #[serde(default, skip_serializing_if = "crate::worker::is_false")]
-    pub log_published: bool,
+    pub didlog_published: bool,
 
     /// Registry-side status-list entry UUID returned by
     /// `create_status_list_entry`. When present the registry call is skipped
@@ -145,7 +145,7 @@ mod tests {
         assert!(state.assigned_did_url.is_none());
         assert!(state.assigned_identifier.is_none());
         assert!(state.key_ids.is_none());
-        assert!(!state.log_published);
+        assert!(!state.didlog_published);
         assert!(state.status_list_registry_entry_id.is_none());
         assert!(state.status_list_registry_url.is_none());
     }
@@ -169,7 +169,7 @@ mod tests {
         );
         assert_eq!(state.assigned_identifier.as_deref(), Some("abc"));
         assert!(state.key_ids.is_none());
-        assert!(!state.log_published);
+        assert!(!state.didlog_published);
     }
 
     #[test]
@@ -178,7 +178,7 @@ mod tests {
             assigned_did_url: Some("https://reg.example/api/v1/did/abc/did.jsonl".into()),
             assigned_identifier: Some("abc".into()),
             key_ids: Some(fixture_key_triple()),
-            log_published: true,
+            didlog_published: true,
             status_list_registry_entry_id: Some("11111111-2222-3333-4444-555555555555".into()),
             status_list_registry_url: Some("https://status-reg.example.com/lists/abc.jwt".into()),
         };

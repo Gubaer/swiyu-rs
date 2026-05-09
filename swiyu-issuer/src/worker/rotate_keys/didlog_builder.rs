@@ -1,8 +1,8 @@
 //! Constructs the finalised rotation DIDLog entry for a
 //! `RotateKeys` task.
 //!
-//! Used by `execute_build_rotation_log` (validation) and
-//! `execute_publish_log` (regenerate-and-PUT). Mirrors
+//! Used by `execute_build_rotation_didlog` (validation) and
+//! `execute_publish_didlog` (regenerate-and-PUT). Mirrors
 //! `deactivate_issuer::didlog_builder::build_deactivation_entry` in
 //! shape and determinism guarantees: given the same `issuer`, the
 //! same `new_triple`, the same fetched tail of log entries, the
@@ -44,7 +44,7 @@ pub enum BuildError {
     EmptyLog,
 
     #[error(
-        "registry's tail entry already advertises the new Authorized key — saga should not have reached build_rotation_log a second time"
+        "registry's tail entry already advertises the new Authorized key — saga should not have reached build_rotation_didlog a second time"
     )]
     AlreadyRotated,
 
@@ -65,8 +65,8 @@ impl BuildError {
     /// Maps a build-failure variant to the stable `error_code` the
     /// step executor records on the operation task. Every variant
     /// has a fixed code except `Engine(_)`, which carries the
-    /// calling step's name (e.g. `"build_rotation_log_failed"`,
-    /// `"publish_log_failed"`) — that string is supplied by the
+    /// calling step's name (e.g. `"build_rotation_didlog_failed"`,
+    /// `"publish_didlog_failed"`) — that string is supplied by the
     /// caller as `engine_failure_code`.
     pub fn error_code(&self, engine_failure_code: &'static str) -> &'static str {
         match self {
@@ -138,8 +138,8 @@ pub async fn build_rotation_entry<S: SigningEngine>(
 
     // Saga-resume short-circuit: if the registry tail already
     // advertises the new Authorized key in `updateKeys`, the
-    // rotation was already published. Caller (publish_log) maps
-    // this to `Done` with `log_published: true`.
+    // rotation was already published. Caller (publish_didlog) maps
+    // this to `Done` with `didlog_published: true`.
     let already_rotated = last
         .parameters()
         .update_keys()

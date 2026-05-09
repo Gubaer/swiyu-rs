@@ -43,7 +43,7 @@ fn fixture_state() -> CreateIssuerStateData {
             authentication: fixture_kid(0x22),
             assertion: fixture_kid(0x33),
         }),
-        log_published: true,
+        didlog_published: true,
         status_list_registry_entry_id: None,
         status_list_registry_url: None,
     }

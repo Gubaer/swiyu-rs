@@ -1,5 +1,5 @@
 //! Step 3 of the `CreateIssuer` saga: build the genesis DIDLog entry
-//! locally so any failure surfaces *before* `publish_log` makes a
+//! locally so any failure surfaces *before* `publish_didlog` makes a
 //! network round-trip.
 
 use chrono::{DateTime, Utc};
@@ -13,9 +13,9 @@ use super::didlog_builder::{BuildError, build_log_entry};
 /// triple, allocation URL, pinned `now`) and validates that every
 /// dependency works: the key material is present and well-formed,
 /// and the [`SigningEngine`] is responsive. The entry itself is
-/// discarded — `publish_log` regenerates it from the same inputs,
+/// discarded — `publish_didlog` regenerates it from the same inputs,
 /// producing byte-identical output.
-pub async fn execute_build_initial_log<S: SigningEngine>(
+pub async fn execute_build_initial_didlog<S: SigningEngine>(
     state: &CreateIssuerStateData,
     engine: &S,
     now: DateTime<Utc>,
@@ -23,11 +23,11 @@ pub async fn execute_build_initial_log<S: SigningEngine>(
     match build_log_entry(state, engine, now).await {
         Ok(_entry) => StepOutcome::Done(StepResult::default()),
         Err(BuildError::Engine(SigningEngineError::Backend(_))) => StepOutcome::Retry {
-            error_code: "build_initial_log_failed".into(),
+            error_code: "build_initial_didlog_failed".into(),
             error_message: "signing-engine backend error".into(),
         },
         Err(e) => StepOutcome::Terminal {
-            error_code: e.error_code("build_initial_log_failed").into(),
+            error_code: e.error_code("build_initial_didlog_failed").into(),
             error_message: e.to_string(),
         },
     }
@@ -61,7 +61,7 @@ mod tests {
                 authentication: fixture_kid(0x22),
                 assertion: fixture_kid(0x33),
             }),
-            log_published: false,
+            didlog_published: false,
             status_list_registry_entry_id: None,
             status_list_registry_url: None,
         }
@@ -108,7 +108,7 @@ mod tests {
     async fn happy_path_returns_done_with_empty_patch() {
         let engine = engine_for_happy_path();
 
-        let outcome = execute_build_initial_log(&fixture_state(), &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Done(result) => assert!(result.state_data_patch.is_empty()),
@@ -126,7 +126,7 @@ mod tests {
         // the engine exactly that.
         let engine = engine_for_happy_path();
 
-        execute_build_initial_log(&fixture_state(), &engine, fixture_now()).await;
+        execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
         let (kid, input) = engine.sign_invocations.lock().unwrap()[0].clone();
         assert_eq!(kid, fixture_kid(0x11));
@@ -142,7 +142,7 @@ mod tests {
             ..CreateIssuerStateData::default()
         };
 
-        let outcome = execute_build_initial_log(&state, &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&state, &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -160,7 +160,7 @@ mod tests {
             ..fixture_state()
         };
 
-        let outcome = execute_build_initial_log(&state, &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&state, &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -178,7 +178,7 @@ mod tests {
             ..fixture_state()
         };
 
-        let outcome = execute_build_initial_log(&state, &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&state, &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -193,11 +193,11 @@ mod tests {
         let engine = MockSigningEngine::new();
         engine.enqueue_public_key(GetPublicKeyCall::Backend("connection refused".into()));
 
-        let outcome = execute_build_initial_log(&fixture_state(), &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Retry { error_code, .. } => {
-                assert_eq!(error_code, "build_initial_log_failed");
+                assert_eq!(error_code, "build_initial_didlog_failed");
             }
             other => panic!("expected Retry, got {other:?}"),
         }
@@ -208,11 +208,11 @@ mod tests {
         let engine = MockSigningEngine::new();
         engine.enqueue_public_key(GetPublicKeyCall::NotFound(fixture_kid(0x11)));
 
-        let outcome = execute_build_initial_log(&fixture_state(), &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "build_initial_log_failed");
+                assert_eq!(error_code, "build_initial_didlog_failed");
             }
             other => panic!("expected Terminal, got {other:?}"),
         }
@@ -226,11 +226,11 @@ mod tests {
         engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
         engine.enqueue_sign(SignCall::Backend("hsm offline".into()));
 
-        let outcome = execute_build_initial_log(&fixture_state(), &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Retry { error_code, .. } => {
-                assert_eq!(error_code, "build_initial_log_failed");
+                assert_eq!(error_code, "build_initial_didlog_failed");
             }
             other => panic!("expected Retry, got {other:?}"),
         }
@@ -244,11 +244,11 @@ mod tests {
         engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
         engine.enqueue_sign(SignCall::NotFound(fixture_kid(0x11)));
 
-        let outcome = execute_build_initial_log(&fixture_state(), &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "build_initial_log_failed");
+                assert_eq!(error_code, "build_initial_didlog_failed");
             }
             other => panic!("expected Terminal, got {other:?}"),
         }
@@ -263,7 +263,7 @@ mod tests {
             bytes: vec![0; 31],
         }));
 
-        let outcome = execute_build_initial_log(&fixture_state(), &engine, fixture_now()).await;
+        let outcome = execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {

@@ -1,12 +1,12 @@
-//! `build_deactivation_log` step executor.
+//! `build_deactivation_didlog` step executor.
 //!
 //! Fetches the current DIDLog tail from the registry and constructs
 //! the deactivation entry locally to validate that every dependency
 //! works (issuer is still `Active`, the registry is reachable, the
 //! tail entry has the right shape, the Authorized key is present and
-//! signs cleanly). The entry itself is discarded — `publish_log`
+//! signs cleanly). The entry itself is discarded — `publish_didlog`
 //! re-derives it deterministically from the same inputs. The point
-//! of this step is to fail fast before `publish_log` makes a second
+//! of this step is to fail fast before `publish_didlog` makes a second
 //! registry round-trip.
 //!
 //! Error classification:
@@ -29,7 +29,7 @@ use crate::worker::registry_facades::RegistryFacade;
 
 use super::didlog_builder::{BuildError, build_deactivation_entry};
 
-pub async fn execute_build_deactivation_log<R: RegistryFacade, S: SigningEngine>(
+pub async fn execute_build_deactivation_didlog<R: RegistryFacade, S: SigningEngine>(
     issuer: &Issuer,
     registry: &R,
     engine: &S,
@@ -64,11 +64,11 @@ pub async fn execute_build_deactivation_log<R: RegistryFacade, S: SigningEngine>
     match build_deactivation_entry(issuer, &log, engine, now).await {
         Ok(_entry) => StepOutcome::Done(StepResult::default()),
         Err(BuildError::Engine(SigningEngineError::Backend(_))) => StepOutcome::Retry {
-            error_code: "build_deactivation_log_failed".into(),
+            error_code: "build_deactivation_didlog_failed".into(),
             error_message: "signing-engine backend error".into(),
         },
         Err(e) => StepOutcome::Terminal {
-            error_code: e.error_code("build_deactivation_log_failed").into(),
+            error_code: e.error_code("build_deactivation_didlog_failed").into(),
             error_message: e.to_string(),
         },
     }
@@ -178,7 +178,7 @@ mod tests {
         let engine = engine_for_happy_path();
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
@@ -201,7 +201,7 @@ mod tests {
         let engine = MockSigningEngine::new();
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
@@ -222,7 +222,7 @@ mod tests {
         let engine = MockSigningEngine::new();
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
@@ -240,7 +240,7 @@ mod tests {
         let engine = MockSigningEngine::new();
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
@@ -258,7 +258,7 @@ mod tests {
         let engine = MockSigningEngine::new();
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
@@ -283,7 +283,7 @@ mod tests {
         let engine = MockSigningEngine::new();
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
@@ -303,7 +303,7 @@ mod tests {
         issuer.state = Some(IssuerState::Deactivated);
 
         let outcome =
-            execute_build_deactivation_log(&issuer, &registry, &engine, fixture_now()).await;
+            execute_build_deactivation_didlog(&issuer, &registry, &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -322,7 +322,7 @@ mod tests {
         issuer.authorized_key_id = None;
 
         let outcome =
-            execute_build_deactivation_log(&issuer, &registry, &engine, fixture_now()).await;
+            execute_build_deactivation_didlog(&issuer, &registry, &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -342,7 +342,7 @@ mod tests {
         issuer.did = "not a did".into();
 
         let outcome =
-            execute_build_deactivation_log(&issuer, &registry, &engine, fixture_now()).await;
+            execute_build_deactivation_didlog(&issuer, &registry, &engine, fixture_now()).await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
@@ -362,12 +362,12 @@ mod tests {
         engine.enqueue_sign(SignCall::Backend("hsm offline".into()));
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
             StepOutcome::Retry { error_code, .. } => {
-                assert_eq!(error_code, "build_deactivation_log_failed");
+                assert_eq!(error_code, "build_deactivation_didlog_failed");
             }
             other => panic!("expected Retry, got {other:?}"),
         }
@@ -382,12 +382,12 @@ mod tests {
         engine.enqueue_sign(SignCall::NotFound(fixture_kid(0x11)));
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
             StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "build_deactivation_log_failed");
+                assert_eq!(error_code, "build_deactivation_didlog_failed");
             }
             other => panic!("expected Terminal, got {other:?}"),
         }
@@ -404,7 +404,7 @@ mod tests {
         }));
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {
@@ -435,7 +435,7 @@ mod tests {
         let engine = MockSigningEngine::new();
 
         let outcome =
-            execute_build_deactivation_log(&fixture_issuer(), &registry, &engine, fixture_now())
+            execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())
                 .await;
 
         match outcome {

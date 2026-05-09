@@ -10,7 +10,7 @@
 //!
 //! `DeactivateIssuerStateData` accumulates step outputs across
 //! retries and crashes. It currently records only whether
-//! `publish_log` has succeeded; the deactivation entry itself is not
+//! `publish_didlog` has succeeded; the deactivation entry itself is not
 //! stored, since each step that needs it re-derives it deterministically
 //! from the current registry tail and the issuer's current
 //! `Authorized` key.
@@ -23,12 +23,12 @@ pub struct DeactivateIssuerInput {}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeactivateIssuerStateData {
-    /// Set to `true` once `publish_log` has succeeded against the
+    /// Set to `true` once `publish_didlog` has succeeded against the
     /// SWIYU Identifier Registry. The registry's PUT endpoint returns
     /// no body, so the worker records a boolean rather than a
     /// server-supplied identifier — same pattern as `CreateIssuer`.
     #[serde(default, skip_serializing_if = "crate::worker::is_false")]
-    pub log_published: bool,
+    pub didlog_published: bool,
 }
 
 #[cfg(test)]
@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn state_data_default_has_log_unpublished() {
         let state = DeactivateIssuerStateData::default();
-        assert!(!state.log_published);
+        assert!(!state.didlog_published);
     }
 
     #[test]
@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn state_data_round_trips_when_published() {
         let original = DeactivateIssuerStateData {
-            log_published: true,
+            didlog_published: true,
         };
         let value = serde_json::to_value(&original).unwrap();
         let parsed: DeactivateIssuerStateData = serde_json::from_value(value).unwrap();
@@ -86,14 +86,14 @@ mod tests {
     }
 
     #[test]
-    fn state_data_serialises_log_published_true() {
+    fn state_data_serialises_didlog_published_true() {
         let state = DeactivateIssuerStateData {
-            log_published: true,
+            didlog_published: true,
         };
         let value = serde_json::to_value(&state).unwrap();
         let Value::Object(obj) = value else {
             panic!("expected object");
         };
-        assert_eq!(obj["log_published"], true);
+        assert_eq!(obj["didlog_published"], true);
     }
 }

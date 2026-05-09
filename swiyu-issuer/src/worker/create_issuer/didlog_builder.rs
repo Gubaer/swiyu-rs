@@ -1,11 +1,11 @@
 //! Constructs the finalised genesis DIDLog entry for a `CreateIssuer`
 //! task.
 //!
-//! Used by both `execute_build_initial_log` (validation) and
-//! `execute_publish_log` (regenerate-and-PUT). Deterministic given
+//! Used by both `execute_build_initial_didlog` (validation) and
+//! `execute_publish_didlog` (regenerate-and-PUT). Deterministic given
 //! the same `state_data`, key material, and `now`, so calling it
 //! twice on the same task produces byte-identical output — the
-//! property that lets `publish_log` re-derive the entry on resume
+//! property that lets `publish_didlog` re-derive the entry on resume
 //! instead of carrying it through `state_data`.
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -42,8 +42,8 @@ impl BuildError {
     /// Maps a build-failure variant to the stable `error_code` the
     /// step executor records on the operation task. Every variant
     /// has a fixed code except `Engine(_)`, which carries the
-    /// calling step's name (e.g. `"build_initial_log_failed"`,
-    /// `"publish_log_failed"`) — that string is supplied by the
+    /// calling step's name (e.g. `"build_initial_didlog_failed"`,
+    /// `"publish_didlog_failed"`) — that string is supplied by the
     /// caller as `engine_failure_code`.
     pub fn error_code(&self, engine_failure_code: &'static str) -> &'static str {
         match self {

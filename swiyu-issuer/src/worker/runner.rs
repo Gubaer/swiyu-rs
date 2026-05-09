@@ -18,22 +18,23 @@ use crate::persistence::{self, PersistenceError};
 
 use super::BoxedRng;
 use super::create_issuer::{
-    CreateIssuerInput, CreateIssuerStateData, execute_allocate_did, execute_build_initial_log,
+    CreateIssuerInput, CreateIssuerStateData, execute_allocate_did, execute_build_initial_didlog,
     execute_create_status_list_entry, execute_generate_keys, execute_persist_issuer,
-    execute_provision_status_list, execute_publish_log as execute_create_publish_log,
+    execute_provision_status_list, execute_publish_didlog as execute_create_publish_didlog,
 };
 use super::deactivate_issuer::{
     DeactivateIssuerInput, DeactivateIssuerStateData,
-    build_deactivation_log::execute_build_deactivation_log,
+    build_deactivation_didlog::execute_build_deactivation_didlog,
     mark_deactivated::execute_mark_deactivated,
-    publish_log::execute_publish_log as execute_deactivate_publish_log,
+    publish_didlog::execute_publish_didlog as execute_deactivate_publish_didlog,
 };
 use super::outcome::apply as apply_outcome;
 use super::registry_facades::{RegistryFacade, StatusRegistryFacade};
 use super::rotate_keys::{
-    RotateKeysInput, RotateKeysStateData, build_rotation_log::execute_build_rotation_log,
+    RotateKeysInput, RotateKeysStateData, build_rotation_didlog::execute_build_rotation_didlog,
     generate_new_keys::execute_generate_new_keys,
-    publish_log::execute_publish_log as execute_rotate_publish_log, swap_keys::execute_swap_keys,
+    publish_didlog::execute_publish_didlog as execute_rotate_publish_didlog,
+    swap_keys::execute_swap_keys,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -189,7 +190,7 @@ where
         let provider = self.providers.provider_for(&task.tenant_id).await;
 
         // Pin `now` for the proof construction to `task.created_at` so
-        // build_initial_log, publish_log, and persist_issuer all see the
+        // build_initial_didlog, publish_didlog, and persist_issuer all see the
         // same value and re-runs produce byte-identical SCID/entryHash.
         let entry_now = task.created_at;
 
@@ -201,14 +202,14 @@ where
             ),
             "generate_keys" => (
                 execute_generate_keys(&state, &self.engine).await,
-                Some("build_initial_log"),
+                Some("build_initial_didlog"),
             ),
-            "build_initial_log" => (
-                execute_build_initial_log(&state, &self.engine, entry_now).await,
-                Some("publish_log"),
+            "build_initial_didlog" => (
+                execute_build_initial_didlog(&state, &self.engine, entry_now).await,
+                Some("publish_didlog"),
             ),
-            "publish_log" => (
-                execute_create_publish_log(
+            "publish_didlog" => (
+                execute_create_publish_didlog(
                     &tenant,
                     &state,
                     &self.registry,
@@ -358,15 +359,15 @@ where
         // the create_issuer saga uses.
         let entry_now = task.created_at;
 
-        let step_name: &str = task.step.as_deref().unwrap_or("build_deactivation_log");
+        let step_name: &str = task.step.as_deref().unwrap_or("build_deactivation_didlog");
         let (outcome, next_step) = match step_name {
-            "build_deactivation_log" => (
-                execute_build_deactivation_log(&issuer, &self.registry, &self.engine, entry_now)
+            "build_deactivation_didlog" => (
+                execute_build_deactivation_didlog(&issuer, &self.registry, &self.engine, entry_now)
                     .await,
-                Some("publish_log"),
+                Some("publish_didlog"),
             ),
-            "publish_log" => (
-                execute_deactivate_publish_log(
+            "publish_didlog" => (
+                execute_deactivate_publish_didlog(
                     &tenant,
                     &issuer,
                     &state,
@@ -478,10 +479,10 @@ where
         let (outcome, next_step) = match step_name {
             "generate_new_keys" => (
                 execute_generate_new_keys(&issuer, &input, &state, &self.engine).await,
-                Some("build_rotation_log"),
+                Some("build_rotation_didlog"),
             ),
-            "build_rotation_log" => (
-                execute_build_rotation_log(
+            "build_rotation_didlog" => (
+                execute_build_rotation_didlog(
                     &issuer,
                     &state,
                     &self.registry,
@@ -489,10 +490,10 @@ where
                     entry_now,
                 )
                 .await,
-                Some("publish_log"),
+                Some("publish_didlog"),
             ),
-            "publish_log" => (
-                execute_rotate_publish_log(
+            "publish_didlog" => (
+                execute_rotate_publish_didlog(
                     &tenant,
                     &issuer,
                     &state,

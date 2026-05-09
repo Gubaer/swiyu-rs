@@ -273,7 +273,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     assert_eq!(final_task.state, TaskState::Completed);
     assert_eq!(final_task.result_issuer_id, Some(issuer_id.clone()));
     assert!(final_task.completed_at.is_some());
-    assert_eq!(final_task.state_data["log_published"], json!(true));
+    assert_eq!(final_task.state_data["didlog_published"], json!(true));
     assert_eq!(final_task.state_data["assigned_identifier"], json!("abc"));
     assert!(final_task.state_data["assigned_did_url"].is_string());
     assert!(final_task.state_data["key_ids"].is_object());

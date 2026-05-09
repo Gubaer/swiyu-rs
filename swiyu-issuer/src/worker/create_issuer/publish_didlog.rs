@@ -19,9 +19,9 @@ use super::didlog_builder::{BuildError, build_log_entry};
 /// re-derivation is deterministic given the same key triple,
 /// allocation URL, and `now`, which the dispatch loop pins to
 /// `task.created_at`. On saga resume this step short-circuits when
-/// `state_data.log_published == true`, returning [`StepOutcome::Done`]
+/// `state_data.didlog_published == true`, returning [`StepOutcome::Done`]
 /// with no further engine or registry call.
-pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
+pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
     tenant: &Tenant,
     state: &CreateIssuerStateData,
     registry: &R,
@@ -29,7 +29,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     provider: &impl TokenProvider,
     now: DateTime<Utc>,
 ) -> StepOutcome {
-    if state.log_published {
+    if state.didlog_published {
         return StepOutcome::Done(StepResult::default());
     }
 
@@ -57,13 +57,13 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
         Ok(e) => e,
         Err(BuildError::Engine(SigningEngineError::Backend(_))) => {
             return StepOutcome::Retry {
-                error_code: "publish_log_failed".into(),
+                error_code: "publish_didlog_failed".into(),
                 error_message: "signing-engine backend error".into(),
             };
         }
         Err(e) => {
             return StepOutcome::Terminal {
-                error_code: e.error_code("publish_log_failed").into(),
+                error_code: e.error_code("publish_didlog_failed").into(),
                 error_message: e.to_string(),
             };
         }
@@ -77,7 +77,7 @@ pub async fn execute_publish_log<R: RegistryFacade, S: SigningEngine>(
     match result {
         Ok(()) => {
             let mut patch = Map::new();
-            patch.insert("log_published".into(), json!(true));
+            patch.insert("didlog_published".into(), json!(true));
             StepOutcome::Done(StepResult {
                 state_data_patch: patch,
             })
@@ -109,7 +109,7 @@ mod tests {
         KeyPairId::from(Uuid::from_bytes(bytes))
     }
 
-    fn fixture_state(log_published: bool) -> CreateIssuerStateData {
+    fn fixture_state(didlog_published: bool) -> CreateIssuerStateData {
         CreateIssuerStateData {
             assigned_did_url: Some("https://reg.example.com/api/v1/did/abc/did.jsonl".into()),
             assigned_identifier: Some("abc".into()),
@@ -118,7 +118,7 @@ mod tests {
                 authentication: fixture_kid(0x22),
                 assertion: fixture_kid(0x33),
             }),
-            log_published,
+            didlog_published,
             status_list_registry_entry_id: None,
             status_list_registry_url: None,
         }
@@ -176,13 +176,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn happy_path_publishes_and_marks_log_published() {
+    async fn happy_path_publishes_and_marks_didlog_published() {
         let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
         let registry = MockRegistry::new();
         registry.enqueue_publish(PublishCall::Ok);
         let engine = engine_for_happy_path();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_state(false),
             &registry,
@@ -194,7 +194,7 @@ mod tests {
 
         match outcome {
             StepOutcome::Done(result) => {
-                assert_eq!(result.state_data_patch["log_published"], json!(true));
+                assert_eq!(result.state_data_patch["didlog_published"], json!(true));
             }
             other => panic!("expected Done, got {other:?}"),
         }
@@ -214,7 +214,7 @@ mod tests {
         // Deliberately enqueue nothing — a second call would panic.
         let engine = MockSigningEngine::new();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_state(true),
             &registry,
@@ -238,7 +238,7 @@ mod tests {
         let registry = MockRegistry::new();
         let engine = MockSigningEngine::new();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_state(false),
             &registry,
@@ -267,7 +267,7 @@ mod tests {
             ..fixture_state(false)
         };
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &state,
             &registry,
@@ -296,7 +296,7 @@ mod tests {
             ..fixture_state(false)
         };
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &state,
             &registry,
@@ -321,7 +321,7 @@ mod tests {
         let engine = MockSigningEngine::new();
         engine.enqueue_public_key(GetPublicKeyCall::Backend("connection refused".into()));
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_state(false),
             &registry,
@@ -333,7 +333,7 @@ mod tests {
 
         match outcome {
             StepOutcome::Retry { error_code, .. } => {
-                assert_eq!(error_code, "publish_log_failed");
+                assert_eq!(error_code, "publish_didlog_failed");
             }
             other => panic!("expected Retry, got {other:?}"),
         }
@@ -350,7 +350,7 @@ mod tests {
         });
         let engine = engine_for_happy_path();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_state(false),
             &registry,
@@ -378,7 +378,7 @@ mod tests {
         });
         let engine = engine_for_happy_path();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_state(false),
             &registry,
@@ -409,7 +409,7 @@ mod tests {
         });
         let engine = engine_for_happy_path();
 
-        let outcome = execute_publish_log(
+        let outcome = execute_publish_didlog(
             &tenant,
             &fixture_state(false),
             &registry,
