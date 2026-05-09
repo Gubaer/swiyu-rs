@@ -92,13 +92,14 @@ mod tests {
     use swiyu_registries::common::AccessToken;
     use uuid::Uuid;
 
+    use crate::domain::signing_engine::test_support::{
+        GetPublicKeyCall, MockSigningEngine, SignCall,
+    };
     use crate::domain::{
         KeyAlgorithm, KeyPairId, RawPublicKey, Signature, StaticTokenProvider, TenantId,
     };
     use crate::worker::create_issuer::KeyTriple;
-    use crate::worker::test_support::{
-        AllocateCall, GetPublicKeyCall, MockRegistry, MockSigningEngine, PublishCall, SignCall,
-    };
+    use crate::worker::test_support::{AllocateCall, MockRegistry, PublishCall};
 
     fn fixture_kid(byte: u8) -> KeyPairId {
         let mut bytes = [byte; 16];

@@ -161,13 +161,14 @@ mod tests {
     use swiyu_core::diddoc::public_keys::P256PublicKey;
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
+    use crate::domain::signing_engine::test_support::{
+        GetPublicKeyCall, MockSigningEngine, SignCall,
+    };
     use crate::domain::{
         Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature,
         StaticTokenProvider, TenantId,
     };
-    use crate::worker::test_support::{
-        FetchLogCall, GetPublicKeyCall, MockRegistry, MockSigningEngine, PublishCall, SignCall,
-    };
+    use crate::worker::test_support::{FetchLogCall, MockRegistry, PublishCall};
 
     fn fixture_kid(byte: u8) -> KeyPairId {
         let mut bytes = [byte; 16];

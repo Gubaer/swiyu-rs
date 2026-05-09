@@ -8,6 +8,9 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use swiyu_issuer::domain::signing_engine::test_support::{
+    GetPublicKeyCall, MockSigningEngine, SignCall,
+};
 use swiyu_issuer::domain::{
     Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature, StepOutcome,
     TenantId,
@@ -16,7 +19,6 @@ use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, KeyTriple, execute_persist_issuer,
 };
-use swiyu_issuer::worker::test_support::{GetPublicKeyCall, MockSigningEngine, SignCall};
 
 fn fixture_kid(byte: u8) -> KeyPairId {
     let mut bytes = [byte; 16];

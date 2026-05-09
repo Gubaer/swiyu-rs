@@ -105,10 +105,10 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
+    use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
     use crate::domain::{
         GeneratedKeyPair, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, TenantId,
     };
-    use crate::worker::test_support::{GenerateKeypairCall, MockSigningEngine};
 
     fn fixture_kid(byte: u8) -> KeyPairId {
         let mut bytes = [byte; 16];

@@ -1,11 +1,14 @@
-//! In-memory test doubles for `RegistryFacade` and `SigningEngine`.
+//! In-memory test doubles for [`RegistryFacade`] and
+//! [`StatusRegistryFacade`].
 //!
-//! Used by the per-step executor unit tests so they stay fast and
+//! Used by the per-step worker tests so they stay fast and
 //! independent of Postgres or wiremock. Each mock records calls in
 //! order and replays a pre-configured queue of outcomes; tests fail
 //! loudly on under- or over-call.
 //!
-//! New variants are added alongside the executors that need them.
+//! The matching `MockSigningEngine` lives in
+//! [`crate::domain::signing_engine::test_support`] so the
+//! domain → worker dependency direction stays clean.
 
 use std::future::Future;
 use std::sync::Mutex;
@@ -16,11 +19,6 @@ use swiyu_core::didlog::DIDLogEntry;
 use swiyu_registries::common::{AccessToken, RegistryError};
 use swiyu_registries::identifier::Allocation;
 use swiyu_registries::status::StatusListEntry;
-
-use crate::domain::{
-    GeneratedKeyPair, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine,
-    SigningEngineError,
-};
 
 use super::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 
@@ -238,110 +236,5 @@ impl StatusRegistryFacade for MockStatusRegistry {
                 }
             }
         }
-    }
-}
-
-pub enum GenerateKeypairCall {
-    Ok(GeneratedKeyPair),
-    Backend(String),
-    Unsupported,
-}
-
-pub enum GetPublicKeyCall {
-    Ok(RawPublicKey),
-    NotFound(KeyPairId),
-    Backend(String),
-}
-
-pub enum SignCall {
-    Ok(Signature),
-    NotFound(KeyPairId),
-    Backend(String),
-}
-
-#[derive(Default)]
-pub struct MockSigningEngine {
-    generate_queue: Mutex<Vec<GenerateKeypairCall>>,
-    public_key_queue: Mutex<Vec<GetPublicKeyCall>>,
-    sign_queue: Mutex<Vec<SignCall>>,
-    pub generate_invocations: Mutex<Vec<KeyRole>>,
-    pub public_key_invocations: Mutex<Vec<KeyPairId>>,
-    pub sign_invocations: Mutex<Vec<(KeyPairId, Vec<u8>)>>,
-}
-
-impl MockSigningEngine {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn enqueue_generate(&self, call: GenerateKeypairCall) {
-        self.generate_queue.lock().unwrap().push(call);
-    }
-
-    pub fn enqueue_public_key(&self, call: GetPublicKeyCall) {
-        self.public_key_queue.lock().unwrap().push(call);
-    }
-
-    pub fn enqueue_sign(&self, call: SignCall) {
-        self.sign_queue.lock().unwrap().push(call);
-    }
-}
-
-impl SigningEngine for MockSigningEngine {
-    fn generate_keypair(
-        &self,
-        role: KeyRole,
-    ) -> impl Future<Output = Result<GeneratedKeyPair, SigningEngineError>> + Send {
-        self.generate_invocations.lock().unwrap().push(role);
-        let next = self.generate_queue.lock().unwrap().remove(0);
-        async move {
-            match next {
-                GenerateKeypairCall::Ok(kp) => Ok(kp),
-                GenerateKeypairCall::Backend(message) => {
-                    Err(SigningEngineError::Backend(message.into()))
-                }
-                GenerateKeypairCall::Unsupported => Err(SigningEngineError::UnsupportedAlgorithm),
-            }
-        }
-    }
-
-    fn get_public_key(
-        &self,
-        id: &KeyPairId,
-    ) -> impl Future<Output = Result<RawPublicKey, SigningEngineError>> + Send {
-        self.public_key_invocations.lock().unwrap().push(*id);
-        let next = self.public_key_queue.lock().unwrap().remove(0);
-        async move {
-            match next {
-                GetPublicKeyCall::Ok(pk) => Ok(pk),
-                GetPublicKeyCall::NotFound(id) => Err(SigningEngineError::KeyNotFound(id)),
-                GetPublicKeyCall::Backend(message) => {
-                    Err(SigningEngineError::Backend(message.into()))
-                }
-            }
-        }
-    }
-
-    fn sign(
-        &self,
-        id: &KeyPairId,
-        input: &[u8],
-    ) -> impl Future<Output = Result<Signature, SigningEngineError>> + Send {
-        self.sign_invocations
-            .lock()
-            .unwrap()
-            .push((*id, input.to_vec()));
-        let next = self.sign_queue.lock().unwrap().remove(0);
-        async move {
-            match next {
-                SignCall::Ok(sig) => Ok(sig),
-                SignCall::NotFound(id) => Err(SigningEngineError::KeyNotFound(id)),
-                SignCall::Backend(message) => Err(SigningEngineError::Backend(message.into())),
-            }
-        }
-    }
-
-    async fn delete_keypair(&self, _id: &KeyPairId) -> Result<(), SigningEngineError> {
-        Ok(())
     }
 }

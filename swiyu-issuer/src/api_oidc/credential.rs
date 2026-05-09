@@ -825,10 +825,10 @@ mod tests {
 
         use chrono::Duration;
 
+        use crate::domain::signing_engine::test_support::{MockSigningEngine, SignCall};
         use crate::domain::{
             CredentialOffer, Issuer, IssuerState, KeyAlgorithm, PreAuthCode, Signature, TenantId,
         };
-        use crate::worker::test_support::{MockSigningEngine, SignCall};
 
         const FIXTURE_DID: &str =
             "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d";

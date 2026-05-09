@@ -38,9 +38,11 @@ mod tests {
 
     use uuid::Uuid;
 
+    use crate::domain::signing_engine::test_support::{
+        GetPublicKeyCall, MockSigningEngine, SignCall,
+    };
     use crate::domain::{KeyAlgorithm, KeyPairId, RawPublicKey, Signature};
     use crate::worker::create_issuer::KeyTriple;
-    use crate::worker::test_support::{GetPublicKeyCall, MockSigningEngine, SignCall};
 
     fn fixture_kid(byte: u8) -> KeyPairId {
         let mut bytes = [byte; 16];

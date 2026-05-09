@@ -14,6 +14,15 @@ pub use builder::{BuildError, build_from_env};
 pub use dev::DevSigningEngine;
 pub use vault::{VaultSigningEngine, VaultSigningEngineConfig};
 
+// `test_support` is a hand-rolled mock for `SigningEngine`, used by
+// inline tests across the worker, status-list wrapper, and OIDC
+// credential-issuance code paths. It is always compiled (rather than
+// gated on `cfg(test)`) so integration tests — which see the library
+// without `cfg(test)` — can access it. `#[doc(hidden)]` keeps it out
+// of the public API surface.
+#[doc(hidden)]
+pub mod test_support;
+
 /// The signing algorithm of a key pair.
 ///
 /// Limited to the two algorithms required by SWIYU. The mapping from

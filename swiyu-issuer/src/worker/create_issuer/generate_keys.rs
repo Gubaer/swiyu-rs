@@ -76,8 +76,8 @@ mod tests {
 
     use uuid::Uuid;
 
+    use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
     use crate::domain::{GeneratedKeyPair, KeyAlgorithm, KeyPairId, RawPublicKey};
-    use crate::worker::test_support::{GenerateKeypairCall, MockSigningEngine};
 
     fn fixture_keypair(uuid_byte: u8, algorithm: KeyAlgorithm, pk_len: usize) -> GeneratedKeyPair {
         let bytes = [uuid_byte; 16];

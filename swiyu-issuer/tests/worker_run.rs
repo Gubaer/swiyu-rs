@@ -16,6 +16,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use wiremock::MockServer;
 
+use swiyu_issuer::domain::signing_engine::test_support::{
+    GenerateKeypairCall, GetPublicKeyCall, MockSigningEngine, SignCall,
+};
 use swiyu_issuer::domain::{
     GeneratedKeyPair, IssuerId, KeyAlgorithm, KeyPairId, OperationTask, ProviderRegistry,
     RawPublicKey, Signature, TaskId, TaskState, TaskType, TenantId,
@@ -23,8 +26,7 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence::{issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
-    AllocateCall, CreateStatusListEntryCall, GenerateKeypairCall, GetPublicKeyCall, MockRegistry,
-    MockSigningEngine, MockStatusRegistry, PublishCall, SignCall,
+    AllocateCall, CreateStatusListEntryCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
 use swiyu_registries::status::StatusListEntry;
 
