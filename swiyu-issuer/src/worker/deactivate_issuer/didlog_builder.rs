@@ -16,59 +16,48 @@ use thiserror::Error;
 
 use swiyu_core::diddoc::DIDDoc;
 use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
-use swiyu_core::didlog::entry_edits::{append_proof, set_version_id, strip_proof_slot};
+use swiyu_core::didlog::entry_edits::{set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::didlog::{DIDDocState, DIDLogEntry, LogEntryFormat};
-use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
-use crate::domain::{Issuer, IssuerState, KeyAlgorithm, SigningEngine, SigningEngineError};
+use crate::domain::{Issuer, IssuerState, SigningEngine, SigningEngineError};
+use crate::worker::didlog_common::{
+    ChainedBuildError, InvalidPublicKey, ed25519_bytes, sign_and_append_proof,
+};
 
 #[derive(Debug, Error)]
-pub enum BuildError {
-    #[error("issuer is not in state Active: {0}")]
-    IssuerNotActive(String),
-
-    #[error("issuer is missing required field: {0}")]
-    MissingIssuerField(&'static str),
-
-    #[error("registry returned an empty DID log — nothing to chain a deactivation entry onto")]
-    EmptyLog,
+pub(crate) enum BuildError {
+    #[error(transparent)]
+    Chained(#[from] ChainedBuildError),
 
     #[error(
         "registry's tail entry is already deactivated — saga should not have reached build_deactivation_didlog"
     )]
     AlreadyDeactivated,
+}
 
-    #[error("registry's tail entry uses a Patch state — deactivation requires a full DID document")]
-    PreviousStateIsPatch,
+impl From<InvalidPublicKey> for BuildError {
+    fn from(e: InvalidPublicKey) -> Self {
+        BuildError::Chained(e.into())
+    }
+}
 
-    #[error("registry's tail DID document is malformed: {0}")]
-    InvalidPredecessorDoc(String),
-
-    #[error("invalid public key for {role}: {message}")]
-    InvalidPublicKey { role: &'static str, message: String },
-
-    #[error(transparent)]
-    Engine(#[from] SigningEngineError),
+impl From<SigningEngineError> for BuildError {
+    fn from(e: SigningEngineError) -> Self {
+        BuildError::Chained(e.into())
+    }
 }
 
 impl BuildError {
     /// Maps a build-failure variant to the stable `error_code` the
-    /// step executor records on the operation task. Every variant
-    /// has a fixed code except `Engine(_)`, which carries the
-    /// calling step's name (e.g. `"build_deactivation_didlog_failed"`,
-    /// `"publish_didlog_failed"`) — that string is supplied by the
-    /// caller as `engine_failure_code`.
+    /// step executor records on the operation task. The
+    /// `engine_failure_code` argument carries the calling step's
+    /// name (e.g. `"build_deactivation_didlog_failed"`,
+    /// `"publish_didlog_failed"`).
     pub fn error_code(&self, engine_failure_code: &'static str) -> &'static str {
         match self {
-            BuildError::IssuerNotActive(_) => "issuer_not_active",
-            BuildError::MissingIssuerField(_) => "missing_issuer_field",
-            BuildError::EmptyLog => "registry_empty_log",
+            BuildError::Chained(e) => e.error_code(engine_failure_code),
             BuildError::AlreadyDeactivated => "already_deactivated",
-            BuildError::PreviousStateIsPatch => "predecessor_state_is_patch",
-            BuildError::InvalidPredecessorDoc(_) => "invalid_predecessor_doc",
-            BuildError::InvalidPublicKey { .. } => "invalid_public_key",
-            BuildError::Engine(_) => engine_failure_code,
         }
     }
 }
@@ -82,32 +71,31 @@ impl BuildError {
 /// that same key). `now` becomes the entry's `versionTime` and the
 /// proof's `created`; the dispatch loop pins this to `task.created_at`
 /// so re-running on resume produces a byte-identical entry.
-pub async fn build_deactivation_entry<S: SigningEngine>(
+pub(crate) async fn build_deactivation_entry<S: SigningEngine>(
     issuer: &Issuer,
     log: &[DIDLogEntry],
     engine: &S,
     now: DateTime<Utc>,
 ) -> Result<Value, BuildError> {
     if issuer.state != Some(IssuerState::Active) {
-        return Err(BuildError::IssuerNotActive(format!(
-            "{:?}",
-            issuer.state.as_ref()
-        )));
+        return Err(
+            ChainedBuildError::IssuerNotActive(format!("{:?}", issuer.state.as_ref())).into(),
+        );
     }
     let authorized_key_id = issuer
         .authorized_key_id
-        .ok_or(BuildError::MissingIssuerField("authorized_key_id"))?;
+        .ok_or(ChainedBuildError::MissingIssuerField("authorized_key_id"))?;
 
-    let last = log.last().ok_or(BuildError::EmptyLog)?;
+    let last = log.last().ok_or(ChainedBuildError::EmptyLog)?;
     if last.parameters().deactivated() == Some(true) {
         return Err(BuildError::AlreadyDeactivated);
     }
     let prev_doc_value = match last.did_doc_state() {
         DIDDocState::Value(v) => v,
-        DIDDocState::Patch(_) => return Err(BuildError::PreviousStateIsPatch),
+        DIDDocState::Patch(_) => return Err(ChainedBuildError::PreviousStateIsPatch.into()),
     };
     let prev_doc = DIDDoc::try_from(prev_doc_value)
-        .map_err(|e| BuildError::InvalidPredecessorDoc(e.to_string()))?;
+        .map_err(|e| ChainedBuildError::InvalidPredecessorDoc(e.to_string()))?;
     let prev_version_id = last.version_id().to_string();
 
     let now_iso = now.to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -134,41 +122,18 @@ pub async fn build_deactivation_entry<S: SigningEngine>(
     set_version_id(&mut entry_value, &new_version_id, &LogEntryFormat::TDW03);
 
     let authorized_pk = engine.get_public_key(&authorized_key_id).await?;
-    if authorized_pk.algorithm != KeyAlgorithm::Ed25519 || authorized_pk.bytes.len() != 32 {
-        return Err(BuildError::InvalidPublicKey {
-            role: "authorized",
-            message: format!(
-                "expected 32-byte Ed25519, got {} bytes ({:?})",
-                authorized_pk.bytes.len(),
-                authorized_pk.algorithm
-            ),
-        });
-    }
-    let authorized_bytes: [u8; 32] = authorized_pk
-        .bytes
-        .as_slice()
-        .try_into()
-        .expect("length checked above; conversion is infallible");
+    let authorized_bytes = ed25519_bytes("authorized", &authorized_pk)?;
     let authorized_multikey = ed25519_verifying_key_to_multikey(&authorized_bytes);
 
-    // The DID Toolbox (Java) signs only the document content (entry[3]["value"]
-    // for did:tdw 0.3), not the entire entry. Mirroring that — same as
-    // create_issuer's didlog_builder — keeps signature bytes interoperable.
-    let document_for_hash = entry_value[3]["value"].clone();
-
-    let vm_id = format!("did:key:{authorized_multikey}#{authorized_multikey}");
-    let proof_config = ProofConfig {
-        cryptosuite: Cryptosuite::EddsaJcs2022,
-        verification_method: vm_id,
-        proof_purpose: ProofPurpose::Authentication,
-        challenge: new_version_id,
-        created: now_iso,
-    };
-
-    let hash_data = proof_config.signing_input(&document_for_hash);
-    let signature = engine.sign(&authorized_key_id, &hash_data).await?;
-    let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
-    append_proof(&mut entry_value, Value::from(proof), &LogEntryFormat::TDW03);
+    sign_and_append_proof(
+        &mut entry_value,
+        &authorized_key_id,
+        &authorized_multikey,
+        new_version_id,
+        now_iso,
+        engine,
+    )
+    .await?;
 
     Ok(entry_value)
 }

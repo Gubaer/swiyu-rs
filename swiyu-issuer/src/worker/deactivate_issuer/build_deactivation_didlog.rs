@@ -25,6 +25,7 @@ use chrono::{DateTime, Utc};
 use swiyu_core::did::DID;
 
 use crate::domain::{Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult};
+use crate::worker::didlog_common::ChainedBuildError;
 use crate::worker::registry_facades::RegistryFacade;
 
 use super::didlog_builder::{BuildError, build_deactivation_entry};
@@ -63,10 +64,12 @@ pub async fn execute_build_deactivation_didlog<R: RegistryFacade, S: SigningEngi
 
     match build_deactivation_entry(issuer, &log, engine, now).await {
         Ok(_entry) => StepOutcome::Done(StepResult::default()),
-        Err(BuildError::Engine(SigningEngineError::Backend(_))) => StepOutcome::Retry {
-            error_code: "build_deactivation_didlog_failed".into(),
-            error_message: "signing-engine backend error".into(),
-        },
+        Err(BuildError::Chained(ChainedBuildError::Engine(SigningEngineError::Backend(_)))) => {
+            StepOutcome::Retry {
+                error_code: "build_deactivation_didlog_failed".into(),
+                error_message: "signing-engine backend error".into(),
+            }
+        }
         Err(e) => StepOutcome::Terminal {
             error_code: e.error_code("build_deactivation_didlog_failed").into(),
             error_message: e.to_string(),

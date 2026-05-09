@@ -2,82 +2,76 @@
 //! `RotateKeys` task.
 //!
 //! Used by `execute_build_rotation_didlog` (validation) and
-//! `execute_publish_didlog` (regenerate-and-PUT). Mirrors
-//! `deactivate_issuer::didlog_builder::build_deactivation_entry` in
-//! shape and determinism guarantees: given the same `issuer`, the
-//! same `new_triple`, the same fetched tail of log entries, the
-//! same key material, and the same `now`, the produced entry is
-//! byte-identical, so the publish step can re-derive on resume
-//! instead of carrying the entry through `state_data`.
+//! `execute_publish_didlog` (regenerate-and-PUT). The proof-signing
+//! flow and the key-format validators are shared with the other
+//! saga builders via [`crate::worker::didlog_common`]; this file
+//! handles the rotation-specific scaffolding (verifying the issuer
+//! is Active, fetching the prev tail, the resume-short-circuit when
+//! the registry already advertises the new Authorized key, building
+//! the typed [`DIDLogEntry::new_rotation`] template).
 //!
-//! **Outgoing-Authorized signing rule.** Per `aspect-issuer.md`
-//! §"Rotate keys" step 4, the rotation entry is signed with the
-//! issuer's *current* (outgoing) Authorized private key — even
-//! when Authorized is itself rotated. The new Authorized only
-//! starts signing on the *next* entry. The signing key id comes
-//! from `issuer.authorized_key_id` (current); the new ids come
-//! from `new_triple`; never confuse the two.
+//! Determinism: given the same `issuer`, the same `new_triple`, the
+//! same fetched tail of log entries, the same key material, and the
+//! same `now`, the produced entry is byte-identical, so the publish
+//! step can re-derive on resume instead of carrying the entry
+//! through `state_data`.
+//!
+//! **Outgoing-Authorized signing rule.** The rotation entry is
+//! signed with the issuer's *current* (outgoing) Authorized private
+//! key — even when Authorized is itself one of the rotated roles.
+//! The new Authorized only starts signing on the *next* entry. The
+//! signing key id comes from `issuer.authorized_key_id` (current);
+//! the new ids come from `new_triple`; never confuse the two.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
 use swiyu_core::diddoc::DIDDoc;
-use swiyu_core::diddoc::public_keys::{P256PublicKey, ed25519_verifying_key_to_multikey};
-use swiyu_core::didlog::entry_edits::{append_proof, set_version_id, strip_proof_slot};
+use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
+use swiyu_core::didlog::entry_edits::{set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::derive_entry_hash;
 use swiyu_core::didlog::{DIDDocState, DIDLogEntry, LogEntryFormat};
-use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
-use crate::domain::{Issuer, IssuerState, KeyAlgorithm, SigningEngine, SigningEngineError};
+use crate::domain::{Issuer, IssuerState, SigningEngine, SigningEngineError};
 use crate::worker::create_issuer::KeyTriple;
+use crate::worker::didlog_common::{
+    ChainedBuildError, InvalidPublicKey, ed25519_bytes, sec1_to_p256, sign_and_append_proof,
+};
 
 #[derive(Debug, Error)]
-pub enum BuildError {
-    #[error("issuer is not in state Active: {0}")]
-    IssuerNotActive(String),
-
-    #[error("issuer is missing required field: {0}")]
-    MissingIssuerField(&'static str),
-
-    #[error("registry returned an empty DID log — nothing to chain a rotation entry onto")]
-    EmptyLog,
+pub(crate) enum BuildError {
+    #[error(transparent)]
+    Chained(#[from] ChainedBuildError),
 
     #[error(
         "registry's tail entry already advertises the new Authorized key — saga should not have reached build_rotation_didlog a second time"
     )]
     AlreadyRotated,
+}
 
-    #[error("registry's tail entry uses a Patch state — rotation requires a full DID document")]
-    PreviousStateIsPatch,
+impl From<InvalidPublicKey> for BuildError {
+    fn from(e: InvalidPublicKey) -> Self {
+        BuildError::Chained(e.into())
+    }
+}
 
-    #[error("registry's tail DID document is malformed: {0}")]
-    InvalidPredecessorDoc(String),
-
-    #[error("invalid public key for {role}: {message}")]
-    InvalidPublicKey { role: &'static str, message: String },
-
-    #[error(transparent)]
-    Engine(#[from] SigningEngineError),
+impl From<SigningEngineError> for BuildError {
+    fn from(e: SigningEngineError) -> Self {
+        BuildError::Chained(e.into())
+    }
 }
 
 impl BuildError {
     /// Maps a build-failure variant to the stable `error_code` the
-    /// step executor records on the operation task. Every variant
-    /// has a fixed code except `Engine(_)`, which carries the
-    /// calling step's name (e.g. `"build_rotation_didlog_failed"`,
-    /// `"publish_didlog_failed"`) — that string is supplied by the
-    /// caller as `engine_failure_code`.
+    /// step executor records on the operation task. The
+    /// `engine_failure_code` argument carries the calling step's
+    /// name (e.g. `"build_rotation_didlog_failed"`,
+    /// `"publish_didlog_failed"`).
     pub fn error_code(&self, engine_failure_code: &'static str) -> &'static str {
         match self {
-            BuildError::IssuerNotActive(_) => "issuer_not_active",
-            BuildError::MissingIssuerField(_) => "missing_issuer_field",
-            BuildError::EmptyLog => "registry_empty_log",
+            BuildError::Chained(e) => e.error_code(engine_failure_code),
             BuildError::AlreadyRotated => "already_rotated",
-            BuildError::PreviousStateIsPatch => "predecessor_state_is_patch",
-            BuildError::InvalidPredecessorDoc(_) => "invalid_predecessor_doc",
-            BuildError::InvalidPublicKey { .. } => "invalid_public_key",
-            BuildError::Engine(_) => engine_failure_code,
         }
     }
 }
@@ -94,7 +88,7 @@ impl BuildError {
 /// `versionTime` and the proof's `created`; the dispatch loop pins
 /// this to `task.created_at` so re-running on resume produces a
 /// byte-identical entry.
-pub async fn build_rotation_entry<S: SigningEngine>(
+pub(crate) async fn build_rotation_entry<S: SigningEngine>(
     issuer: &Issuer,
     new_triple: &KeyTriple,
     log: &[DIDLogEntry],
@@ -102,19 +96,18 @@ pub async fn build_rotation_entry<S: SigningEngine>(
     now: DateTime<Utc>,
 ) -> Result<Value, BuildError> {
     if issuer.state != Some(IssuerState::Active) {
-        return Err(BuildError::IssuerNotActive(format!(
-            "{:?}",
-            issuer.state.as_ref()
-        )));
+        return Err(
+            ChainedBuildError::IssuerNotActive(format!("{:?}", issuer.state.as_ref())).into(),
+        );
     }
     let outgoing_authorized_id = issuer
         .authorized_key_id
-        .ok_or(BuildError::MissingIssuerField("authorized_key_id"))?;
+        .ok_or(ChainedBuildError::MissingIssuerField("authorized_key_id"))?;
 
-    let last = log.last().ok_or(BuildError::EmptyLog)?;
+    let last = log.last().ok_or(ChainedBuildError::EmptyLog)?;
     let prev_doc_value = match last.did_doc_state() {
         DIDDocState::Value(v) => v,
-        DIDDocState::Patch(_) => return Err(BuildError::PreviousStateIsPatch),
+        DIDDocState::Patch(_) => return Err(ChainedBuildError::PreviousStateIsPatch.into()),
     };
     // We don't reuse the previous document's verification methods
     // (the rotation entry's doc carries the new Authentication and
@@ -122,7 +115,7 @@ pub async fn build_rotation_entry<S: SigningEngine>(
     // — a malformed predecessor would imply a broken registry tail
     // and no rotation could chain onto it correctly.
     let _prev_doc = DIDDoc::try_from(prev_doc_value)
-        .map_err(|e| BuildError::InvalidPredecessorDoc(e.to_string()))?;
+        .map_err(|e| ChainedBuildError::InvalidPredecessorDoc(e.to_string()))?;
     let prev_version_id = last.version_id().to_string();
 
     // Fetch the three new public keys.
@@ -180,65 +173,15 @@ pub async fn build_rotation_entry<S: SigningEngine>(
     let outgoing_bytes = ed25519_bytes("outgoing-authorized", &outgoing_pk)?;
     let outgoing_multikey = ed25519_verifying_key_to_multikey(&outgoing_bytes);
 
-    let document_for_hash = entry_value[3]["value"].clone();
-    let vm_id = format!("did:key:{outgoing_multikey}#{outgoing_multikey}");
-    let proof_config = ProofConfig {
-        cryptosuite: Cryptosuite::EddsaJcs2022,
-        verification_method: vm_id,
-        proof_purpose: ProofPurpose::Authentication,
-        challenge: new_version_id,
-        created: now_iso,
-    };
-
-    let hash_data = proof_config.signing_input(&document_for_hash);
-    let signature = engine.sign(&outgoing_authorized_id, &hash_data).await?;
-    let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
-    append_proof(&mut entry_value, Value::from(proof), &LogEntryFormat::TDW03);
+    sign_and_append_proof(
+        &mut entry_value,
+        &outgoing_authorized_id,
+        &outgoing_multikey,
+        new_version_id,
+        now_iso,
+        engine,
+    )
+    .await?;
 
     Ok(entry_value)
-}
-
-fn ed25519_bytes(
-    role: &'static str,
-    pk: &crate::domain::RawPublicKey,
-) -> Result<[u8; 32], BuildError> {
-    if pk.algorithm != KeyAlgorithm::Ed25519 || pk.bytes.len() != 32 {
-        return Err(BuildError::InvalidPublicKey {
-            role,
-            message: format!(
-                "expected 32-byte Ed25519, got {} bytes ({:?})",
-                pk.bytes.len(),
-                pk.algorithm
-            ),
-        });
-    }
-    Ok(pk
-        .bytes
-        .as_slice()
-        .try_into()
-        .expect("length checked above; conversion is infallible"))
-}
-
-fn sec1_to_p256(
-    role: &'static str,
-    pk: &crate::domain::RawPublicKey,
-) -> Result<P256PublicKey, BuildError> {
-    if pk.algorithm != KeyAlgorithm::EcdsaP256 {
-        return Err(BuildError::InvalidPublicKey {
-            role,
-            message: format!("expected ECDSA P-256, got {:?}", pk.algorithm),
-        });
-    }
-    if pk.bytes.len() != 65 || pk.bytes[0] != 0x04 {
-        return Err(BuildError::InvalidPublicKey {
-            role,
-            message: format!(
-                "expected 65-byte SEC1 uncompressed (0x04 prefix), got {} bytes",
-                pk.bytes.len()
-            ),
-        });
-    }
-    let x: [u8; 32] = pk.bytes[1..33].try_into().expect("length 32");
-    let y: [u8; 32] = pk.bytes[33..65].try_into().expect("length 32");
-    Ok(P256PublicKey { x, y })
 }

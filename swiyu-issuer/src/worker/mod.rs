@@ -6,6 +6,7 @@
 pub mod backoff;
 pub mod create_issuer;
 pub mod deactivate_issuer;
+pub(crate) mod didlog_common;
 pub mod outcome;
 pub mod registry_facades;
 pub mod rotate_keys;

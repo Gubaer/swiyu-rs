@@ -13,13 +13,15 @@ use serde_json::Value;
 use thiserror::Error;
 
 use swiyu_core::did::DID;
-use swiyu_core::diddoc::public_keys::{P256PublicKey, ed25519_verifying_key_to_multikey};
-use swiyu_core::didlog::entry_edits::{append_proof, set_version_id, strip_proof_slot};
+use swiyu_core::diddoc::public_keys::ed25519_verifying_key_to_multikey;
+use swiyu_core::didlog::entry_edits::{set_version_id, strip_proof_slot};
 use swiyu_core::didlog::scid::{derive_entry_hash, derive_scid};
 use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
-use swiyu_core::proof::{Cryptosuite, DataIntegrityProof, ProofConfig, ProofPurpose};
 
-use crate::domain::{KeyAlgorithm, SigningEngine, SigningEngineError};
+use crate::domain::{SigningEngine, SigningEngineError};
+use crate::worker::didlog_common::{
+    InvalidPublicKey, ed25519_bytes, sec1_to_p256, sign_and_append_proof,
+};
 
 use super::CreateIssuerStateData;
 
@@ -36,6 +38,15 @@ pub enum BuildError {
 
     #[error(transparent)]
     Engine(#[from] SigningEngineError),
+}
+
+impl From<InvalidPublicKey> for BuildError {
+    fn from(e: InvalidPublicKey) -> Self {
+        BuildError::InvalidPublicKey {
+            role: e.role,
+            message: e.message,
+        }
+    }
 }
 
 impl BuildError {
@@ -81,21 +92,7 @@ pub async fn build_log_entry<S: SigningEngine>(
     let (domain, path) = parse_url(url)?;
 
     let authorized_pk = engine.get_public_key(&key_ids.authorized).await?;
-    if authorized_pk.algorithm != KeyAlgorithm::Ed25519 || authorized_pk.bytes.len() != 32 {
-        return Err(BuildError::InvalidPublicKey {
-            role: "authorized",
-            message: format!(
-                "expected 32-byte Ed25519, got {} bytes ({:?})",
-                authorized_pk.bytes.len(),
-                authorized_pk.algorithm
-            ),
-        });
-    }
-    let authorized_bytes: [u8; 32] = authorized_pk
-        .bytes
-        .as_slice()
-        .try_into()
-        .expect("length checked above; conversion is infallible");
+    let authorized_bytes = ed25519_bytes("authorized", &authorized_pk)?;
     let authorized_multikey = ed25519_verifying_key_to_multikey(&authorized_bytes);
 
     let authentication_pk = engine.get_public_key(&key_ids.authentication).await?;
@@ -140,24 +137,15 @@ pub async fn build_log_entry<S: SigningEngine>(
     let version_id = format!("1-{entry_hash}");
     set_version_id(&mut entry_value, &version_id, &LogEntryFormat::TDW03);
 
-    // The DID Toolbox (Java) signs only the document content (entry[3]["value"]
-    // for did:tdw 0.3), not the entire entry. We mirror that to interoperate
-    // with its signature bytes.
-    let document_for_hash = entry_value[3]["value"].clone();
-
-    let vm_id = format!("did:key:{authorized_multikey}#{authorized_multikey}");
-    let proof_config = ProofConfig {
-        cryptosuite: Cryptosuite::EddsaJcs2022,
-        verification_method: vm_id,
-        proof_purpose: ProofPurpose::Authentication,
-        challenge: version_id,
-        created: now_iso,
-    };
-
-    let hash_data = proof_config.signing_input(&document_for_hash);
-    let signature = engine.sign(&key_ids.authorized, &hash_data).await?;
-    let proof = DataIntegrityProof::from_signature(proof_config, &signature.bytes);
-    append_proof(&mut entry_value, Value::from(proof), &LogEntryFormat::TDW03);
+    sign_and_append_proof(
+        &mut entry_value,
+        &key_ids.authorized,
+        &authorized_multikey,
+        version_id,
+        now_iso,
+        engine,
+    )
+    .await?;
 
     Ok(entry_value)
 }
@@ -194,30 +182,6 @@ fn parse_url(url: &str) -> Result<(String, Option<String>), BuildError> {
     };
 
     Ok((did_host, did_path))
-}
-
-fn sec1_to_p256(
-    role: &'static str,
-    pk: &crate::domain::RawPublicKey,
-) -> Result<P256PublicKey, BuildError> {
-    if pk.algorithm != KeyAlgorithm::EcdsaP256 {
-        return Err(BuildError::InvalidPublicKey {
-            role,
-            message: format!("expected ECDSA P-256, got {:?}", pk.algorithm),
-        });
-    }
-    if pk.bytes.len() != 65 || pk.bytes[0] != 0x04 {
-        return Err(BuildError::InvalidPublicKey {
-            role,
-            message: format!(
-                "expected 65-byte SEC1 uncompressed (0x04 prefix), got {} bytes",
-                pk.bytes.len()
-            ),
-        });
-    }
-    let x: [u8; 32] = pk.bytes[1..33].try_into().expect("length 32");
-    let y: [u8; 32] = pk.bytes[33..65].try_into().expect("length 32");
-    Ok(P256PublicKey { x, y })
 }
 
 #[cfg(test)]
@@ -258,55 +222,5 @@ mod tests {
         let url = "http://reg.example.com/x/did.jsonl";
         let err = parse_url(url).unwrap_err();
         assert!(matches!(err, BuildError::InvalidUrl(_)));
-    }
-
-    #[test]
-    fn sec1_to_p256_extracts_coordinates() {
-        let pk = crate::domain::RawPublicKey {
-            algorithm: KeyAlgorithm::EcdsaP256,
-            bytes: {
-                let mut v = vec![0x04];
-                v.extend_from_slice(&[0xaa; 32]);
-                v.extend_from_slice(&[0xbb; 32]);
-                v
-            },
-        };
-        let p256 = sec1_to_p256("test", &pk).unwrap();
-        assert_eq!(p256.x, [0xaa; 32]);
-        assert_eq!(p256.y, [0xbb; 32]);
-    }
-
-    #[test]
-    fn sec1_to_p256_rejects_wrong_length() {
-        let pk = crate::domain::RawPublicKey {
-            algorithm: KeyAlgorithm::EcdsaP256,
-            bytes: vec![0x04; 64],
-        };
-        let err = sec1_to_p256("test", &pk).unwrap_err();
-        assert!(matches!(err, BuildError::InvalidPublicKey { .. }));
-    }
-
-    #[test]
-    fn sec1_to_p256_rejects_compressed_form() {
-        let pk = crate::domain::RawPublicKey {
-            algorithm: KeyAlgorithm::EcdsaP256,
-            bytes: {
-                let mut v = vec![0x02]; // compressed prefix
-                v.extend_from_slice(&[0xaa; 64]);
-                v
-            },
-        };
-        let err = sec1_to_p256("test", &pk).unwrap_err();
-        assert!(matches!(err, BuildError::InvalidPublicKey { .. }));
-    }
-
-    #[test]
-    fn sec1_to_p256_rejects_wrong_algorithm() {
-        let pk = crate::domain::RawPublicKey {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0; 65],
-        };
-        let err = sec1_to_p256("test", &pk).unwrap_err();
-        assert!(matches!(err, BuildError::InvalidPublicKey { .. }));
     }
 }

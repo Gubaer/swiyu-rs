@@ -26,6 +26,7 @@ use swiyu_core::did::DID;
 use crate::domain::{
     Issuer, SigningEngine, SigningEngineError, StepOutcome, StepResult, Tenant, TokenProvider,
 };
+use crate::worker::didlog_common::ChainedBuildError;
 use crate::worker::outcome::from_token_aware_error;
 use crate::worker::registry_facades::{
     RegistryFacade, build_updated_didlog, publish_log_entry_with_refresh,
@@ -116,7 +117,7 @@ pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
         Err(BuildError::AlreadyRotated) => {
             return StepOutcome::Done(state_patch_didlog_published());
         }
-        Err(BuildError::Engine(SigningEngineError::Backend(_))) => {
+        Err(BuildError::Chained(ChainedBuildError::Engine(SigningEngineError::Backend(_)))) => {
             return StepOutcome::Retry {
                 error_code: "publish_didlog_failed".into(),
                 error_message: "signing-engine backend error".into(),
