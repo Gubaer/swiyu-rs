@@ -13,9 +13,11 @@ use swiyu_registries::common::{AccessToken, RegistryError};
 
 use crate::persistence::PersistenceError;
 
+pub mod oauth2_provider;
 pub mod static_provider;
 pub mod with_refreshed;
 
+pub use oauth2_provider::OAuth2TokenProvider;
 pub use static_provider::StaticTokenProvider;
 pub use with_refreshed::with_refreshed_token;
 
@@ -105,6 +107,49 @@ impl TokenAwareError {
         match self {
             Self::Registry(e) => e.is_retryable(),
             Self::Token(e) => e.is_retryable(),
+        }
+    }
+}
+
+/// Runtime dispatch enum over the concrete `TokenProvider`
+/// implementations.
+///
+/// `TokenProvider`'s `&self` async-fn-in-trait shape rules out
+/// `Box<dyn TokenProvider>`; this enum is the codebase's standard
+/// dispatch pattern (see also `AnySigningEngine`). The
+/// `ProviderRegistry` (forthcoming) holds providers as
+/// `Arc<AnyTokenProvider>` keyed by tenant id.
+///
+/// The `OAuth2` variant is intentionally larger than `Static`: the
+/// real provider carries a DB pool, an HTTP client, and the
+/// in-memory cache. The enum is always held inside `Arc<...>`, so
+/// the size delta does not propagate through the call chain.
+#[allow(clippy::large_enum_variant)]
+pub enum AnyTokenProvider {
+    OAuth2(OAuth2TokenProvider),
+    Static(StaticTokenProvider),
+}
+
+impl TokenProvider for AnyTokenProvider {
+    // See the OAuth2 impl for why the explicit RPIT form (rather
+    // than `async fn`) is load-bearing.
+    #[allow(clippy::manual_async_fn)]
+    fn get(&self) -> impl Future<Output = Result<AccessToken, TokenProviderError>> + Send {
+        async move {
+            match self {
+                Self::OAuth2(p) => p.get().await,
+                Self::Static(p) => p.get().await,
+            }
+        }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn invalidate(&self) -> impl Future<Output = Result<AccessToken, TokenProviderError>> + Send {
+        async move {
+            match self {
+                Self::OAuth2(p) => p.invalidate().await,
+                Self::Static(p) => p.invalidate().await,
+            }
         }
     }
 }

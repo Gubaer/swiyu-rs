@@ -24,7 +24,7 @@ p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 # without functional gain; revisit when ed25519-dalek 3.0 / p256 0.14 ship stable.
 # We only need OsRng, so pull in rand_core rather than the full rand crate.
 rand_core = { version = "0.6", features = ["getrandom"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
+reqwest = { version = "0.13", default-features = false, features = ["form", "json", "rustls", "webpki-roots"] }
 secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.11"
