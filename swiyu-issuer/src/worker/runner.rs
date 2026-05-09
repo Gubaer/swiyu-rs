@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use rand_core::RngCore;
 use sqlx::PgPool;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -17,6 +16,7 @@ use tracing::{debug, error, info, warn};
 use crate::domain::{OperationTask, ProviderRegistry, SigningEngine, StepOutcome, TaskType};
 use crate::persistence::{self, PersistenceError};
 
+use super::BoxedRng;
 use super::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, execute_allocate_did, execute_build_initial_log,
     execute_create_status_list_entry, execute_generate_keys, execute_persist_issuer,
@@ -95,7 +95,7 @@ pub struct Worker<R, S, C> {
     /// Heap-allocated [`RngCore`] so callers can inject a
     /// deterministic implementation in tests without making the
     /// whole struct generic over a fourth parameter.
-    rng: Box<dyn RngCore + Send + Sync>,
+    rng: BoxedRng,
     config: WorkerConfig,
 }
 
@@ -111,7 +111,7 @@ where
         engine: S,
         status_registry: C,
         providers: Arc<ProviderRegistry>,
-        rng: Box<dyn RngCore + Send + Sync>,
+        rng: BoxedRng,
     ) -> Self {
         Self {
             pool,

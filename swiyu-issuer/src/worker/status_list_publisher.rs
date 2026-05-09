@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use chrono::{Duration, Utc};
-use rand_core::RngCore;
 use sqlx::PgPool;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -27,6 +26,7 @@ use crate::domain::status_list::wrapper::{BuildError, build_signed};
 use crate::domain::{ProviderRegistry, TokenAwareError};
 use crate::persistence::{self, PersistenceError};
 
+use super::BoxedRng;
 use super::backoff::backoff_delay;
 use super::registry_facades::{StatusRegistryFacade, update_status_list_entry_with_refresh};
 
@@ -72,7 +72,7 @@ pub struct StatusListPublisher<S, C> {
     /// provider for the issuer's tenant once per round and wraps the
     /// `update_status_list_entry` call in `with_refreshed_token`.
     providers: Arc<ProviderRegistry>,
-    rng: Box<dyn RngCore + Send + Sync>,
+    rng: BoxedRng,
     config: PublisherConfig,
 }
 
@@ -86,7 +86,7 @@ where
         engine: S,
         status_registry: C,
         providers: Arc<ProviderRegistry>,
-        rng: Box<dyn RngCore + Send + Sync>,
+        rng: BoxedRng,
     ) -> Self {
         Self {
             pool,

@@ -12,6 +12,12 @@ pub mod rotate_keys;
 pub mod runner;
 pub mod status_list_publisher;
 
+/// Heap-allocated RNG owned by per-task constructs ([`Worker`],
+/// [`StatusListPublisher`]). Boxed-and-`Send`/`Sync` so production
+/// can pass `OsRng` while tests inject a deterministic implementation
+/// without making the surrounding struct generic over the RNG type.
+pub type BoxedRng = Box<dyn rand_core::RngCore + Send + Sync>;
+
 /// Pulls the SWIYU registry UUID out of a parsed issuer DID.
 ///
 /// Canonical issuer DIDs have the form
