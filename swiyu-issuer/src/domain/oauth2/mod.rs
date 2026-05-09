@@ -2,8 +2,8 @@
 //!
 //! Core abstraction: a [`TokenProvider`] is the in-memory state
 //! machine for one OAuth2 credential set. Multi-tenant code holds
-//! one provider per tenant; a forthcoming `ProviderRegistry` will
-//! own the `tenant_id → Arc<…>` map.
+//! one provider per tenant; the [`ProviderRegistry`] owns the
+//! `tenant_id → Arc<…>` map.
 
 use std::future::Future;
 
@@ -14,10 +14,12 @@ use swiyu_registries::common::{AccessToken, RegistryError};
 use crate::persistence::PersistenceError;
 
 pub mod oauth2_provider;
+pub mod registry;
 pub mod static_provider;
 pub mod with_refreshed;
 
 pub use oauth2_provider::OAuth2TokenProvider;
+pub use registry::ProviderRegistry;
 pub use static_provider::StaticTokenProvider;
 pub use with_refreshed::with_refreshed_token;
 
