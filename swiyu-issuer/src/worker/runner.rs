@@ -1,10 +1,8 @@
-//! `Worker` — the dispatch loop for swiyu-issuer's operation-task
-//! saga.
-//!
-//! A single `tokio::spawn`-ed task that polls the `operation_tasks`
-//! table for runnable rows, dispatches each to the per-task-type
-//! per-step executor, and applies the resulting outcome through the
-//! persistence layer.
+//! Dispatch-loop runner for the operation-task saga. Defines the
+//! [`Worker`] type and its `run` loop: a single `tokio::spawn`-ed
+//! task that polls the `operation_tasks` table for runnable rows,
+//! dispatches each to the per-task-type per-step executor, and
+//! applies the resulting outcome through the persistence layer.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,7 +45,7 @@ pub enum WorkerError {
 }
 
 /// Default sleep between dispatch-loop polls when no task is runnable.
-/// Tests override this via `Worker::with_poll_interval`; the
+/// Tests override this via [`Worker::with_poll_interval`]; the
 /// `issuer-mgmt` binary may also override from an env var at startup.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -73,12 +71,18 @@ impl Default for WorkerConfig {
 /// [`CancellationToken`] fires, at which point it finishes the
 /// in-progress poll iteration and exits.
 ///
-/// `R` and `S` are bound to concrete types at startup (typically
-/// `IdentifierRegistryClient` and `DevSigningEngine` in v1, swapped
-/// for in-memory mocks in tests). The `rng` is a heap-allocated
-/// `RngCore` so callers can inject a deterministic implementation in
-/// tests without making the whole struct generic over a third
-/// parameter.
+/// # Type Parameters
+/// - `R`: identifier-registry facade implementing [`RegistryFacade`].
+///   Production passes [`swiyu_registries::identifier::IdentifierRegistryClient`];
+///   tests pass an in-memory mock.
+/// - `S`: signing engine implementing [`SigningEngine`]. Production
+///   passes [`crate::domain::DevSigningEngine`] or
+///   [`crate::domain::VaultSigningEngine`]; tests pass an in-memory
+///   mock.
+/// - `C`: status-registry facade implementing
+///   [`StatusRegistryFacade`]. Production passes
+///   [`swiyu_registries::status::StatusRegistryClient`]; tests pass
+///   an in-memory mock.
 pub struct Worker<R, S, C> {
     pool: PgPool,
     registry: R,
@@ -88,6 +92,9 @@ pub struct Worker<R, S, C> {
     /// resolves the provider for `task.tenant_id` once per task and
     /// passes it (as `&AnyTokenProvider`) into the per-step executor.
     providers: Arc<ProviderRegistry>,
+    /// Heap-allocated [`RngCore`] so callers can inject a
+    /// deterministic implementation in tests without making the
+    /// whole struct generic over a fourth parameter.
     rng: Box<dyn RngCore + Send + Sync>,
     config: WorkerConfig,
 }
