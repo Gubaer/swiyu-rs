@@ -1,20 +1,31 @@
-// Builds an `AnySecretEncryptionEngine` from process environment.
-//
-// Reads:
-//
-//   `SECRET_ENCRYPTION_ENGINE`         — `dev` (default) or `vault`
-//   `SECRET_ENCRYPTION_DEV_MASTER_KEY` — required when engine=`dev`
-//
-// `SECRET_ENCRYPTION_ENGINE=vault` is not yet implemented; the builder
-// rejects it with `BuildError::VaultNotYetImplemented`.
+//! Builds an [`AnySecretEncryptionEngine`] from process environment.
+//!
+//! Reads:
+//!
+//!   `SECRET_ENCRYPTION_ENGINE`         — `dev` (default) or `vault`
+//!   `SECRET_ENCRYPTION_DEV_MASTER_KEY` — required when engine=`dev`
+//!
+//! When engine=`vault` the builder additionally reads the same set of
+//! variables the signing-engine builder reads (`VAULT_ADDR`,
+//! `VAULT_TOKEN`, `VAULT_TRANSIT_PATH`, `VAULT_REQUEST_TIMEOUT_SECS`).
+//! A single Vault deployment serves both engines; operators wanting to
+//! isolate signing keys from secret-encryption keys point each engine
+//! at a different Vault mount via the relevant `*_TRANSIT_PATH` knob
+//! (out-of-band Vault configuration).
 
 use std::env;
+use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+use reqwest::Url;
+use secrecy::SecretString;
 use thiserror::Error;
 
-use super::{AnySecretEncryptionEngine, DevSecretEncryptionEngine};
+use super::{
+    AnySecretEncryptionEngine, DevSecretEncryptionEngine, VaultSecretEncryptionEngine,
+    VaultSecretEncryptionEngineConfig,
+};
 
 const MASTER_KEY_LEN: usize = 32;
 
@@ -34,8 +45,14 @@ pub enum BuildError {
     )]
     DevMasterKeyWrongLength { expected: usize, actual: usize },
 
-    #[error("SECRET_ENCRYPTION_ENGINE=vault is not yet implemented")]
-    VaultNotYetImplemented,
+    #[error("{0} must be set when SECRET_ENCRYPTION_ENGINE=vault")]
+    VaultEnvMissing(&'static str),
+
+    #[error("VAULT_ADDR is not a valid URL: {0}")]
+    VaultAddrInvalid(String),
+
+    #[error("VAULT_REQUEST_TIMEOUT_SECS is not a u64: {0}")]
+    VaultTimeoutInvalid(std::num::ParseIntError),
 }
 
 pub fn build_from_env() -> Result<AnySecretEncryptionEngine, BuildError> {
@@ -48,7 +65,7 @@ pub fn build_from_env() -> Result<AnySecretEncryptionEngine, BuildError> {
                 DevSecretEncryptionEngine::new(master_key),
             ))
         }
-        "vault" => Err(BuildError::VaultNotYetImplemented),
+        "vault" => Ok(AnySecretEncryptionEngine::Vault(build_vault()?)),
         other => Err(BuildError::UnknownKind(other.to_string())),
     }
 }
@@ -69,9 +86,8 @@ fn parse_master_key(raw: &str) -> Result<[u8; MASTER_KEY_LEN], BuildError> {
         })
 }
 
-// Accepts standard or URL-safe base64, with or without padding. Try the
-// padded forms first (which strictly enforce trailing `=`), then the
-// no-pad forms; surface the last error if all four fail.
+// Try padded forms first (which strictly enforce trailing `=`), then
+// the no-pad forms; surface the last error if all four fail.
 fn decode_base64_permissive(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
     if let Ok(b) = STANDARD.decode(s) {
         return Ok(b);
@@ -83,6 +99,38 @@ fn decode_base64_permissive(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
         return Ok(b);
     }
     URL_SAFE_NO_PAD.decode(s)
+}
+
+fn non_blank_env(name: &'static str) -> Result<String, BuildError> {
+    let value = env::var(name).unwrap_or_default();
+    match value.trim() {
+        "" => Err(BuildError::VaultEnvMissing(name)),
+        s => Ok(s.to_string()),
+    }
+}
+
+fn build_vault() -> Result<VaultSecretEncryptionEngine, BuildError> {
+    let address = non_blank_env("VAULT_ADDR")?;
+    let token = non_blank_env("VAULT_TOKEN")?;
+    let transit_path_raw = env::var("VAULT_TRANSIT_PATH").unwrap_or_default();
+    let transit_path = match transit_path_raw.trim() {
+        "" => VaultSecretEncryptionEngineConfig::DEFAULT_TRANSIT_PATH.to_string(),
+        s => s.to_string(),
+    };
+    let request_timeout_raw = env::var("VAULT_REQUEST_TIMEOUT_SECS").unwrap_or_default();
+    let request_timeout = match request_timeout_raw.trim() {
+        "" => VaultSecretEncryptionEngineConfig::DEFAULT_REQUEST_TIMEOUT,
+        s => Duration::from_secs(s.parse::<u64>().map_err(BuildError::VaultTimeoutInvalid)?),
+    };
+    Ok(VaultSecretEncryptionEngine::new(
+        VaultSecretEncryptionEngineConfig {
+            address: Url::parse(&address)
+                .map_err(|e| BuildError::VaultAddrInvalid(e.to_string()))?,
+            token: SecretString::from(token),
+            transit_path,
+            request_timeout,
+        },
+    ))
 }
 
 #[cfg(test)]

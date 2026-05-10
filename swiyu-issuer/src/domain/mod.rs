@@ -40,7 +40,8 @@ pub use pre_auth_code::PreAuthCode;
 pub use secret_encryption_engine::{
     AnySecretEncryptionEngine, BuildError as SecretEncryptionEngineBuildError, Ciphertext,
     DevSecretEncryptionEngine, SecretEncryptionEngine, SecretEncryptionError,
-    VaultSecretEncryptionEngine, build_from_env as build_secret_encryption_engine_from_env,
+    VaultSecretEncryptionEngine, VaultSecretEncryptionEngineConfig,
+    build_from_env as build_secret_encryption_engine_from_env,
 };
 pub use signing_engine::{
     AnySigningEngine, BuildError as SigningEngineBuildError, DevSigningEngine, GeneratedKeyPair,

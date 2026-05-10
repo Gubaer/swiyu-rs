@@ -177,8 +177,10 @@ services:
       SIGNING_ENGINE: ${SIGNING_ENGINE:-vault}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
-      # `dev` is the only supported value today; `vault` is not yet implemented.
-      # The well-known master key below encodes the 32-byte ASCII string
+      # `dev` selects the in-process AES-256-GCM backend; `vault` selects
+      # the Vault Transit backend (requires per-tenant Transit keys to be
+      # provisioned out of band before any encrypt/decrypt call). The
+      # well-known master key below encodes the 32-byte ASCII string
       # `dev-secret-management-master-key` and must never escape dev.
       SECRET_ENCRYPTION_ENGINE: ${SECRET_ENCRYPTION_ENGINE:-dev}
       SECRET_ENCRYPTION_DEV_MASTER_KEY: ${SECRET_ENCRYPTION_DEV_MASTER_KEY:-ZGV2LXNlY3JldC1tYW5hZ2VtZW50LW1hc3Rlci1rZXk=}

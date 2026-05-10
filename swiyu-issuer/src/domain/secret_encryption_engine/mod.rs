@@ -10,7 +10,7 @@ pub mod vault;
 pub use any::AnySecretEncryptionEngine;
 pub use builder::{BuildError, build_from_env};
 pub use dev::DevSecretEncryptionEngine;
-pub use vault::VaultSecretEncryptionEngine;
+pub use vault::{VaultSecretEncryptionEngine, VaultSecretEncryptionEngineConfig};
 
 // Persisted as a single `BYTEA` column. Format version, `key_name`, and
 // `key_version` travel inside the blob, so callers do not carry companion
