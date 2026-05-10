@@ -64,3 +64,57 @@ pub async fn import_oauth_refresh_token(
     tx.commit().await?;
     Ok(SeedOutcome::Wrote)
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum SetOauthCredentialsError {
+    #[error("tenant {0} not found")]
+    TenantNotFound(String),
+    #[error(transparent)]
+    Persistence(#[from] PersistenceError),
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+}
+
+/// Writes `oauth_client_id` and `oauth_client_secret` for the named
+/// tenant. Used by the `swiyu-issuer-cli tenant set-oauth-credentials`
+/// operator command at onboarding (or on credential rotation at the
+/// ePortal), and by the `bootstrap-dev-tenant` compose service to
+/// seed the dev tenant from `.env`.
+///
+/// When `only_if_empty` is true and **both** existing columns are
+/// non-NULL, the call returns `SeedOutcome::Skipped` and does not
+/// write — used by the dev-loop auto-seed so a previously rotated
+/// credential pair is never clobbered. If either column is NULL, the
+/// pair is treated as empty and both are written: the all-or-none
+/// rule avoids leaving the row in a partial state.
+///
+/// The check-then-write runs inside one transaction.
+pub async fn set_oauth_credentials(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    client_id: String,
+    client_secret: SecretString,
+    only_if_empty: bool,
+) -> Result<SeedOutcome, SetOauthCredentialsError> {
+    let mut tx = pool.begin().await?;
+
+    let Some(tenant) = persistence::tenants::find_by_id(&mut tx, tenant_id).await? else {
+        return Err(SetOauthCredentialsError::TenantNotFound(
+            tenant_id.bare().to_string(),
+        ));
+    };
+
+    if only_if_empty && tenant.oauth_client_id.is_some() && tenant.oauth_client_secret.is_some() {
+        return Ok(SeedOutcome::Skipped);
+    }
+
+    persistence::tenants::write_oauth_client_credentials(
+        &mut tx,
+        tenant_id,
+        &client_id,
+        &client_secret,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(SeedOutcome::Wrote)
+}

@@ -99,13 +99,19 @@ services:
       - vault secrets enable transit || true
     restart: "no"
 
-  # One-shot dev seed: writes ${SWIYU_REFRESH_TOKEN} (operator-pasted
-  # from the ePortal in .env) into the seeded dev tenant's
-  # oauth_refresh_token column whenever it is NULL. Idempotent —
-  # `--only-if-empty` skips the write once the runtime has rotated
-  # the token. Empty SWIYU_REFRESH_TOKEN silently skips the seed; the
-  # first worker call then fails with MissingCredentials, same as
-  # without this service. issuer-mgmt's start is gated on
+  # One-shot dev seed: writes the OAuth2 columns of the seeded dev
+  # tenant from .env. Two steps — credentials first, then the
+  # refresh token — because a refresh-token grant fails until
+  # client_id/client_secret are populated.
+  #   1. ${SWIYU_CLIENT_ID} + ${SWIYU_CLIENT_SECRET} → oauth_client_id +
+  #      oauth_client_secret (atomic, both columns or neither).
+  #   2. ${SWIYU_REFRESH_TOKEN} → oauth_refresh_token.
+  # Both steps idempotent via `--only-if-empty`: the credentials seed
+  # skips when both columns are non-NULL; the refresh-token seed skips
+  # when the column is non-NULL (e.g. because the runtime rotated it).
+  # Empty env vars silently skip the corresponding step; the first
+  # worker call then fails with MissingCredentials, same as without
+  # this service. issuer-mgmt's start is gated on
   # service_completed_successfully so the seed lands before any
   # OAuth2 grant is attempted.
   bootstrap-dev-tenant:
@@ -120,18 +126,29 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}
       DEV_TENANT_ID: ${DEV_TENANT_ID:-4Mk7yK5pQR7sN3}
+      SWIYU_CLIENT_ID: ${SWIYU_CLIENT_ID}
+      SWIYU_CLIENT_SECRET: ${SWIYU_CLIENT_SECRET}
       SWIYU_REFRESH_TOKEN: ${SWIYU_REFRESH_TOKEN}
       RUST_LOG: ${RUST_LOG:-info,swiyu_issuer=debug}
     entrypoint:
       - /bin/sh
       - -c
       - |
+        if [ -n "$$SWIYU_CLIENT_ID" ] && [ -n "$$SWIYU_CLIENT_SECRET" ]; then
+          printf '%s' "$$SWIYU_CLIENT_SECRET" \
+            | swiyu-issuer-cli tenant set-oauth-credentials \
+                --tenant "$$DEV_TENANT_ID" \
+                --client-id "$$SWIYU_CLIENT_ID" \
+                --client-secret-stdin --only-if-empty
+        else
+          echo "bootstrap-dev-tenant: SWIYU_CLIENT_ID and/or SWIYU_CLIENT_SECRET empty, skipping credentials seed" >&2
+        fi
         if [ -n "$$SWIYU_REFRESH_TOKEN" ]; then
           printf '%s' "$$SWIYU_REFRESH_TOKEN" \
             | swiyu-issuer-cli tenant import-oauth-refresh-token \
                 --tenant "$$DEV_TENANT_ID" --token-stdin --only-if-empty
         else
-          echo "bootstrap-dev-tenant: SWIYU_REFRESH_TOKEN is empty, skipping" >&2
+          echo "bootstrap-dev-tenant: SWIYU_REFRESH_TOKEN is empty, skipping refresh-token seed" >&2
         fi
     restart: "no"
 

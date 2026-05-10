@@ -38,6 +38,11 @@ enum TenantCommand {
     /// Write a fresh OAuth2 refresh token (the "renewal token" from
     /// the ePortal) into the named tenant's row. Idempotent.
     ImportOauthRefreshToken(ImportOauthRefreshTokenArgs),
+    /// Write the OAuth2 `client_id` + `client_secret` (ePortal
+    /// "customer key" / "customer secret") into the named tenant's
+    /// row. Both columns are written atomically; partial updates
+    /// would leave the row unable to mint tokens.
+    SetOauthCredentials(SetOauthCredentialsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -62,6 +67,37 @@ struct ImportOauthRefreshTokenArgs {
     /// Used by the dev-loop auto-seed so a token the runtime has
     /// rotated is never clobbered. The operator path omits this flag
     /// and overwrites unconditionally.
+    #[arg(long)]
+    only_if_empty: bool,
+}
+
+#[derive(Args, Debug)]
+#[command(group(
+    ArgGroup::new("client_secret_source")
+        .required(true)
+        .args(["client_secret", "client_secret_stdin"])
+))]
+struct SetOauthCredentialsArgs {
+    /// Bare base58 tenant id (no `tenant_` prefix).
+    #[arg(long)]
+    tenant: String,
+    /// OAuth2 client id (ePortal: "customer key").
+    #[arg(long)]
+    client_id: String,
+    /// OAuth2 client secret. Mutually exclusive with
+    /// --client-secret-stdin.
+    #[arg(long)]
+    client_secret: Option<String>,
+    /// Read the OAuth2 client secret from stdin instead of the command
+    /// line. Avoids leaking the secret into shell history. Mutually
+    /// exclusive with --client-secret.
+    #[arg(long)]
+    client_secret_stdin: bool,
+    /// Skip the write if `oauth_client_id` and `oauth_client_secret`
+    /// are both already populated. Used by the dev-loop auto-seed so
+    /// previously written credentials are never clobbered. The
+    /// operator path (credential rotation at the ePortal) omits this
+    /// flag and overwrites unconditionally.
     #[arg(long)]
     only_if_empty: bool,
 }
@@ -102,6 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } => mint_token(tenant, name, expires_in.as_deref()).await,
             },
             TenantCommand::ImportOauthRefreshToken(args) => import_oauth_refresh_token(args).await,
+            TenantCommand::SetOauthCredentials(args) => set_oauth_credentials(args).await,
         },
     }
 }
@@ -169,6 +206,61 @@ async fn import_oauth_refresh_token(
         cli::tenant::SeedOutcome::Skipped => {
             eprintln!(
                 "oauth_refresh_token already set for tenant {}; skipped (--only-if-empty)",
+                args.tenant
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn set_oauth_credentials(
+    args: SetOauthCredentialsArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tenant_id = TenantId::from_bare(&args.tenant)
+        .map_err(|err| format!("--tenant is not a valid bare tenant id: {err}"))?;
+
+    let raw_secret = match (args.client_secret, args.client_secret_stdin) {
+        (Some(value), false) => value,
+        (None, true) => {
+            let mut buf = String::new();
+            io::stdin().read_line(&mut buf)?;
+            buf.trim().to_string()
+        }
+        // clap's ArgGroup enforces exactly one of --client-secret /
+        // --client-secret-stdin.
+        _ => unreachable!("ArgGroup invariant: client_secret_source is required and single-pick"),
+    };
+    if args.client_id.is_empty() {
+        return Err("--client-id is empty".into());
+    }
+    if raw_secret.is_empty() {
+        return Err("client secret is empty".into());
+    }
+    let client_secret = SecretString::from(raw_secret);
+
+    let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
+    let pool: PgPool = persistence::connect(&database_url).await?;
+    persistence::run_migrations(&pool).await?;
+
+    let outcome = cli::tenant::set_oauth_credentials(
+        &pool,
+        &tenant_id,
+        args.client_id,
+        client_secret,
+        args.only_if_empty,
+    )
+    .await?;
+
+    match outcome {
+        cli::tenant::SeedOutcome::Wrote => {
+            eprintln!(
+                "oauth_client_id and oauth_client_secret updated for tenant {}",
+                args.tenant
+            );
+        }
+        cli::tenant::SeedOutcome::Skipped => {
+            eprintln!(
+                "oauth_client_id and oauth_client_secret already set for tenant {}; skipped (--only-if-empty)",
                 args.tenant
             );
         }

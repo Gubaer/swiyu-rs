@@ -122,3 +122,36 @@ pub async fn write_oauth_refresh_token(
     }
     Ok(())
 }
+
+/// Writes new values for `oauth_client_id` and `oauth_client_secret`
+/// in a single statement.
+///
+/// The caller controls the surrounding transaction; this helper does
+/// not commit. The two columns are always written together — partial
+/// updates would leave the row in a state the OAuth2TokenProvider
+/// rejects with `MissingCredentials`.
+pub async fn write_oauth_client_credentials(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    client_id: &str,
+    client_secret: &SecretString,
+) -> Result<(), PersistenceError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE tenants
+        SET oauth_client_id     = $1,
+            oauth_client_secret = $2
+        WHERE id = $3
+        "#,
+    )
+    .bind(client_id)
+    .bind(client_secret.expose_secret())
+    .bind(tenant_id.bare())
+    .execute(conn)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(PersistenceError::NotFound);
+    }
+    Ok(())
+}
