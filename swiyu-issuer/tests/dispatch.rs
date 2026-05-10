@@ -85,7 +85,7 @@ fn task_with_age(tenant_id: TenantId, age: Duration, attempts: u32) -> Operation
 async fn done_advances_step_and_merges_patch(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
+    let mut task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
     insert_task(&pool, &task).await;
 
     let mut patch = Map::new();
@@ -99,7 +99,7 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
     let mut rng = FixedRng(0);
     outcome::apply(
         &mut conn,
-        &task,
+        &mut task,
         Some("generate_keys"),
         StepOutcome::Done(StepResult {
             state_data_patch: patch,
@@ -129,7 +129,7 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
 async fn retry_within_cap_increments_attempts_and_schedules(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = task_with_age(tenant_id.clone(), Duration::hours(1), 2);
+    let mut task = task_with_age(tenant_id.clone(), Duration::hours(1), 2);
     insert_task(&pool, &task).await;
 
     let now = now_micros();
@@ -137,7 +137,7 @@ async fn retry_within_cap_increments_attempts_and_schedules(pool: PgPool) {
     let mut rng = FixedRng(u64::MAX);
     outcome::apply(
         &mut conn,
-        &task,
+        &mut task,
         None,
         StepOutcome::Retry {
             error_code: "registry_5xx".into(),
@@ -166,7 +166,7 @@ async fn retry_within_cap_increments_attempts_and_schedules(pool: PgPool) {
 async fn retry_past_cap_marks_failed(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = task_with_age(tenant_id.clone(), Duration::hours(25), 17);
+    let mut task = task_with_age(tenant_id.clone(), Duration::hours(25), 17);
     insert_task(&pool, &task).await;
 
     let now = now_micros();
@@ -174,7 +174,7 @@ async fn retry_past_cap_marks_failed(pool: PgPool) {
     let mut rng = FixedRng(0);
     outcome::apply(
         &mut conn,
-        &task,
+        &mut task,
         None,
         StepOutcome::Retry {
             error_code: "registry_5xx".into(),
@@ -200,7 +200,7 @@ async fn retry_past_cap_marks_failed(pool: PgPool) {
 async fn terminal_marks_failed_immediately(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
+    let mut task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
     insert_task(&pool, &task).await;
 
     let now = now_micros();
@@ -208,7 +208,7 @@ async fn terminal_marks_failed_immediately(pool: PgPool) {
     let mut rng = FixedRng(0);
     outcome::apply(
         &mut conn,
-        &task,
+        &mut task,
         None,
         StepOutcome::Terminal {
             error_code: "invalid_input".into(),

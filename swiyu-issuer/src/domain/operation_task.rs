@@ -163,6 +163,58 @@ pub struct OperationTask {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
+impl OperationTask {
+    /// Transitions an `InProgress` task to `Completed` and stamps the
+    /// terminal timestamps. The associated `result_issuer_id` (if
+    /// any) is expected to already be on the aggregate from earlier
+    /// step writes.
+    ///
+    /// Returns `DomainError::StateTransitionNotAllowed` if the task
+    /// is not currently `InProgress` — calling this on a `Pending`,
+    /// `Completed`, or `Failed` task is a worker-loop bug.
+    pub fn try_complete(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
+        match self.state {
+            TaskState::InProgress => {
+                self.state = TaskState::Completed;
+                self.next_attempt_at = None;
+                self.error_code = None;
+                self.error_message = None;
+                self.updated_at = now;
+                self.completed_at = Some(now);
+                Ok(())
+            }
+            _ => Err(DomainError::StateTransitionNotAllowed),
+        }
+    }
+
+    /// Transitions an `InProgress` task to `Failed`, stamps the
+    /// terminal timestamps, and records the operator-visible error
+    /// pair. Used both for non-recoverable step errors
+    /// (`StepOutcome::Terminal`) and for retry-cap exhaustion.
+    ///
+    /// Returns `DomainError::StateTransitionNotAllowed` if the task
+    /// is not currently `InProgress`.
+    pub fn try_fail(
+        &mut self,
+        error_code: String,
+        error_message: String,
+        now: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        match self.state {
+            TaskState::InProgress => {
+                self.state = TaskState::Failed;
+                self.next_attempt_at = None;
+                self.error_code = Some(error_code);
+                self.error_message = Some(error_message);
+                self.updated_at = now;
+                self.completed_at = Some(now);
+                Ok(())
+            }
+            _ => Err(DomainError::StateTransitionNotAllowed),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,5 +264,92 @@ mod tests {
     fn step_result_default_is_empty() {
         let result = StepResult::default();
         assert!(result.state_data_patch.is_empty());
+    }
+
+    fn fixture_task_in_state(state: TaskState) -> OperationTask {
+        OperationTask {
+            id: TaskId::generate(),
+            tenant_id: TenantId::generate(),
+            task_type: TaskType::CreateIssuer,
+            state,
+            step: Some("allocate_did".into()),
+            attempts: 0,
+            next_attempt_at: None,
+            error_code: Some("prior_error".into()),
+            error_message: Some("prior message".into()),
+            input: serde_json::json!({}),
+            state_data: serde_json::json!({}),
+            result_issuer_id: None,
+            created_at: chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap(),
+            updated_at: chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap(),
+            completed_at: None,
+        }
+    }
+
+    #[test]
+    fn try_complete_flips_in_progress_to_completed_and_clears_errors() {
+        let mut task = fixture_task_in_state(TaskState::InProgress);
+        let now = chrono::Utc::now();
+        task.try_complete(now).unwrap();
+        assert_eq!(task.state, TaskState::Completed);
+        assert_eq!(task.next_attempt_at, None);
+        assert_eq!(task.error_code, None);
+        assert_eq!(task.error_message, None);
+        assert_eq!(task.updated_at, now);
+        assert_eq!(task.completed_at, Some(now));
+    }
+
+    #[test]
+    fn try_complete_rejects_pending() {
+        let mut task = fixture_task_in_state(TaskState::Pending);
+        let err = task.try_complete(chrono::Utc::now()).unwrap_err();
+        assert!(matches!(err, DomainError::StateTransitionNotAllowed));
+        assert_eq!(task.state, TaskState::Pending);
+    }
+
+    #[test]
+    fn try_complete_rejects_already_completed() {
+        let mut task = fixture_task_in_state(TaskState::Completed);
+        let err = task.try_complete(chrono::Utc::now()).unwrap_err();
+        assert!(matches!(err, DomainError::StateTransitionNotAllowed));
+    }
+
+    #[test]
+    fn try_complete_rejects_failed() {
+        let mut task = fixture_task_in_state(TaskState::Failed);
+        let err = task.try_complete(chrono::Utc::now()).unwrap_err();
+        assert!(matches!(err, DomainError::StateTransitionNotAllowed));
+    }
+
+    #[test]
+    fn try_fail_flips_in_progress_to_failed_and_records_error() {
+        let mut task = fixture_task_in_state(TaskState::InProgress);
+        let now = chrono::Utc::now();
+        task.try_fail("op_failed".into(), "reason".into(), now)
+            .unwrap();
+        assert_eq!(task.state, TaskState::Failed);
+        assert_eq!(task.next_attempt_at, None);
+        assert_eq!(task.error_code.as_deref(), Some("op_failed"));
+        assert_eq!(task.error_message.as_deref(), Some("reason"));
+        assert_eq!(task.updated_at, now);
+        assert_eq!(task.completed_at, Some(now));
+    }
+
+    #[test]
+    fn try_fail_rejects_pending() {
+        let mut task = fixture_task_in_state(TaskState::Pending);
+        let err = task
+            .try_fail("e".into(), "m".into(), chrono::Utc::now())
+            .unwrap_err();
+        assert!(matches!(err, DomainError::StateTransitionNotAllowed));
+    }
+
+    #[test]
+    fn try_fail_rejects_already_failed() {
+        let mut task = fixture_task_in_state(TaskState::Failed);
+        let err = task
+            .try_fail("e".into(), "m".into(), chrono::Utc::now())
+            .unwrap_err();
+        assert!(matches!(err, DomainError::StateTransitionNotAllowed));
     }
 }

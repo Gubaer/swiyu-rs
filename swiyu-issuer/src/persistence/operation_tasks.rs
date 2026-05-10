@@ -242,63 +242,42 @@ pub async fn schedule_retry(
     Ok(())
 }
 
-/// Marks the task as terminally failed.
-pub async fn mark_failed(
+/// Persists the terminal-state columns of an [`OperationTask`] whose
+/// in-memory state has just been mutated by `try_complete` /
+/// `try_fail`.
+///
+/// The caller controls the transaction; this helper does not commit.
+/// Writes `state`, `next_attempt_at`, `error_code`, `error_message`,
+/// `result_issuer_id`, `updated_at`, and `completed_at` from the
+/// aggregate. The aggregate is the sole source of truth for the
+/// transition's validity (the `state = 'in_progress'` SQL guard is
+/// gone — `OperationTask::try_complete` / `try_fail` enforce it in
+/// memory before this is called).
+pub async fn set_terminal_state(
     conn: &mut PgConnection,
-    task_id: &TaskId,
-    error_code: &str,
-    error_message: &str,
-    now: DateTime<Utc>,
+    task: &OperationTask,
 ) -> Result<(), PersistenceError> {
     let result = sqlx::query(
         r#"
         UPDATE operation_tasks
-        SET state = 'failed',
-            next_attempt_at = NULL,
-            error_code = $1,
-            error_message = $2,
-            updated_at = $3,
-            completed_at = $3
-        WHERE id = $4
+        SET state = $1,
+            next_attempt_at = $2,
+            error_code = $3,
+            error_message = $4,
+            result_issuer_id = $5,
+            updated_at = $6,
+            completed_at = $7
+        WHERE id = $8
         "#,
     )
-    .bind(error_code)
-    .bind(error_message)
-    .bind(now)
-    .bind(task_id.bare())
-    .execute(conn)
-    .await
-    .map_err(map_database_error)?;
-
-    if result.rows_affected() == 0 {
-        return Err(PersistenceError::NotFound);
-    }
-    Ok(())
-}
-
-/// Marks the task as terminally successful.
-pub async fn mark_completed(
-    conn: &mut PgConnection,
-    task_id: &TaskId,
-    result_issuer_id: Option<&IssuerId>,
-    now: DateTime<Utc>,
-) -> Result<(), PersistenceError> {
-    let result = sqlx::query(
-        r#"
-        UPDATE operation_tasks
-        SET state = 'completed',
-            next_attempt_at = NULL,
-            error_code = NULL,
-            error_message = NULL,
-            result_issuer_id = $1,
-            updated_at = $2,
-            completed_at = $2
-        WHERE id = $3
-        "#,
-    )
-    .bind(result_issuer_id.map(IssuerId::bare))
-    .bind(now)
-    .bind(task_id.bare())
+    .bind(task.state.as_str())
+    .bind(task.next_attempt_at)
+    .bind(task.error_code.as_deref())
+    .bind(task.error_message.as_deref())
+    .bind(task.result_issuer_id.as_ref().map(IssuerId::bare))
+    .bind(task.updated_at)
+    .bind(task.completed_at)
+    .bind(task.id.bare())
     .execute(conn)
     .await
     .map_err(map_database_error)?;

@@ -203,15 +203,24 @@ async fn schedule_retry_records_backoff_and_error(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn mark_failed_transitions_to_failed_with_completed_at(pool: PgPool) {
+async fn set_terminal_state_persists_failed_state_with_error_pair(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = fixture_task(tenant_id.clone());
+    let mut task = fixture_task(tenant_id.clone());
     let mut conn = pool.acquire().await.unwrap();
     operation_tasks::insert(&mut conn, &task).await.unwrap();
 
     let now = now_micros();
-    operation_tasks::mark_failed(&mut conn, &task.id, "exhausted", "retry cap hit", now)
+    // Simulate the in-memory mutation that `OperationTask::try_fail`
+    // performs in the worker, then persist via `set_terminal_state`.
+    task.state = TaskState::Failed;
+    task.error_code = Some("exhausted".into());
+    task.error_message = Some("retry cap hit".into());
+    task.next_attempt_at = None;
+    task.updated_at = now;
+    task.completed_at = Some(now);
+
+    operation_tasks::set_terminal_state(&mut conn, &task)
         .await
         .unwrap();
 
@@ -220,22 +229,33 @@ async fn mark_failed_transitions_to_failed_with_completed_at(pool: PgPool) {
         .unwrap();
     assert_eq!(loaded.state, TaskState::Failed);
     assert_eq!(loaded.error_code.as_deref(), Some("exhausted"));
-    assert!(loaded.completed_at.is_some());
+    assert_eq!(loaded.error_message.as_deref(), Some("retry cap hit"));
+    assert_eq!(loaded.completed_at, Some(now));
     assert!(loaded.next_attempt_at.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn mark_completed_records_result_issuer_id(pool: PgPool) {
+async fn set_terminal_state_persists_completed_state_with_result_issuer_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = fixture_task(tenant_id.clone());
+    let mut task = fixture_task(tenant_id.clone());
     let result_issuer_id = IssuerId::generate();
+    task.result_issuer_id = Some(result_issuer_id.clone());
 
     let mut conn = pool.acquire().await.unwrap();
     operation_tasks::insert(&mut conn, &task).await.unwrap();
 
     let now = now_micros();
-    operation_tasks::mark_completed(&mut conn, &task.id, Some(&result_issuer_id), now)
+    // Simulate the in-memory mutation that `OperationTask::try_complete`
+    // performs in the worker, then persist via `set_terminal_state`.
+    task.state = TaskState::Completed;
+    task.error_code = None;
+    task.error_message = None;
+    task.next_attempt_at = None;
+    task.updated_at = now;
+    task.completed_at = Some(now);
+
+    operation_tasks::set_terminal_state(&mut conn, &task)
         .await
         .unwrap();
 
@@ -244,5 +264,5 @@ async fn mark_completed_records_result_issuer_id(pool: PgPool) {
         .unwrap();
     assert_eq!(loaded.state, TaskState::Completed);
     assert_eq!(loaded.result_issuer_id, Some(result_issuer_id));
-    assert!(loaded.completed_at.is_some());
+    assert_eq!(loaded.completed_at, Some(now));
 }
