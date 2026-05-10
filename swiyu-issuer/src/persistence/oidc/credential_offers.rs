@@ -2,8 +2,8 @@
 //!
 //! Lives in the `persistence::oidc` namespace separate from
 //! `persistence::credential_offers` so the management binary cannot
-//! accidentally call functions like `mark_issued`. The lookups here
-//! serve the wallet flow, where the bare pre-auth code is the
+//! accidentally call functions like [`set_issued_state`]. The lookups
+//! here serve the wallet flow, where the bare pre-auth code is the
 //! lookup key rather than the offer id.
 
 use chrono::{DateTime, Utc};
@@ -16,7 +16,7 @@ use crate::domain::{
 };
 
 use super::super::PersistenceError;
-use super::super::helpers::integrity_from;
+use super::super::helpers::{integrity_from, map_database_error};
 
 /// Looks up a credential offer by its bare pre-auth code, scoped to
 /// `(tenant_id, issuer_id)` for defense in depth.
@@ -57,42 +57,83 @@ pub async fn find_by_pre_auth_code(
     row.map(|row| row_to_offer(&row)).transpose()
 }
 
-/// Persists a `Pending` → `Issued` transition for the named offer.
+/// Returns the named offer while holding a row-level lock on it. The
+/// caller is expected to be inside a transaction; the lock is
+/// released when that transaction commits or rolls back.
 ///
-/// In the same UPDATE: `pre_auth_code` is set to `NULL` so the bare
-/// code can't be re-fetched after issuance.
+/// Uses plain `FOR UPDATE` (no `SKIP LOCKED`): a single offer has at
+/// most one issuance handler racing for it, so a second transaction
+/// that wants the same row should block until the first completes
+/// rather than skip. Pair with
+/// [`try_issue`][CredentialOffer::try_issue] (to mutate the in-memory
+/// aggregate) and [`set_issued_state`] (to persist) before committing
+/// the transaction.
 ///
-/// Caller is responsible for loading the offer, running the domain
-/// state-machine guard ([`CredentialOffer::try_issue`]), and
-/// supplying `issued_at`. The SQL `WHERE state = 'pending'` guard
-/// is defence in depth: a concurrent cancel that happens between
-/// the handler's load and write would leave 0 rows updated, which
-/// surfaces as [`PersistenceError::NotFound`]. Lives in the
-/// `persistence::oidc::credential_offers` namespace so the
-/// management binary cannot accidentally invoke it.
-pub async fn mark_issued(
+/// Returns [`NotFound`][PersistenceError::NotFound] if no row matches
+/// the `(id, tenant_id, issuer_id)` triple. The handler treats that
+/// as `invalid_token` because the access token references an offer
+/// the issuer no longer owns.
+pub async fn find_by_id_for_update(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
     issuer_id: &IssuerId,
     offer_id: &CredentialOfferId,
-    issued_at: DateTime<Utc>,
-) -> Result<(), PersistenceError> {
-    let result = sqlx::query(
+) -> Result<CredentialOffer, PersistenceError> {
+    let row = sqlx::query(
         r#"
-        UPDATE credential_offers
-        SET state = 'issued',
-            issued_at = $4,
-            pre_auth_code = NULL
+        SELECT id, tenant_id, issuer_id, vct, claims, state,
+               pre_auth_code, expires_at, created_at,
+               issued_at, cancelled_at
+        FROM credential_offers
         WHERE id = $1 AND tenant_id = $2 AND issuer_id = $3
-              AND state = 'pending'
+        FOR UPDATE
         "#,
     )
     .bind(offer_id.bare())
     .bind(tenant_id.bare())
     .bind(issuer_id.bare())
-    .bind(issued_at)
+    .fetch_optional(conn)
+    .await?
+    .ok_or(PersistenceError::NotFound)?;
+
+    row_to_offer(&row)
+}
+
+/// Persists the post-[`try_issue`][CredentialOffer::try_issue]
+/// columns of a [`CredentialOffer`]: `state`, `issued_at`, and
+/// `pre_auth_code` (which the aggregate has cleared to `None`).
+///
+/// The caller controls the transaction; this helper does not commit.
+/// Run inside the same transaction that called
+/// [`find_by_id_for_update`] so the row remains locked until the
+/// UPDATE commits. The aggregate is the sole source of truth for the
+/// transition's validity (the `state = 'pending'` SQL guard is gone —
+/// [`try_issue`][CredentialOffer::try_issue] enforces it in memory
+/// before this is called); the `(id, tenant_id, issuer_id)` `WHERE`
+/// triple stays as tenant scoping, not state enforcement. Lives in
+/// the `persistence::oidc::credential_offers` namespace so the
+/// management binary cannot accidentally invoke it.
+pub async fn set_issued_state(
+    conn: &mut PgConnection,
+    offer: &CredentialOffer,
+) -> Result<(), PersistenceError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE credential_offers
+        SET state = $1,
+            issued_at = $2,
+            pre_auth_code = NULL
+        WHERE id = $3 AND tenant_id = $4 AND issuer_id = $5
+        "#,
+    )
+    .bind(offer.state.as_str())
+    .bind(offer.issued_at)
+    .bind(offer.id.bare())
+    .bind(offer.tenant_id.bare())
+    .bind(offer.issuer_id.bare())
     .execute(conn)
-    .await?;
+    .await
+    .map_err(map_database_error)?;
 
     if result.rows_affected() == 0 {
         return Err(PersistenceError::NotFound);

@@ -13,6 +13,7 @@ use swiyu_issuer::domain::{
     CredentialOffer, CredentialOfferState, Issuer, IssuerId, IssuerState, KeyPairId, PreAuthCode,
     TenantId,
 };
+use swiyu_issuer::persistence::oidc::credential_offers as oidc_credential_offers;
 use swiyu_issuer::persistence::{credential_offers, issuers};
 
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
@@ -266,4 +267,104 @@ async fn cancel_all_pending_does_not_touch_other_issuers(pool: PgPool) {
     .unwrap();
     assert_eq!(loaded_bystander.state, CredentialOfferState::Pending);
     assert!(loaded_bystander.pre_auth_code.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn find_by_id_for_update_then_set_issued_state_marks_issued(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+
+    let offer = pending_offer(&tenant_id, &issuer_id);
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        credential_offers::insert(&mut conn, &offer).await.unwrap();
+    }
+
+    let now = now_with_postgres_precision();
+    let mut tx = pool.begin().await.unwrap();
+    let mut found =
+        oidc_credential_offers::find_by_id_for_update(&mut tx, &tenant_id, &issuer_id, &offer.id)
+            .await
+            .unwrap();
+    assert_eq!(found.state, CredentialOfferState::Pending);
+
+    // Mirror what the handler does: drive the in-memory transition,
+    // then persist via set_issued_state.
+    found.try_issue(now).unwrap();
+    oidc_credential_offers::set_issued_state(&mut tx, &found)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let loaded = credential_offers::find_by_id(&mut conn, &tenant_id, &issuer_id, &offer.id)
+        .await
+        .unwrap();
+    assert_eq!(loaded.state, CredentialOfferState::Issued);
+    assert_eq!(loaded.issued_at, Some(now));
+    assert!(loaded.pre_auth_code.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn find_by_id_for_update_blocks_concurrent_writer(pool: PgPool) {
+    // Two transactions both call find_by_id_for_update against the
+    // same offer. The first holds the lock; the second's lock
+    // request must not return until the first commits, so we drive
+    // the second through a tokio timeout to prove it's blocked, then
+    // release the first and confirm the second sees the new state.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+
+    let offer = pending_offer(&tenant_id, &issuer_id);
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        credential_offers::insert(&mut conn, &offer).await.unwrap();
+    }
+
+    let now = now_with_postgres_precision();
+
+    let mut tx_a = pool.begin().await.unwrap();
+    let mut found_a =
+        oidc_credential_offers::find_by_id_for_update(&mut tx_a, &tenant_id, &issuer_id, &offer.id)
+            .await
+            .unwrap();
+
+    // While tx_a holds the lock, tx_b's locked SELECT must block.
+    let pool_b = pool.clone();
+    let tenant_id_b = tenant_id.clone();
+    let issuer_id_b = issuer_id.clone();
+    let offer_id_b = offer.id.clone();
+    let mut tx_b_handle = tokio::spawn(async move {
+        let mut tx_b = pool_b.begin().await.unwrap();
+        let found_b = oidc_credential_offers::find_by_id_for_update(
+            &mut tx_b,
+            &tenant_id_b,
+            &issuer_id_b,
+            &offer_id_b,
+        )
+        .await
+        .unwrap();
+        (tx_b, found_b)
+    });
+    let timed_out =
+        tokio::time::timeout(std::time::Duration::from_millis(200), &mut tx_b_handle).await;
+    assert!(
+        timed_out.is_err(),
+        "second transaction must block while tx_a holds the lock"
+    );
+
+    // tx_a issues the offer and commits, releasing the lock.
+    found_a.try_issue(now).unwrap();
+    oidc_credential_offers::set_issued_state(&mut tx_a, &found_a)
+        .await
+        .unwrap();
+    tx_a.commit().await.unwrap();
+
+    // tx_b now resolves and sees the new state.
+    let (_tx_b, found_b) = tx_b_handle.await.unwrap();
+    assert_eq!(found_b.state, CredentialOfferState::Issued);
+    assert_eq!(found_b.issued_at, Some(now));
+    assert!(found_b.pre_auth_code.is_none());
 }

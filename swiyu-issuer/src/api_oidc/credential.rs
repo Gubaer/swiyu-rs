@@ -11,8 +11,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::domain::{
-    AccessTokenSecret, CredentialOfferState, INTEGRITY_HASH_LEN, IssuedCredential, IssuerId,
-    KeyPairId, NonceSecret, SigningEngine, SigningEngineError, StatusListId, StatusListIndex,
+    AccessTokenSecret, CredentialOfferState, DomainError, INTEGRITY_HASH_LEN, IssuedCredential,
+    IssuerId, KeyPairId, NonceSecret, SigningEngine, SigningEngineError, StatusListId,
+    StatusListIndex,
 };
 use crate::persistence;
 
@@ -194,6 +195,31 @@ pub async fn credential(
         .await
         .map_err(|err| OAuthError::Internal(Box::new(err)))?;
 
+    // Re-read the offer under FOR UPDATE so the aggregate's
+    // try_issue precondition is enforced under a row-level lock.
+    // A concurrent cancel that happens between the pre-tx
+    // observed-state check and this point waits on the lock; the
+    // re-read then surfaces the new state and try_issue rejects.
+    let mut offer = persistence::oidc::credential_offers::find_by_id_for_update(
+        &mut tx,
+        &token.tenant_id,
+        &token.issuer_id,
+        &token.offer_id,
+    )
+    .await
+    .map_err(|err| match err {
+        persistence::PersistenceError::NotFound => OAuthError::InvalidToken {
+            description: "the offer is no longer redeemable".to_string(),
+        },
+        other => OAuthError::Internal(Box::new(std::io::Error::other(other.to_string()))),
+    })?;
+    offer.try_issue(now).map_err(|err| match err {
+        DomainError::StateTransitionNotAllowed => OAuthError::InvalidToken {
+            description: "the offer is no longer redeemable".to_string(),
+        },
+        other => OAuthError::Internal(Box::new(std::io::Error::other(other.to_string()))),
+    })?;
+
     let (status_list_id, status_list_index, status_list_registry_url) =
         allocate_status_slot(&mut tx, &issuer.id).await?;
 
@@ -232,25 +258,9 @@ pub async fn credential(
     // transaction (action=issue, target=issued_credential.id, details
     // includes the originating offer_id).
 
-    persistence::oidc::credential_offers::mark_issued(
-        &mut tx,
-        &token.tenant_id,
-        &token.issuer_id,
-        &token.offer_id,
-        now,
-    )
-    .await
-    .map_err(|err| {
-        // mark_issued returns NotFound on stale-state-during-update.
-        // That maps to invalid_token because the offer was cancelled
-        // (or otherwise transitioned out from under the wallet).
-        match err {
-            persistence::PersistenceError::NotFound => OAuthError::InvalidToken {
-                description: "the offer is no longer redeemable".to_string(),
-            },
-            other => OAuthError::Internal(Box::new(std::io::Error::other(other.to_string()))),
-        }
-    })?;
+    persistence::oidc::credential_offers::set_issued_state(&mut tx, &offer)
+        .await
+        .map_err(OAuthError::from)?;
     persistence::oidc::access_tokens::delete_by_hash(&mut tx, &token.token_hash)
         .await
         .map_err(OAuthError::from)?;
@@ -424,8 +434,9 @@ struct ProofClaims {
     /// The wallet's public key (`jwk` member of the proof JWT
     /// header). Embedded as `cnf.jwk` in the issued credential.
     cnf_jwk: Value,
-    /// JWS `alg` from the proof header. [`Self::verify_signature`]
-    /// dispatches on this; only `EdDSA` and `ES256` are accepted.
+    /// JWS `alg` from the proof header.
+    /// [`verify_signature`][Self::verify_signature] dispatches on
+    /// this; only `EdDSA` and `ES256` are accepted.
     alg: String,
     /// `<header_b64>.<payload_b64>` — the bytes the wallet signed.
     signing_input: String,
@@ -442,12 +453,12 @@ struct ProofClaims {
 /// - JWT structure (three base64url-encoded segments).
 /// - Header carries a `jwk` (the wallet's public key) and `alg`.
 /// - Body has `aud` matching the issuer URL, `iat` within
-///   `PROOF_IAT_SKEW_SECONDS` of `now`, and a `nonce`.
+///   [`PROOF_IAT_SKEW_SECONDS`] of `now`, and a `nonce`.
 ///
 /// Cryptographic verification of the signature lives in
-/// [`ProofClaims::verify_signature`]; the handler calls both in
-/// sequence so "shape valid" and "cryptographically valid" remain
-/// independently testable failure modes.
+/// [`verify_signature`][ProofClaims::verify_signature]; the handler
+/// calls both in sequence so "shape valid" and "cryptographically
+/// valid" remain independently testable failure modes.
 fn parse_wallet_proof(
     jwt: &str,
     issuer_base_url: &str,
@@ -561,8 +572,8 @@ impl ProofClaims {
     /// - `EdDSA` — Ed25519, 64-byte signature.
     ///
     /// All failure modes (unsupported alg, malformed jwk, signature
-    /// mismatch) collapse to `InvalidProof` with a description that
-    /// names the failure.
+    /// mismatch) collapse to [`InvalidProof`][OAuthError::InvalidProof]
+    /// with a description that names the failure.
     fn verify_signature(&self) -> Result<(), OAuthError> {
         // Reconstruct the JOSE header from the two fields the parser
         // extracted, then delegate to swiyu-core's JWS verifier — the
@@ -600,12 +611,14 @@ fn invalid_proof_structure() -> OAuthError {
 ///
 /// The JWS is signed with the issuer's Assertion key (P-256 / ES256)
 /// via [`SigningEngine::sign`]. ES256 in JWS hashes the signing
-/// input with SHA-256 and signs the digest; both DevSigningEngine
-/// and VaultSigningEngine expect the 32-byte prehash, so we compute
-/// it here.
+/// input with SHA-256 and signs the digest; both
+/// [`DevSigningEngine`][crate::domain::DevSigningEngine] and
+/// [`VaultSigningEngine`][crate::domain::VaultSigningEngine] expect
+/// the 32-byte prehash, so we compute it here.
 ///
 /// Generic over the engine so unit tests can drive the function with
-/// a `MockSigningEngine`; production passes `&AnySigningEngine`.
+/// a [`MockSigningEngine`][crate::domain::signing_engine::test_support::MockSigningEngine];
+/// production passes `&`[`AnySigningEngine`][crate::domain::AnySigningEngine].
 #[allow(clippy::too_many_arguments)]
 async fn build_sd_jwt_vc<S: SigningEngine>(
     engine: &S,
