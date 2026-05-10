@@ -233,8 +233,8 @@ impl From<StatusValue> for u8 {
 }
 
 /// Width-agnostic decoding: 0/1/2 map to the named variants, anything
-/// else falls into `Reserved`. The width-aware variant (which never
-/// returns `Suspended` for a 1-bit list) is [`StatusValue::from_raw`].
+/// else falls into `Reserved`. For width-aware decoding (which never
+/// returns `Suspended` for a 1-bit list), use [`StatusList::value_at`].
 impl From<u8> for StatusValue {
     fn from(raw: u8) -> Self {
         match raw {
