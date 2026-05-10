@@ -348,6 +348,187 @@ async fn set_terminal_state_persists_failed_state_with_error_pair(pool: PgPool) 
     assert!(loaded.next_attempt_at.is_none());
 }
 
+// Inserts an `operation_tasks` row by hand so individual columns can hold
+// values the typed `insert()` would reject. Used by the decode-failure
+// tests below to drive sqlx's Decode path with adversarial inputs.
+async fn insert_raw_task_row(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    task_id: &str,
+    task_type: &str,
+    state: &str,
+    attempts: i32,
+) {
+    let now = now_micros();
+    sqlx::query(
+        r#"
+        INSERT INTO operation_tasks (
+            id, tenant_id, task_type, state,
+            attempts, input, state_data,
+            created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+        "#,
+    )
+    .bind(task_id)
+    .bind(tenant_id.bare())
+    .bind(task_type)
+    .bind(state)
+    .bind(attempts)
+    .bind(json!({}))
+    .bind(json!({}))
+    .bind(now)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+// Walks the std::error::Error source chain looking for `needle` in any
+// Display string. Used by the decode-failure tests so they assert on the
+// preserved detail without locking in sqlx's exact wrapping format.
+fn error_chain_contains(err: &dyn std::error::Error, needle: &str) -> bool {
+    let mut current: Option<&dyn std::error::Error> = Some(err);
+    while let Some(e) = current {
+        if e.to_string().contains(needle) {
+            return true;
+        }
+        current = e.source();
+    }
+    false
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn find_by_id_surfaces_decode_error_for_bogus_state_column(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let task_id = TaskId::generate();
+    insert_raw_task_row(
+        &pool,
+        &tenant_id,
+        task_id.bare(),
+        "create_issuer",
+        "bogus",
+        0,
+    )
+    .await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    let err = operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
+        .await
+        .expect_err("decode of state='bogus' must fail");
+
+    assert!(
+        matches!(err, PersistenceError::Db(_)),
+        "expected Db(_) wrapping a sqlx ColumnDecode, got {err:?}"
+    );
+    assert!(
+        error_chain_contains(&err, "bogus"),
+        "error chain must surface the offending value: {err:?}"
+    );
+    assert!(
+        error_chain_contains(&err, "task state"),
+        "error chain must name what failed to decode: {err:?}"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn find_by_id_surfaces_decode_error_for_bogus_task_type_column(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let task_id = TaskId::generate();
+    insert_raw_task_row(
+        &pool,
+        &tenant_id,
+        task_id.bare(),
+        "compress_log",
+        "pending",
+        0,
+    )
+    .await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    let err = operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
+        .await
+        .expect_err("decode of task_type='compress_log' must fail");
+
+    assert!(
+        error_chain_contains(&err, "compress_log"),
+        "error chain must surface the offending value: {err:?}"
+    );
+    assert!(
+        error_chain_contains(&err, "task type"),
+        "error chain must name what failed to decode: {err:?}"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn find_by_id_surfaces_decode_error_for_negative_attempts(pool: PgPool) {
+    // The `attempts` column is INTEGER (i32) but the field is u32. The
+    // `#[sqlx(try_from = "i32")]` attribute on `OperationTask::attempts`
+    // rejects negatives at decode time; this test pins that invariant.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let task_id = TaskId::generate();
+    insert_raw_task_row(
+        &pool,
+        &tenant_id,
+        task_id.bare(),
+        "create_issuer",
+        "pending",
+        -1,
+    )
+    .await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    let err = operation_tasks::find_by_id(&mut conn, &tenant_id, &task_id)
+        .await
+        .expect_err("decode of attempts=-1 must fail (u32 cannot hold a negative)");
+
+    assert!(matches!(err, PersistenceError::Db(_)), "got {err:?}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn find_by_id_surfaces_decode_error_for_invalid_id_column(pool: PgPool) {
+    // The `id` column stores the bare base58 body. A non-base58
+    // character must be rejected at Decode time by the `from_bare`
+    // validator wired into the `define_id!` macro's Decode impl.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    // Insert a row whose id contains 'O' (excluded from the Bitcoin
+    // base58 alphabet). The query filter still matches because both
+    // sides use the same string.
+    let bad_id = "Obviously_not_b58";
+    insert_raw_task_row(&pool, &tenant_id, bad_id, "create_issuer", "pending", 0).await;
+
+    // Round-trip the bad id through TaskId by skipping validation —
+    // we need a TaskId value to call find_by_id with, but cannot
+    // construct one through `from_bare`. Use a raw SELECT instead.
+    let mut conn = pool.acquire().await.unwrap();
+    let result: Result<OperationTask, sqlx::Error> = sqlx::query_as::<_, OperationTask>(
+        r#"
+        SELECT id, tenant_id, task_type, state, step,
+               attempts, next_attempt_at,
+               error_code, error_message,
+               input, state_data,
+               result_issuer_id,
+               created_at, updated_at, completed_at
+        FROM operation_tasks
+        WHERE id = $1
+        "#,
+    )
+    .bind(bad_id)
+    .fetch_one(&mut *conn)
+    .await;
+
+    let err = result.expect_err("decode of id='Obviously_not_b58' must fail");
+    let err_chain: &dyn std::error::Error = &err;
+    assert!(
+        error_chain_contains(err_chain, "non-base58")
+            || error_chain_contains(err_chain, "identifier"),
+        "error chain must explain the rejected id: {err:?}"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn set_terminal_state_persists_completed_state_with_result_issuer_id(pool: PgPool) {
     let tenant_id = TenantId::generate();

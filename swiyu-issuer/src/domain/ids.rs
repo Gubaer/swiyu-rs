@@ -147,6 +147,38 @@ macro_rules! define_id {
                 Self::from_bare(s).map_err(serde::de::Error::custom)
             }
         }
+
+        // sqlx wire-format: bare base58 stored as TEXT. Decode parses
+        // through `from_bare`, so an invalid value in the column
+        // surfaces as the same `DomainError::InvalidInput` the rest of
+        // the codebase uses, wrapped as a sqlx decode error.
+        impl sqlx::Type<sqlx::Postgres> for $name {
+            fn type_info() -> sqlx::postgres::PgTypeInfo {
+                <String as sqlx::Type<sqlx::Postgres>>::type_info()
+            }
+
+            fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+                <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+            }
+        }
+
+        impl<'r> sqlx::Decode<'r, sqlx::Postgres> for $name {
+            fn decode(
+                value: sqlx::postgres::PgValueRef<'r>,
+            ) -> Result<Self, sqlx::error::BoxDynError> {
+                let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+                Self::from_bare(s).map_err(|e| Box::new(e) as sqlx::error::BoxDynError)
+            }
+        }
+
+        impl<'q> sqlx::Encode<'q, sqlx::Postgres> for $name {
+            fn encode_by_ref(
+                &self,
+                buf: &mut sqlx::postgres::PgArgumentBuffer,
+            ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+                <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.0.as_str(), buf)
+            }
+        }
     };
 }
 

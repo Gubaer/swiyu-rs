@@ -48,6 +48,32 @@ impl TryFrom<&str> for TaskState {
     }
 }
 
+impl sqlx::Type<sqlx::Postgres> for TaskState {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TaskState {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        TaskState::try_from(s).map_err(|e| Box::new(e) as sqlx::error::BoxDynError)
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for TaskState {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.as_str(), buf)
+    }
+}
+
 /// The kind of long-running operation a task represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskType {
@@ -78,6 +104,32 @@ impl TryFrom<&str> for TaskType {
                 details: format!("unknown task type: {s}"),
             }),
         }
+    }
+}
+
+impl sqlx::Type<sqlx::Postgres> for TaskType {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TaskType {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        TaskType::try_from(s).map_err(|e| Box::new(e) as sqlx::error::BoxDynError)
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for TaskType {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.as_str(), buf)
     }
 }
 
@@ -115,7 +167,7 @@ pub enum StepOutcome {
 ///
 /// A task is created with state `Pending`, picked up by a worker, and
 /// runs through a sequence of internal steps until reaching a terminal state.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct OperationTask {
     pub id: TaskId,
     pub tenant_id: TenantId,
@@ -128,7 +180,10 @@ pub struct OperationTask {
     pub step: Option<String>,
 
     /// Number of attempts made on the current step. Reset to `0` when
-    /// the worker advances to a new step.
+    /// the worker advances to a new step. Stored as `INTEGER` (i32)
+    /// in Postgres; `try_from = "i32"` rejects negative values at
+    /// decode time as a data-integrity error.
+    #[sqlx(try_from = "i32")]
     pub attempts: u32,
 
     /// When the worker may try this task again. `None` for tasks that

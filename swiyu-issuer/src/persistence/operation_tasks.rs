@@ -1,12 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
-use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 
-use crate::domain::{IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId};
+use crate::domain::{IssuerId, OperationTask, TaskId, TaskType, TenantId};
 
 use super::PersistenceError;
-use super::helpers::{integrity_from, map_database_error};
+use super::helpers::map_database_error;
 
 pub async fn insert(conn: &mut PgConnection, task: &OperationTask) -> Result<(), PersistenceError> {
     sqlx::query(
@@ -22,10 +21,10 @@ pub async fn insert(conn: &mut PgConnection, task: &OperationTask) -> Result<(),
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         "#,
     )
-    .bind(task.id.bare())
-    .bind(task.tenant_id.bare())
-    .bind(task.task_type.as_str())
-    .bind(task.state.as_str())
+    .bind(&task.id)
+    .bind(&task.tenant_id)
+    .bind(task.task_type)
+    .bind(task.state)
     .bind(task.step.as_deref())
     .bind(task.attempts as i32)
     .bind(task.next_attempt_at)
@@ -33,7 +32,7 @@ pub async fn insert(conn: &mut PgConnection, task: &OperationTask) -> Result<(),
     .bind(task.error_message.as_deref())
     .bind(&task.input)
     .bind(&task.state_data)
-    .bind(task.result_issuer_id.as_ref().map(IssuerId::bare))
+    .bind(task.result_issuer_id.as_ref())
     .bind(task.created_at)
     .bind(task.updated_at)
     .bind(task.completed_at)
@@ -48,7 +47,7 @@ pub async fn find_by_id(
     tenant_id: &TenantId,
     task_id: &TaskId,
 ) -> Result<OperationTask, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, OperationTask>(
         r#"
         SELECT id, tenant_id, task_type, state, step,
                attempts, next_attempt_at,
@@ -60,13 +59,11 @@ pub async fn find_by_id(
         WHERE id = $1 AND tenant_id = $2
         "#,
     )
-    .bind(task_id.bare())
-    .bind(tenant_id.bare())
+    .bind(task_id)
+    .bind(tenant_id)
     .fetch_optional(conn)
     .await?
-    .ok_or(PersistenceError::NotFound)?;
-
-    row_to_task(&row)
+    .ok_or(PersistenceError::NotFound)
 }
 
 /// Returns the most-recently-created task matching the
@@ -85,7 +82,7 @@ pub async fn find_latest_by_type_and_issuer(
     issuer_id: &IssuerId,
     task_type: TaskType,
 ) -> Result<Option<OperationTask>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, OperationTask>(
         r#"
         SELECT id, tenant_id, task_type, state, step,
                attempts, next_attempt_at,
@@ -101,13 +98,12 @@ pub async fn find_latest_by_type_and_issuer(
         LIMIT 1
         "#,
     )
-    .bind(tenant_id.bare())
-    .bind(issuer_id.bare())
-    .bind(task_type.as_str())
+    .bind(tenant_id)
+    .bind(issuer_id)
+    .bind(task_type)
     .fetch_optional(conn)
-    .await?;
-
-    row.as_ref().map(row_to_task).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 /// Returns the next runnable task while holding a row-level lock on
@@ -128,7 +124,7 @@ pub async fn find_next_acquirable_for_update(
     conn: &mut PgConnection,
     now: DateTime<Utc>,
 ) -> Result<Option<OperationTask>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, OperationTask>(
         r#"
         SELECT id, tenant_id, task_type, state, step,
                attempts, next_attempt_at,
@@ -146,9 +142,8 @@ pub async fn find_next_acquirable_for_update(
     )
     .bind(now)
     .fetch_optional(conn)
-    .await?;
-
-    row.as_ref().map(row_to_task).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 /// Persists the post-[`try_acquire`][OperationTask::try_acquire]
@@ -170,10 +165,10 @@ pub async fn set_acquired(
         WHERE id = $4
         "#,
     )
-    .bind(task.state.as_str())
+    .bind(task.state)
     .bind(task.attempts as i32)
     .bind(task.updated_at)
-    .bind(task.id.bare())
+    .bind(&task.id)
     .execute(conn)
     .await
     .map_err(map_database_error)?;
@@ -199,7 +194,7 @@ pub async fn advance_step(
 ) -> Result<(), PersistenceError> {
     let current: Option<Value> =
         sqlx::query_scalar("SELECT state_data FROM operation_tasks WHERE id = $1")
-            .bind(task_id.bare())
+            .bind(task_id)
             .fetch_optional(&mut *conn)
             .await?;
 
@@ -229,7 +224,7 @@ pub async fn advance_step(
     .bind(next_step)
     .bind(&merged_value)
     .bind(now)
-    .bind(task_id.bare())
+    .bind(task_id)
     .execute(&mut *conn)
     .await
     .map_err(map_database_error)?;
@@ -270,7 +265,7 @@ pub async fn schedule_retry(
     .bind(error_code)
     .bind(error_message)
     .bind(now)
-    .bind(task_id.bare())
+    .bind(task_id)
     .execute(conn)
     .await
     .map_err(map_database_error)?;
@@ -311,14 +306,14 @@ pub async fn set_terminal_state(
         WHERE id = $8
         "#,
     )
-    .bind(task.state.as_str())
+    .bind(task.state)
     .bind(task.next_attempt_at)
     .bind(task.error_code.as_deref())
     .bind(task.error_message.as_deref())
-    .bind(task.result_issuer_id.as_ref().map(IssuerId::bare))
+    .bind(task.result_issuer_id.as_ref())
     .bind(task.updated_at)
     .bind(task.completed_at)
-    .bind(task.id.bare())
+    .bind(&task.id)
     .execute(conn)
     .await
     .map_err(map_database_error)?;
@@ -327,43 +322,4 @@ pub async fn set_terminal_state(
         return Err(PersistenceError::NotFound);
     }
     Ok(())
-}
-
-fn row_to_task(row: &PgRow) -> Result<OperationTask, PersistenceError> {
-    let id: String = row.try_get("id")?;
-    let tenant_id: String = row.try_get("tenant_id")?;
-    let task_type: String = row.try_get("task_type")?;
-    let state: String = row.try_get("state")?;
-    let step: Option<String> = row.try_get("step")?;
-    let attempts: i32 = row.try_get("attempts")?;
-    let next_attempt_at: Option<DateTime<Utc>> = row.try_get("next_attempt_at")?;
-    let error_code: Option<String> = row.try_get("error_code")?;
-    let error_message: Option<String> = row.try_get("error_message")?;
-    let input: Value = row.try_get("input")?;
-    let state_data: Value = row.try_get("state_data")?;
-    let result_issuer_id: Option<String> = row.try_get("result_issuer_id")?;
-    let created_at: DateTime<Utc> = row.try_get("created_at")?;
-    let updated_at: DateTime<Utc> = row.try_get("updated_at")?;
-    let completed_at: Option<DateTime<Utc>> = row.try_get("completed_at")?;
-
-    Ok(OperationTask {
-        id: TaskId::from_bare(id).map_err(integrity_from)?,
-        tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
-        task_type: TaskType::try_from(task_type.as_str()).map_err(integrity_from)?,
-        state: TaskState::try_from(state.as_str()).map_err(integrity_from)?,
-        step,
-        attempts: attempts.max(0) as u32,
-        next_attempt_at,
-        error_code,
-        error_message,
-        input,
-        state_data,
-        result_issuer_id: result_issuer_id
-            .map(IssuerId::from_bare)
-            .transpose()
-            .map_err(integrity_from)?,
-        created_at,
-        updated_at,
-        completed_at,
-    })
 }
