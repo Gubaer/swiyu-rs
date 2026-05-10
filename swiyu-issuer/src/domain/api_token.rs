@@ -13,8 +13,8 @@ const WIRE_PREFIX: &str = "tok_";
 /// application sends in `Authorization: Bearer tok_<base58>`.
 ///
 /// The wire form is `tok_<bare>` where `<bare>` is the base58
-/// encoding of [`API_TOKEN_BYTES`] random bytes. Internally only the
-/// bare body is held; [`as_wire`] reattaches the prefix on demand.
+/// encoding of `API_TOKEN_BYTES` random bytes. Internally only the
+/// bare body is held; [`Self::as_wire`] reattaches the prefix on demand.
 ///
 /// `ApiTokenSecret` deliberately does not implement `Clone`,
 /// `Display`, or `serde::Serialize`. The custom `Debug` impl redacts

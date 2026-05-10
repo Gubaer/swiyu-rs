@@ -10,7 +10,7 @@
 //! Saga-resume after a crash *between* a successful PUT and the
 //! state-patch write is handled by inspecting the registry's tail
 //! itself: `build_rotation_entry` returns
-//! [`BuildError::AlreadyRotated`] when the registry tail's
+//! `BuildError::AlreadyRotated` when the registry tail's
 //! `updateKeys[0]` already matches the multikey of
 //! `state.new_key_triple.authorized` (i.e. the rotation entry was
 //! already published). This executor maps that to `Done` with the

@@ -10,10 +10,11 @@
 //! registry round-trip.
 //!
 //! Error classification:
-//! - retryable [`RegistryError`] from the tail fetch → `Retry`
-//!   (registry transport flakiness on the read should not kill the
-//!   saga)
-//! - non-retryable [`RegistryError`] from the tail fetch → `Terminal`
+//! - retryable [`RegistryError`](swiyu_registries::common::RegistryError)
+//!   from the tail fetch → `Retry` (registry transport flakiness on
+//!   the read should not kill the saga)
+//! - non-retryable [`RegistryError`](swiyu_registries::common::RegistryError)
+//!   from the tail fetch → `Terminal`
 //! - signing-engine backend error → `Retry`
 //! - everything else (issuer state, missing fields, malformed
 //!   predecessor entry, missing key, sign key-not-found) → `Terminal`

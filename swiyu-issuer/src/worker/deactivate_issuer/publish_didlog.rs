@@ -10,7 +10,7 @@
 //! Saga-resume after a crash *between* a successful PUT and the
 //! state-patch write is handled by inspecting the registry's tail
 //! itself: `build_deactivation_entry` returns
-//! [`BuildError::AlreadyDeactivated`] when the registry already
+//! `BuildError::AlreadyDeactivated` when the registry already
 //! holds a deactivation entry, and this executor maps that to
 //! `Done` with the same `didlog_published = true` patch the success
 //! path produces. A registry-side error response on the PUT
