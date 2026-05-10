@@ -4,7 +4,7 @@
 //! Used by `execute_build_rotation_didlog` (validation) and
 //! `execute_publish_didlog` (regenerate-and-PUT). The proof-signing
 //! flow and the key-format validators are shared with the other
-//! saga builders via [`crate::worker::didlog_common`]; this file
+//! saga builders via `crate::worker::didlog_common`; this file
 //! handles the rotation-specific scaffolding (verifying the issuer
 //! is Active, fetching the prev tail, the resume-short-circuit when
 //! the registry already advertises the new Authorized key, building

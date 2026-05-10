@@ -10,6 +10,10 @@ use sqlx::PgPool;
 use swiyu_issuer::domain::TenantId;
 use swiyu_issuer::persistence::tenants;
 
+#[path = "common/mod.rs"]
+mod common;
+use common::seeded::SEEDED_DEV_TENANT_PARTNER_ID;
+
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: Option<&str>) {
     sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, $2)")
         .bind(tenant_id.bare())
@@ -82,6 +86,6 @@ async fn seeded_dev_tenant_carries_kacon_partner_id(pool: PgPool) {
 
     assert_eq!(
         tenant.partner_id.as_deref(),
-        Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"),
+        Some(SEEDED_DEV_TENANT_PARTNER_ID),
     );
 }

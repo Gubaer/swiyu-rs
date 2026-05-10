@@ -28,7 +28,7 @@ pub use ids::{
     ApiTokenId, CredentialOfferId, IssuedCredentialId, IssuerId, StatusListId, TaskId, TenantId,
 };
 pub use issued_credential::{INTEGRITY_HASH_LEN, IssuedCredential, IssuedCredentialState};
-pub use issuer::{Issuer, IssuerState};
+pub use issuer::{Issuer, IssuerState, MarkOutcome};
 pub use nonce::{NonceHash, NonceSecret};
 pub use oauth2::{
     AnyTokenProvider, OAuth2TokenProvider, ProviderRegistry, StaticTokenProvider, TokenAwareError,

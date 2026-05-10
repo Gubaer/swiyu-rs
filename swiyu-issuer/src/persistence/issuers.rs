@@ -91,70 +91,74 @@ pub async fn find_by_id_for_tenant(
     row.map(|row| row_to_issuer(&row)).transpose()
 }
 
-/// Outcome of [`mark_deactivated`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkOutcome {
-    /// Idempotent re-run: the row was already `Deactivated`.
-    Already,
-    /// First write: the row was `Active` and the UPDATE flipped it.
-    NowDeactivated,
-}
-
-/// Flips an `Active` issuer to `Deactivated`, idempotent on re-run.
+/// Tenant-scoped variant of [`find_by_id_for_tenant`] that takes a
+/// `SELECT … FOR UPDATE` row lock.
 ///
-/// The state guard in the WHERE clause makes the SQL update a no-op
-/// once the row is already `Deactivated`, which is the resume case
-/// after a saga crashed between the registry-side publish and this
-/// terminal local step. The function distinguishes the two by
-/// re-reading the row when the UPDATE matched nothing:
+/// Held for the surrounding transaction's lifetime; serialises
+/// concurrent state-transition attempts on the same issuer row so
+/// the in-memory state machine in [`Issuer::try_deactivate`] is the
+/// sole source of truth without a defence-in-depth SQL guard.
 ///
-/// - row exists and is `Deactivated` → `MarkOutcome::Already`
-/// - row exists in any other state, or is missing, or belongs to a
-///   different tenant → `PersistenceError::NotFound`
-///
-/// Mirrors the lookup discipline of [`find_by_id_for_tenant`]:
-/// "wrong tenant" collapses to "not found" so callers cannot probe
-/// across tenants.
-pub async fn mark_deactivated(
+/// "Wrong tenant" collapses to `Ok(None)` for the same probing-defence
+/// reason as [`find_by_id_for_tenant`].
+pub async fn find_by_id_for_update_for_tenant(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
     issuer_id: &IssuerId,
-) -> Result<MarkOutcome, PersistenceError> {
+) -> Result<Option<Issuer>, PersistenceError> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, tenant_id, did,
+               state, description,
+               authorized_key_id, authentication_key_id, assertion_key_id,
+               display_name, logo_uri, locale,
+               created_at
+        FROM issuers
+        WHERE id = $1 AND tenant_id = $2
+        FOR UPDATE
+        "#,
+    )
+    .bind(issuer_id.bare())
+    .bind(tenant_id.bare())
+    .fetch_optional(conn)
+    .await?;
+
+    row.map(|row| row_to_issuer(&row)).transpose()
+}
+
+/// Writes a new `state` value for the named issuer.
+///
+/// The caller controls the transaction; this helper does not commit.
+/// Pairs with [`find_by_id_for_update_for_tenant`] and the in-memory
+/// state machine in [`Issuer::try_deactivate`]: load the row under the
+/// row lock, run the domain transition, write the result, commit.
+///
+/// Returns `PersistenceError::NotFound` if no row matches `(issuer_id,
+/// tenant_id)`. The caller should have just loaded the row under the
+/// `FOR UPDATE` lock, so this only fires on a logic bug.
+pub async fn set_state(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+    state: IssuerState,
+) -> Result<(), PersistenceError> {
     let result = sqlx::query(
         r#"
         UPDATE issuers
-        SET state = 'deactivated'
-        WHERE id = $1 AND tenant_id = $2 AND state = 'active'
+        SET state = $1
+        WHERE id = $2 AND tenant_id = $3
         "#,
     )
+    .bind(state.as_str())
     .bind(issuer_id.bare())
     .bind(tenant_id.bare())
-    .execute(&mut *conn)
+    .execute(conn)
     .await?;
 
-    if result.rows_affected() == 1 {
-        return Ok(MarkOutcome::NowDeactivated);
+    if result.rows_affected() == 0 {
+        return Err(PersistenceError::NotFound);
     }
-
-    let current_state: Option<String> = sqlx::query(
-        r#"
-        SELECT state
-        FROM issuers
-        WHERE id = $1 AND tenant_id = $2
-        "#,
-    )
-    .bind(issuer_id.bare())
-    .bind(tenant_id.bare())
-    .fetch_optional(&mut *conn)
-    .await?
-    .map(|row| row.try_get::<Option<String>, _>("state"))
-    .transpose()?
-    .flatten();
-
-    match current_state.as_deref() {
-        Some("deactivated") => Ok(MarkOutcome::Already),
-        _ => Err(PersistenceError::NotFound),
-    }
+    Ok(())
 }
 
 /// Outcome of [`swap_key_triple`].

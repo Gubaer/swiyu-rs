@@ -11,7 +11,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand_core::RngCore;
 use sqlx::postgres::PgConnection;
 
-use crate::domain::{OperationTask, StepOutcome, TokenAwareError, TokenProviderError};
+use crate::domain::{DomainError, OperationTask, StepOutcome, TokenAwareError, TokenProviderError};
 use crate::persistence::{PersistenceError, operation_tasks};
 use crate::worker::backoff::{MAX_TASK_AGE_HOURS, backoff_delay};
 
@@ -65,13 +65,22 @@ pub fn from_token_aware_error(
 /// Covers the regular-step transitions: advance to next step on
 /// success, schedule the next retry on transient failure, mark
 /// terminally failed otherwise. The 24-hour wall-clock cap from
-/// [`crate::worker::backoff`] lives here too — a `Retry` outcome past
-/// the cap routes to `mark_failed` instead of `schedule_retry`. The
-/// final-step `Done` (which calls `mark_completed`) is the dispatch
+/// [`crate::worker::backoff`] lives here too — a
+/// [`Retry`][StepOutcome::Retry] outcome past the cap routes through
+/// [`try_fail`][OperationTask::try_fail] instead of
+/// [`schedule_retry`][operation_tasks::schedule_retry]. The final-step
+/// [`Done`][StepOutcome::Done] (which calls
+/// [`try_complete`][OperationTask::try_complete]) is the dispatch
 /// loop's responsibility, not this function's.
+///
+/// Terminal transitions go through the aggregate
+/// ([`try_fail`][OperationTask::try_fail]); a [`DomainError`] from
+/// there means the task was not in `InProgress` when this was called,
+/// which is a worker-loop bug and surfaces as
+/// [`DataIntegrity`][PersistenceError::DataIntegrity].
 pub async fn apply(
     conn: &mut PgConnection,
-    task: &OperationTask,
+    task: &mut OperationTask,
     next_step: Option<&str>,
     outcome: StepOutcome,
     now: DateTime<Utc>,
@@ -87,10 +96,15 @@ pub async fn apply(
             error_message,
         } => {
             if now - task.created_at >= ChronoDuration::hours(MAX_TASK_AGE_HOURS) {
-                operation_tasks::mark_failed(conn, &task.id, &error_code, &error_message, now).await
+                fail_through_aggregate(conn, task, error_code, error_message, now).await
             } else {
-                let next_attempts = task.attempts.saturating_add(1);
-                let delay = backoff_delay(next_attempts, rng);
+                // `task.attempts` is the count of completed attempts
+                // before the one that just failed (the bump happens
+                // at try_acquire), so the just-failed attempt number
+                // is `task.attempts + 1`. That is the value
+                // backoff_delay expects (see its rustdoc).
+                let attempt_just_failed = task.attempts.saturating_add(1);
+                let delay = backoff_delay(attempt_just_failed, rng);
                 let next_attempt_at = now
                     + chrono::Duration::from_std(delay).expect(
                         "backoff_delay returns at most 1 hour, well within chrono::Duration",
@@ -98,7 +112,6 @@ pub async fn apply(
                 operation_tasks::schedule_retry(
                     conn,
                     &task.id,
-                    next_attempts,
                     next_attempt_at,
                     &error_code,
                     &error_message,
@@ -110,6 +123,20 @@ pub async fn apply(
         StepOutcome::Terminal {
             error_code,
             error_message,
-        } => operation_tasks::mark_failed(conn, &task.id, &error_code, &error_message, now).await,
+        } => fail_through_aggregate(conn, task, error_code, error_message, now).await,
     }
+}
+
+async fn fail_through_aggregate(
+    conn: &mut PgConnection,
+    task: &mut OperationTask,
+    error_code: String,
+    error_message: String,
+    now: DateTime<Utc>,
+) -> Result<(), PersistenceError> {
+    task.try_fail(error_code, error_message, now)
+        .map_err(|e: DomainError| PersistenceError::DataIntegrity {
+            details: format!("try_fail: {e}"),
+        })?;
+    operation_tasks::set_terminal_state(conn, task).await
 }

@@ -72,9 +72,10 @@ pub async fn find_valid_by_hash(
 
 /// Removes the access-token row for `token_hash`. Idempotent: a
 /// missing row is `Ok(())`. Called from the credential endpoint's
-/// success path — paired with `mark_issued` in the same
-/// transaction so the offer cannot end up `issued` while the token
-/// is still around.
+/// success path — paired with
+/// [`set_issued_state`][super::credential_offers::set_issued_state]
+/// in the same transaction so the offer cannot end up `issued` while
+/// the token is still around.
 pub async fn delete_by_hash(
     conn: &mut PgConnection,
     token_hash: &AccessTokenHash,

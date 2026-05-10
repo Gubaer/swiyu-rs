@@ -11,8 +11,10 @@
 //! registry round-trip.
 //!
 //! Error classification mirrors `build_deactivation_didlog`:
-//! - retryable [`RegistryError`] from the tail fetch → `Retry`
-//! - non-retryable [`RegistryError`] from the tail fetch → `Terminal`
+//! - retryable [`RegistryError`](swiyu_registries::common::RegistryError)
+//!   from the tail fetch → `Retry`
+//! - non-retryable [`RegistryError`](swiyu_registries::common::RegistryError)
+//!   from the tail fetch → `Terminal`
 //! - signing-engine backend error → `Retry`
 //! - everything else → `Terminal`
 

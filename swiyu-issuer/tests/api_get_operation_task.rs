@@ -137,14 +137,21 @@ async fn completed_task_surfaces_terminal_state_and_completed_at(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    let task = pending_task(tenant_id.clone(), Some(issuer_id.clone()));
+    let mut task = pending_task(tenant_id.clone(), Some(issuer_id.clone()));
     insert_task(&pool, &task).await;
 
-    // Drive the task to Completed via the persistence helper so the
-    // observable fields match what the worker would write.
+    // Drive the task to Completed by mirroring the in-memory mutation
+    // `OperationTask::try_complete` performs in the worker, then
+    // persisting via `set_terminal_state`.
     let mut conn = pool.acquire().await.unwrap();
     let now = Utc::now();
-    persistence::operation_tasks::mark_completed(&mut conn, &task.id, Some(&issuer_id), now)
+    task.state = swiyu_issuer::domain::TaskState::Completed;
+    task.error_code = None;
+    task.error_message = None;
+    task.next_attempt_at = None;
+    task.updated_at = now;
+    task.completed_at = Some(now);
+    persistence::operation_tasks::set_terminal_state(&mut conn, &task)
         .await
         .unwrap();
     drop(conn);

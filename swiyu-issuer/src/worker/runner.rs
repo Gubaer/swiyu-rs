@@ -13,7 +13,9 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::domain::{OperationTask, ProviderRegistry, SigningEngine, StepOutcome, TaskType};
+use crate::domain::{
+    DomainError, OperationTask, ProviderRegistry, SigningEngine, StepOutcome, TaskType,
+};
 use crate::persistence::{self, PersistenceError};
 
 use super::BoxedRng;
@@ -93,7 +95,7 @@ pub struct Worker<R, S, C> {
     /// resolves the provider for `task.tenant_id` once per task and
     /// passes it (as `&AnyTokenProvider`) into the per-step executor.
     providers: Arc<ProviderRegistry>,
-    /// Heap-allocated [`RngCore`] so callers can inject a
+    /// Heap-allocated [`rand_core::RngCore`] so callers can inject a
     /// deterministic implementation in tests without making the
     /// whole struct generic over a fourth parameter.
     rng: BoxedRng,
@@ -138,9 +140,9 @@ where
             }
 
             match self.acquire_next().await {
-                Ok(Some(task)) => {
+                Ok(Some(mut task)) => {
                     debug!(task_id = %task.id, step = ?task.step, "dispatching task");
-                    if let Err(e) = self.execute_task(&task).await {
+                    if let Err(e) = self.execute_task(&mut task).await {
                         error!(task_id = %task.id, error = %e, "task execution failed; will retry on next poll");
                     }
                 }
@@ -162,12 +164,36 @@ where
         info!("worker stopped");
     }
 
+    /// Claims the next runnable task, holding it under
+    /// `FOR UPDATE SKIP LOCKED` until the claim is committed.
+    ///
+    /// Three steps inside one transaction:
+    /// [`find_next_acquirable_for_update`][persistence::operation_tasks::find_next_acquirable_for_update]
+    /// selects the row with the lock,
+    /// [`try_acquire`][OperationTask::try_acquire] drives the in-memory
+    /// aggregate, and
+    /// [`set_acquired`][persistence::operation_tasks::set_acquired]
+    /// persists the new state and attempt count. The lock is held
+    /// across all three so a concurrent worker either skips this row
+    /// entirely or sees the committed `in_progress` value.
     async fn acquire_next(&self) -> Result<Option<OperationTask>, PersistenceError> {
-        let mut conn = self.pool.acquire().await.map_err(PersistenceError::Db)?;
-        persistence::operation_tasks::acquire_next(&mut conn, Utc::now()).await
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(PersistenceError::Db)?;
+        let Some(mut task) =
+            persistence::operation_tasks::find_next_acquirable_for_update(&mut tx, now).await?
+        else {
+            return Ok(None);
+        };
+        task.try_acquire(now)
+            .map_err(|e: DomainError| PersistenceError::DataIntegrity {
+                details: format!("try_acquire: {e}"),
+            })?;
+        persistence::operation_tasks::set_acquired(&mut tx, &task).await?;
+        tx.commit().await.map_err(PersistenceError::Db)?;
+        Ok(Some(task))
     }
 
-    async fn execute_task(&mut self, task: &OperationTask) -> Result<(), WorkerError> {
+    async fn execute_task(&mut self, task: &mut OperationTask) -> Result<(), WorkerError> {
         match task.task_type {
             TaskType::CreateIssuer => self.execute_create_issuer(task).await,
             TaskType::DeactivateIssuer => self.execute_deactivate_issuer(task).await,
@@ -175,7 +201,7 @@ where
         }
     }
 
-    async fn execute_create_issuer(&mut self, task: &OperationTask) -> Result<(), WorkerError> {
+    async fn execute_create_issuer(&mut self, task: &mut OperationTask) -> Result<(), WorkerError> {
         let input: CreateIssuerInput = serde_json::from_value(task.input.clone())
             .map_err(|e| WorkerError::Decode(format!("input: {e}")))?;
         let state: CreateIssuerStateData = serde_json::from_value(task.state_data.clone())
@@ -302,13 +328,11 @@ where
                 // step's StepResult patch is empty by convention
                 // (`persist_issuer` returns `StepResult::default()`),
                 // so nothing to merge into state_data here.
-                persistence::operation_tasks::mark_completed(
-                    &mut conn,
-                    &task.id,
-                    task.result_issuer_id.as_ref(),
-                    now,
-                )
-                .await?;
+                task.try_complete(now)
+                    .map_err(|e| PersistenceError::DataIntegrity {
+                        details: format!("try_complete: {e}"),
+                    })?;
+                persistence::operation_tasks::set_terminal_state(&mut conn, task).await?;
                 info!(
                     task_id = %task.id,
                     issuer_id = ?task.result_issuer_id,
@@ -323,7 +347,10 @@ where
         Ok(())
     }
 
-    async fn execute_deactivate_issuer(&mut self, task: &OperationTask) -> Result<(), WorkerError> {
+    async fn execute_deactivate_issuer(
+        &mut self,
+        task: &mut OperationTask,
+    ) -> Result<(), WorkerError> {
         // Validate input + state-data shapes; both are empty by
         // convention but going through `serde_json::from_value`
         // catches malformed rows early.
@@ -422,13 +449,11 @@ where
         let mut conn = self.pool.acquire().await.map_err(PersistenceError::Db)?;
         match (outcome, next_step) {
             (StepOutcome::Done(_), None) => {
-                persistence::operation_tasks::mark_completed(
-                    &mut conn,
-                    &task.id,
-                    task.result_issuer_id.as_ref(),
-                    now,
-                )
-                .await?;
+                task.try_complete(now)
+                    .map_err(|e| PersistenceError::DataIntegrity {
+                        details: format!("try_complete: {e}"),
+                    })?;
+                persistence::operation_tasks::set_terminal_state(&mut conn, task).await?;
                 info!(
                     task_id = %task.id,
                     issuer_id = ?task.result_issuer_id,
@@ -443,7 +468,7 @@ where
         Ok(())
     }
 
-    async fn execute_rotate_keys(&mut self, task: &OperationTask) -> Result<(), WorkerError> {
+    async fn execute_rotate_keys(&mut self, task: &mut OperationTask) -> Result<(), WorkerError> {
         let input: RotateKeysInput = serde_json::from_value(task.input.clone())
             .map_err(|e| WorkerError::Decode(format!("input: {e}")))?;
         let state: RotateKeysStateData = serde_json::from_value(task.state_data.clone())
@@ -548,13 +573,11 @@ where
         let mut conn = self.pool.acquire().await.map_err(PersistenceError::Db)?;
         match (outcome, next_step) {
             (StepOutcome::Done(_), None) => {
-                persistence::operation_tasks::mark_completed(
-                    &mut conn,
-                    &task.id,
-                    task.result_issuer_id.as_ref(),
-                    now,
-                )
-                .await?;
+                task.try_complete(now)
+                    .map_err(|e| PersistenceError::DataIntegrity {
+                        details: format!("try_complete: {e}"),
+                    })?;
+                persistence::operation_tasks::set_terminal_state(&mut conn, task).await?;
                 info!(
                     task_id = %task.id,
                     issuer_id = ?task.result_issuer_id,

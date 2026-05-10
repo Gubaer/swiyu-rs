@@ -85,7 +85,7 @@ fn task_with_age(tenant_id: TenantId, age: Duration, attempts: u32) -> Operation
 async fn done_advances_step_and_merges_patch(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
+    let mut task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
     insert_task(&pool, &task).await;
 
     let mut patch = Map::new();
@@ -99,7 +99,7 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
     let mut rng = FixedRng(0);
     outcome::apply(
         &mut conn,
-        &task,
+        &mut task,
         Some("generate_keys"),
         StepOutcome::Done(StepResult {
             state_data_patch: patch,
@@ -126,10 +126,10 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn retry_within_cap_increments_attempts_and_schedules(pool: PgPool) {
+async fn retry_within_cap_schedules_next_attempt_without_bumping_attempts(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = task_with_age(tenant_id.clone(), Duration::hours(1), 2);
+    let mut task = task_with_age(tenant_id.clone(), Duration::hours(1), 2);
     insert_task(&pool, &task).await;
 
     let now = now_micros();
@@ -137,7 +137,7 @@ async fn retry_within_cap_increments_attempts_and_schedules(pool: PgPool) {
     let mut rng = FixedRng(u64::MAX);
     outcome::apply(
         &mut conn,
-        &task,
+        &mut task,
         None,
         StepOutcome::Retry {
             error_code: "registry_5xx".into(),
@@ -153,10 +153,13 @@ async fn retry_within_cap_increments_attempts_and_schedules(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(loaded.state, TaskState::InProgress);
-    assert_eq!(loaded.attempts, 3);
+    // schedule_retry leaves attempts alone; the bump happens on the
+    // next try_acquire when the worker picks the task back up.
+    assert_eq!(loaded.attempts, 2);
     let next = loaded.next_attempt_at.expect("next_attempt_at set");
     assert!(next >= now);
-    // attempts becomes 3 -> ceiling = 60_000 << 3 = 480_000 ms = 8 min.
+    // The just-failed attempt was task.attempts + 1 = 3, so the
+    // backoff ceiling is 60_000 << 3 = 480_000 ms = 8 min.
     assert!(next <= now + Duration::minutes(8) + Duration::seconds(1));
     assert_eq!(loaded.error_code.as_deref(), Some("registry_5xx"));
     assert_eq!(loaded.error_message.as_deref(), Some("503 from registry"));
@@ -166,7 +169,7 @@ async fn retry_within_cap_increments_attempts_and_schedules(pool: PgPool) {
 async fn retry_past_cap_marks_failed(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = task_with_age(tenant_id.clone(), Duration::hours(25), 17);
+    let mut task = task_with_age(tenant_id.clone(), Duration::hours(25), 17);
     insert_task(&pool, &task).await;
 
     let now = now_micros();
@@ -174,7 +177,7 @@ async fn retry_past_cap_marks_failed(pool: PgPool) {
     let mut rng = FixedRng(0);
     outcome::apply(
         &mut conn,
-        &task,
+        &mut task,
         None,
         StepOutcome::Retry {
             error_code: "registry_5xx".into(),
@@ -200,7 +203,7 @@ async fn retry_past_cap_marks_failed(pool: PgPool) {
 async fn terminal_marks_failed_immediately(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
+    let mut task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
     insert_task(&pool, &task).await;
 
     let now = now_micros();
@@ -208,7 +211,7 @@ async fn terminal_marks_failed_immediately(pool: PgPool) {
     let mut rng = FixedRng(0);
     outcome::apply(
         &mut conn,
-        &task,
+        &mut task,
         None,
         StepOutcome::Terminal {
             error_code: "invalid_input".into(),

@@ -38,6 +38,20 @@ impl IssuerState {
     }
 }
 
+/// Outcome of [`Issuer::try_deactivate`].
+///
+/// `Already` is the saga-resume case: the worker crashed last time
+/// after the registry-side publish but before the local state flip
+/// committed. On re-run the row is already `Deactivated` and the
+/// step must succeed silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkOutcome {
+    /// Idempotent re-run: the issuer was already `Deactivated`.
+    Already,
+    /// First write: the issuer was `Active` and is now `Deactivated`.
+    NowDeactivated,
+}
+
 /// A registered credential-issuing entity within a tenant.
 ///
 /// The three `*_key_id` fields are `Option<…>` because the seeded
@@ -93,6 +107,25 @@ impl Issuer {
             KeyRole::Assertion => self.assertion_key_id,
         }
     }
+
+    /// Flips an `Active` issuer to `Deactivated`, idempotent on re-run.
+    ///
+    /// Returns `MarkOutcome::NowDeactivated` for the `Active → Deactivated`
+    /// transition and `MarkOutcome::Already` when the issuer was already
+    /// `Deactivated`. The legacy `state = None` row (the seeded dev
+    /// fixture predating lifecycle tracking) cannot be deactivated:
+    /// it never started in `Active` and has no `Authorized` key to
+    /// sign a deactivation entry with.
+    pub fn try_deactivate(&mut self) -> Result<MarkOutcome, DomainError> {
+        match self.state {
+            Some(IssuerState::Active) => {
+                self.state = Some(IssuerState::Deactivated);
+                Ok(MarkOutcome::NowDeactivated)
+            }
+            Some(IssuerState::Deactivated) => Ok(MarkOutcome::Already),
+            None => Err(DomainError::StateTransitionNotAllowed),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +173,37 @@ mod tests {
         assert!(issuer.key_id_for_role(KeyRole::Authorized).is_none());
         assert!(issuer.key_id_for_role(KeyRole::Authentication).is_none());
         assert!(issuer.key_id_for_role(KeyRole::Assertion).is_none());
+    }
+
+    #[test]
+    fn try_deactivate_flips_active_to_deactivated() {
+        let mut issuer = Issuer {
+            state: Some(IssuerState::Active),
+            ..fixture_issuer()
+        };
+        let outcome = issuer.try_deactivate().unwrap();
+        assert_eq!(outcome, MarkOutcome::NowDeactivated);
+        assert_eq!(issuer.state, Some(IssuerState::Deactivated));
+    }
+
+    #[test]
+    fn try_deactivate_is_idempotent_for_already_deactivated() {
+        let mut issuer = Issuer {
+            state: Some(IssuerState::Deactivated),
+            ..fixture_issuer()
+        };
+        let outcome = issuer.try_deactivate().unwrap();
+        assert_eq!(outcome, MarkOutcome::Already);
+        assert_eq!(issuer.state, Some(IssuerState::Deactivated));
+    }
+
+    #[test]
+    fn try_deactivate_rejects_legacy_state_null_row() {
+        let mut issuer = fixture_issuer();
+        assert_eq!(issuer.state, None);
+        let err = issuer.try_deactivate().unwrap_err();
+        assert!(matches!(err, DomainError::StateTransitionNotAllowed));
+        assert_eq!(issuer.state, None);
     }
 
     #[test]

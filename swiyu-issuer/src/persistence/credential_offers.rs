@@ -151,10 +151,11 @@ pub async fn list(
 /// Caller is responsible for loading the offer, running domain-level
 /// state-machine checks, and supplying `cancelled_at`. The SQL guard
 /// `state = 'pending'` is defence in depth: it prevents a concurrent
-/// `mark_issued` (once that lands) from being clobbered by a cancel
-/// that loaded a stale row. A 0-row update is reported as
-/// `PersistenceError::NotFound`; it means the offer either does not
-/// exist for this tenant/issuer or has already left `Pending`.
+/// [`set_issued_state`][super::oidc::credential_offers::set_issued_state]
+/// from being clobbered by a cancel that loaded a stale row. A 0-row
+/// update is reported as [`NotFound`][PersistenceError::NotFound];
+/// it means the offer either does not exist for this tenant/issuer
+/// or has already left `Pending`.
 pub async fn cancel(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
@@ -191,7 +192,7 @@ pub async fn cancel(
 /// runs in the same transaction that flips the issuer row to
 /// `Deactivated`. Already-`issued`, already-`cancelled`, and
 /// already-`expired` (i.e. stored-`pending` past `expires_at`)
-/// offers are left alone. The expiry projection from `list` is
+/// offers are left alone. The expiry projection from [`list`] is
 /// deliberately *not* applied here: an offer that is observably
 /// `Expired` but stored as `Pending` still has an active
 /// `pre_auth_code` row, and zeroing it out alongside the bulk cancel

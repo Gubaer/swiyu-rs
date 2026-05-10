@@ -17,7 +17,10 @@ pub struct CredentialOfferBody {
     pub credential_configuration_ids: Vec<String>,
     /// JSON object keyed by grant-type URI; we emit a single pre-authorised-code entry
     /// carrying the bare code (single-use bearer secret). The code lives in
-    /// `credential_offers.pre_auth_code` until `cancel` or `mark_issued` NULLs it.
+    /// `credential_offers.pre_auth_code` until
+    /// [`cancel`][persistence::credential_offers::cancel] or
+    /// [`set_issued_state`][persistence::oidc::credential_offers::set_issued_state]
+    /// NULLs it.
     pub grants: Value,
 }
 

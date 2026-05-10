@@ -1,32 +1,49 @@
-//! `mark_deactivated` step executor.
+//! Flips the issuer row from `Active` to `Deactivated` and
+//! bulk-cancels its still-pending credential offers for a
+//! `DeactivateIssuer` task.
 //!
-//! The saga's terminal local step. Inside one Postgres transaction:
-//!   1. Flip the issuer row's `state` from `active` to `deactivated`
-//!      (or observe that it is already `deactivated`).
-//!   2. Bulk-cancel every still-pending credential offer for that
-//!      issuer.
-//!
-//! Idempotency comes from the persistence helpers: re-running the
-//! step after a crash that already flipped the row sees
-//! `MarkOutcome::Already` and the bulk-cancel touches zero rows.
-//! Both shapes are reported as `StepOutcome::Done`. The variant is
-//! observable via `tracing` for ops debugging.
-//!
-//! Error classification mirrors `create_issuer::persist_issuer`:
-//! `PersistenceError::Db` (transient connection / acquire failures)
-//! routes to `Retry`; structural errors (`DataIntegrity`,
-//! `UniqueViolation`, `NotFound`) route to `Terminal`. `NotFound`
-//! from `mark_deactivated` means the issuer row was deleted between
-//! earlier saga steps and this one — vanishingly rare and not safe
-//! to retry.
+//! The saga's terminal local step, dispatched after
+//! [`super::publish_didlog`] commits. Idempotent on resume because
+//! the in-memory state machine in
+//! [`Issuer::try_deactivate`](crate::domain::Issuer::try_deactivate)
+//! reports
+//! [`MarkOutcome::Already`](crate::domain::MarkOutcome::Already) when
+//! re-run against a row that is already `Deactivated`, and
+//! [`persistence::credential_offers::cancel_all_pending_for_issuer`]
+//! then matches zero rows.
 
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tracing::debug;
 
-use crate::domain::{IssuerId, StepOutcome, StepResult, TenantId};
+use crate::domain::{DomainError, IssuerId, IssuerState, StepOutcome, StepResult, TenantId};
 use crate::persistence::{self, PersistenceError};
 
+/// Executes the step inside one Postgres transaction:
+///   1. Load the issuer row under a `SELECT … FOR UPDATE` row lock.
+///   2. Run [`Issuer::try_deactivate`](crate::domain::Issuer::try_deactivate)
+///      (the domain-level state transition — also the sole source of
+///      idempotency for the `Active → Deactivated` flip).
+///   3. Persist the new state via [`persistence::issuers::set_state`].
+///   4. Bulk-cancel every still-pending credential offer for that
+///      issuer.
+///
+/// Both
+/// [`MarkOutcome::NowDeactivated`](crate::domain::MarkOutcome::NowDeactivated)
+/// and [`MarkOutcome::Already`](crate::domain::MarkOutcome::Already)
+/// produce [`StepOutcome::Done`]; the variant is observable via
+/// `tracing` for ops debugging.
+///
+/// Error classification mirrors `create_issuer::persist_issuer`:
+/// [`PersistenceError::Db`] (transient connection / acquire failures)
+/// routes to [`StepOutcome::Retry`]; structural errors
+/// ([`PersistenceError::DataIntegrity`],
+/// [`PersistenceError::UniqueViolation`],
+/// [`PersistenceError::NotFound`]) route to [`StepOutcome::Terminal`].
+/// Two extra terminal cases come from the domain layer: a missing
+/// issuer row (deleted between earlier saga steps and this one —
+/// vanishingly rare) and a [`DomainError::StateTransitionNotAllowed`]
+/// from the legacy `state IS NULL` fixture row.
 pub async fn execute_mark_deactivated(
     pool: &PgPool,
     tenant_id: &TenantId,
@@ -38,11 +55,46 @@ pub async fn execute_mark_deactivated(
         Err(e) => return retry_on_db("begin", e.to_string()),
     };
 
-    let mark_outcome =
-        match persistence::issuers::mark_deactivated(&mut tx, tenant_id, issuer_id).await {
-            Ok(o) => o,
-            Err(e) => return outcome_for_persistence_error("mark_deactivated", e),
+    let mut issuer =
+        match persistence::issuers::find_by_id_for_update_for_tenant(&mut tx, tenant_id, issuer_id)
+            .await
+        {
+            Ok(Some(issuer)) => issuer,
+            Ok(None) => {
+                return StepOutcome::Terminal {
+                    error_code: "mark_deactivated_failed".into(),
+                    error_message: "find_by_id_for_update_for_tenant: not found".into(),
+                };
+            }
+            Err(e) => return outcome_for_persistence_error("find_by_id_for_update_for_tenant", e),
         };
+
+    let mark_outcome = match issuer.try_deactivate() {
+        Ok(o) => o,
+        Err(DomainError::StateTransitionNotAllowed) => {
+            return StepOutcome::Terminal {
+                error_code: "mark_deactivated_failed".into(),
+                error_message:
+                    "try_deactivate: state transition not allowed (legacy state=NULL row?)".into(),
+            };
+        }
+        Err(e) => {
+            return StepOutcome::Terminal {
+                error_code: "mark_deactivated_failed".into(),
+                error_message: format!("try_deactivate: {e}"),
+            };
+        }
+    };
+
+    // Always issue the UPDATE — on `Already` it's a no-op write
+    // against the row we already hold a `FOR UPDATE` lock on, so
+    // the cost is negligible and the code stays branchless.
+    if let Err(e) =
+        persistence::issuers::set_state(&mut tx, tenant_id, issuer_id, IssuerState::Deactivated)
+            .await
+    {
+        return outcome_for_persistence_error("set_state", e);
+    }
 
     let cancelled = match persistence::credential_offers::cancel_all_pending_for_issuer(
         &mut tx, tenant_id, issuer_id, now,

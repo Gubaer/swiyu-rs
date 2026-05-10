@@ -87,30 +87,54 @@ async fn find_by_id_is_tenant_scoped(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn acquire_next_picks_pending_task_and_marks_in_progress(pool: PgPool) {
+async fn find_next_acquirable_then_set_acquired_marks_in_progress(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let task = fixture_task(tenant_id.clone());
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        operation_tasks::insert(&mut conn, &task).await.unwrap();
+    }
 
     let now = now_micros();
-    let acquired = operation_tasks::acquire_next(&mut conn, now).await.unwrap();
-    let acquired = acquired.expect("a runnable task");
-    assert_eq!(acquired.id, task.id);
-    assert_eq!(acquired.state, TaskState::InProgress);
+    let mut tx = pool.begin().await.unwrap();
+    let mut found = operation_tasks::find_next_acquirable_for_update(&mut tx, now)
+        .await
+        .unwrap()
+        .expect("a runnable task");
+    assert_eq!(found.id, task.id);
+    assert_eq!(found.state, TaskState::Pending);
+
+    // Mirror what the worker does: drive the in-memory transition,
+    // then persist via set_acquired.
+    found.try_acquire(now).unwrap();
+    operation_tasks::set_acquired(&mut tx, &found)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let loaded = operation_tasks::find_by_id(&mut conn, &tenant_id, &task.id)
+        .await
+        .unwrap();
+    assert_eq!(loaded.state, TaskState::InProgress);
+    // Pending → InProgress leaves attempts at 0; the bump happens on
+    // re-acquisition, not on first pickup.
+    assert_eq!(loaded.attempts, 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn acquire_next_returns_none_when_no_runnable_tasks(pool: PgPool) {
-    let mut conn = pool.acquire().await.unwrap();
+async fn find_next_acquirable_returns_none_when_no_runnable_tasks(pool: PgPool) {
+    let mut tx = pool.begin().await.unwrap();
     let now = now_micros();
-    let acquired = operation_tasks::acquire_next(&mut conn, now).await.unwrap();
-    assert!(acquired.is_none());
+    let found = operation_tasks::find_next_acquirable_for_update(&mut tx, now)
+        .await
+        .unwrap();
+    assert!(found.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn acquire_next_skips_tasks_whose_retry_timer_is_in_the_future(pool: PgPool) {
+async fn find_next_acquirable_skips_tasks_whose_retry_timer_is_in_the_future(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let now = now_micros();
@@ -118,21 +142,109 @@ async fn acquire_next_skips_tasks_whose_retry_timer_is_in_the_future(pool: PgPoo
     task.state = TaskState::InProgress;
     task.next_attempt_at = Some(now + Duration::hours(1));
 
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        operation_tasks::insert(&mut conn, &task).await.unwrap();
+    }
 
-    let acquired = operation_tasks::acquire_next(&mut conn, now).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let found = operation_tasks::find_next_acquirable_for_update(&mut tx, now)
+        .await
+        .unwrap();
     assert!(
-        acquired.is_none(),
+        found.is_none(),
         "task with future next_attempt_at should be skipped"
     );
+    drop(tx);
 
     // Once the timer has passed, the task becomes acquirable.
     let later = now + Duration::hours(2);
-    let acquired = operation_tasks::acquire_next(&mut conn, later)
+    let mut tx = pool.begin().await.unwrap();
+    let found = operation_tasks::find_next_acquirable_for_update(&mut tx, later)
         .await
         .unwrap();
-    assert_eq!(acquired.unwrap().id, task.id);
+    assert_eq!(found.unwrap().id, task.id);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn set_acquired_persists_in_progress_increment_on_reacquire(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let now = now_micros();
+    let mut task = fixture_task(tenant_id.clone());
+    // Simulate state after one failed attempt: still InProgress with
+    // next_attempt_at in the past so the SELECT picks it up again.
+    task.state = TaskState::InProgress;
+    task.attempts = 0;
+    task.next_attempt_at = Some(now - Duration::seconds(1));
+
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        operation_tasks::insert(&mut conn, &task).await.unwrap();
+    }
+
+    let mut tx = pool.begin().await.unwrap();
+    let mut found = operation_tasks::find_next_acquirable_for_update(&mut tx, now)
+        .await
+        .unwrap()
+        .expect("retry timer has passed");
+    found.try_acquire(now).unwrap();
+    operation_tasks::set_acquired(&mut tx, &found)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let loaded = operation_tasks::find_by_id(&mut conn, &tenant_id, &task.id)
+        .await
+        .unwrap();
+    assert_eq!(loaded.state, TaskState::InProgress);
+    assert_eq!(
+        loaded.attempts, 1,
+        "InProgress → InProgress acquire bumps attempts"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn find_next_acquirable_skip_locked_lets_second_worker_pass(pool: PgPool) {
+    // Two concurrent transactions both call
+    // find_next_acquirable_for_update against a single runnable task.
+    // The first holds the lock; the second must see the row as
+    // unavailable because of FOR UPDATE SKIP LOCKED.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let task = fixture_task(tenant_id);
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        operation_tasks::insert(&mut conn, &task).await.unwrap();
+    }
+
+    let now = now_micros();
+    let mut tx_a = pool.begin().await.unwrap();
+    let found_a = operation_tasks::find_next_acquirable_for_update(&mut tx_a, now)
+        .await
+        .unwrap();
+    assert!(found_a.is_some(), "first transaction picks the task");
+
+    let mut tx_b = pool.begin().await.unwrap();
+    let found_b = operation_tasks::find_next_acquirable_for_update(&mut tx_b, now)
+        .await
+        .unwrap();
+    assert!(
+        found_b.is_none(),
+        "second transaction must skip the row locked by tx_a"
+    );
+
+    // Release tx_a's lock; the row is acquirable again afterwards.
+    drop(tx_a);
+    let mut tx_c = pool.begin().await.unwrap();
+    let found_c = operation_tasks::find_next_acquirable_for_update(&mut tx_c, now)
+        .await
+        .unwrap();
+    assert!(
+        found_c.is_some(),
+        "row visible again after the holding transaction rolls back"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -172,10 +284,11 @@ async fn advance_step_merges_state_data_and_resets_attempts(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn schedule_retry_records_backoff_and_error(pool: PgPool) {
+async fn schedule_retry_records_backoff_and_error_without_bumping_attempts(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = fixture_task(tenant_id.clone());
+    let mut task = fixture_task(tenant_id.clone());
+    task.attempts = 4;
     let mut conn = pool.acquire().await.unwrap();
     operation_tasks::insert(&mut conn, &task).await.unwrap();
 
@@ -184,7 +297,6 @@ async fn schedule_retry_records_backoff_and_error(pool: PgPool) {
     operation_tasks::schedule_retry(
         &mut conn,
         &task.id,
-        4,
         next,
         "registry_unavailable",
         "503 from registry",
@@ -196,6 +308,8 @@ async fn schedule_retry_records_backoff_and_error(pool: PgPool) {
     let loaded = operation_tasks::find_by_id(&mut conn, &tenant_id, &task.id)
         .await
         .unwrap();
+    // schedule_retry no longer bumps attempts — the increment lives
+    // in OperationTask::try_acquire, applied on the next pickup.
     assert_eq!(loaded.attempts, 4);
     assert_eq!(loaded.next_attempt_at, Some(next));
     assert_eq!(loaded.error_code.as_deref(), Some("registry_unavailable"));
@@ -203,15 +317,24 @@ async fn schedule_retry_records_backoff_and_error(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn mark_failed_transitions_to_failed_with_completed_at(pool: PgPool) {
+async fn set_terminal_state_persists_failed_state_with_error_pair(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = fixture_task(tenant_id.clone());
+    let mut task = fixture_task(tenant_id.clone());
     let mut conn = pool.acquire().await.unwrap();
     operation_tasks::insert(&mut conn, &task).await.unwrap();
 
     let now = now_micros();
-    operation_tasks::mark_failed(&mut conn, &task.id, "exhausted", "retry cap hit", now)
+    // Simulate the in-memory mutation that `OperationTask::try_fail`
+    // performs in the worker, then persist via `set_terminal_state`.
+    task.state = TaskState::Failed;
+    task.error_code = Some("exhausted".into());
+    task.error_message = Some("retry cap hit".into());
+    task.next_attempt_at = None;
+    task.updated_at = now;
+    task.completed_at = Some(now);
+
+    operation_tasks::set_terminal_state(&mut conn, &task)
         .await
         .unwrap();
 
@@ -220,22 +343,33 @@ async fn mark_failed_transitions_to_failed_with_completed_at(pool: PgPool) {
         .unwrap();
     assert_eq!(loaded.state, TaskState::Failed);
     assert_eq!(loaded.error_code.as_deref(), Some("exhausted"));
-    assert!(loaded.completed_at.is_some());
+    assert_eq!(loaded.error_message.as_deref(), Some("retry cap hit"));
+    assert_eq!(loaded.completed_at, Some(now));
     assert!(loaded.next_attempt_at.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn mark_completed_records_result_issuer_id(pool: PgPool) {
+async fn set_terminal_state_persists_completed_state_with_result_issuer_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = fixture_task(tenant_id.clone());
+    let mut task = fixture_task(tenant_id.clone());
     let result_issuer_id = IssuerId::generate();
+    task.result_issuer_id = Some(result_issuer_id.clone());
 
     let mut conn = pool.acquire().await.unwrap();
     operation_tasks::insert(&mut conn, &task).await.unwrap();
 
     let now = now_micros();
-    operation_tasks::mark_completed(&mut conn, &task.id, Some(&result_issuer_id), now)
+    // Simulate the in-memory mutation that `OperationTask::try_complete`
+    // performs in the worker, then persist via `set_terminal_state`.
+    task.state = TaskState::Completed;
+    task.error_code = None;
+    task.error_message = None;
+    task.next_attempt_at = None;
+    task.updated_at = now;
+    task.completed_at = Some(now);
+
+    operation_tasks::set_terminal_state(&mut conn, &task)
         .await
         .unwrap();
 
@@ -244,5 +378,5 @@ async fn mark_completed_records_result_issuer_id(pool: PgPool) {
         .unwrap();
     assert_eq!(loaded.state, TaskState::Completed);
     assert_eq!(loaded.result_issuer_id, Some(result_issuer_id));
-    assert!(loaded.completed_at.is_some());
+    assert_eq!(loaded.completed_at, Some(now));
 }
