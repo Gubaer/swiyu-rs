@@ -58,6 +58,12 @@ struct ImportOauthRefreshTokenArgs {
     /// with --token.
     #[arg(long)]
     token_stdin: bool,
+    /// Skip the write if `oauth_refresh_token` is already populated.
+    /// Used by the dev-loop auto-seed so a token the runtime has
+    /// rotated is never clobbered. The operator path omits this flag
+    /// and overwrites unconditionally.
+    #[arg(long)]
+    only_if_empty: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -152,9 +158,21 @@ async fn import_oauth_refresh_token(
     let pool: PgPool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
 
-    cli::tenant::import_oauth_refresh_token(&pool, &tenant_id, token).await?;
+    let outcome =
+        cli::tenant::import_oauth_refresh_token(&pool, &tenant_id, token, args.only_if_empty)
+            .await?;
 
-    eprintln!("oauth_refresh_token updated for tenant {}", args.tenant);
+    match outcome {
+        cli::tenant::SeedOutcome::Wrote => {
+            eprintln!("oauth_refresh_token updated for tenant {}", args.tenant);
+        }
+        cli::tenant::SeedOutcome::Skipped => {
+            eprintln!(
+                "oauth_refresh_token already set for tenant {}; skipped (--only-if-empty)",
+                args.tenant
+            );
+        }
+    }
     Ok(())
 }
 

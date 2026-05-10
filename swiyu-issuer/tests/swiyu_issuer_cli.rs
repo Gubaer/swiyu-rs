@@ -6,7 +6,9 @@
 use secrecy::SecretString;
 use sqlx::PgPool;
 
-use swiyu_issuer::cli::tenant::{ImportOauthRefreshTokenError, import_oauth_refresh_token};
+use swiyu_issuer::cli::tenant::{
+    ImportOauthRefreshTokenError, SeedOutcome, import_oauth_refresh_token,
+};
 use swiyu_issuer::domain::TenantId;
 
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
@@ -30,14 +32,16 @@ async fn import_writes_refresh_token_for_existing_tenant(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
-    import_oauth_refresh_token(
+    let outcome = import_oauth_refresh_token(
         &pool,
         &tenant_id,
         SecretString::from("fresh-renewal-token".to_string()),
+        false,
     )
     .await
     .unwrap();
 
+    assert_eq!(outcome, SeedOutcome::Wrote);
     assert_eq!(
         read_refresh_token(&pool, &tenant_id).await.as_deref(),
         Some("fresh-renewal-token"),
@@ -48,10 +52,14 @@ async fn import_writes_refresh_token_for_existing_tenant(pool: PgPool) {
 async fn import_returns_tenant_not_found_for_unknown_tenant(pool: PgPool) {
     let tenant_id = TenantId::generate();
 
-    let err =
-        import_oauth_refresh_token(&pool, &tenant_id, SecretString::from("ignored".to_string()))
-            .await
-            .unwrap_err();
+    let err = import_oauth_refresh_token(
+        &pool,
+        &tenant_id,
+        SecretString::from("ignored".to_string()),
+        false,
+    )
+    .await
+    .unwrap_err();
 
     match err {
         ImportOauthRefreshTokenError::TenantNotFound(id) => {
@@ -66,15 +74,78 @@ async fn import_overwrites_previous_refresh_token(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
-    import_oauth_refresh_token(&pool, &tenant_id, SecretString::from("first".to_string()))
-        .await
-        .unwrap();
-    import_oauth_refresh_token(&pool, &tenant_id, SecretString::from("second".to_string()))
-        .await
-        .unwrap();
+    let first = import_oauth_refresh_token(
+        &pool,
+        &tenant_id,
+        SecretString::from("first".to_string()),
+        false,
+    )
+    .await
+    .unwrap();
+    let second = import_oauth_refresh_token(
+        &pool,
+        &tenant_id,
+        SecretString::from("second".to_string()),
+        false,
+    )
+    .await
+    .unwrap();
 
+    assert_eq!(first, SeedOutcome::Wrote);
+    assert_eq!(second, SeedOutcome::Wrote);
     assert_eq!(
         read_refresh_token(&pool, &tenant_id).await.as_deref(),
         Some("second"),
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn import_skip_when_only_if_empty_and_already_set(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+
+    import_oauth_refresh_token(
+        &pool,
+        &tenant_id,
+        SecretString::from("original".to_string()),
+        false,
+    )
+    .await
+    .unwrap();
+
+    let outcome = import_oauth_refresh_token(
+        &pool,
+        &tenant_id,
+        SecretString::from("would-overwrite".to_string()),
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome, SeedOutcome::Skipped);
+    assert_eq!(
+        read_refresh_token(&pool, &tenant_id).await.as_deref(),
+        Some("original"),
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn import_writes_when_only_if_empty_and_column_null(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+
+    let outcome = import_oauth_refresh_token(
+        &pool,
+        &tenant_id,
+        SecretString::from("seed-from-null".to_string()),
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome, SeedOutcome::Wrote);
+    assert_eq!(
+        read_refresh_token(&pool, &tenant_id).await.as_deref(),
+        Some("seed-from-null"),
     );
 }

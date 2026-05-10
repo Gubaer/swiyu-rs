@@ -99,6 +99,42 @@ services:
       - vault secrets enable transit || true
     restart: "no"
 
+  # One-shot dev seed: writes ${SWIYU_REFRESH_TOKEN} (operator-pasted
+  # from the ePortal in .env) into the seeded dev tenant's
+  # oauth_refresh_token column whenever it is NULL. Idempotent —
+  # `--only-if-empty` skips the write once the runtime has rotated
+  # the token. Empty SWIYU_REFRESH_TOKEN silently skips the seed; the
+  # first worker call then fails with MissingCredentials, same as
+  # without this service. issuer-mgmt's start is gated on
+  # service_completed_successfully so the seed lands before any
+  # OAuth2 grant is attempted.
+  bootstrap-dev-tenant:
+    build:
+      context: ..
+      dockerfile: swiyu-issuer/Dockerfile
+      target: runtime-cli
+    container_name: swiyu-issuer-bootstrap-dev-tenant
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}
+      DEV_TENANT_ID: ${DEV_TENANT_ID:-4Mk7yK5pQR7sN3}
+      SWIYU_REFRESH_TOKEN: ${SWIYU_REFRESH_TOKEN}
+      RUST_LOG: ${RUST_LOG:-info,swiyu_issuer=debug}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -n "$$SWIYU_REFRESH_TOKEN" ]; then
+          printf '%s' "$$SWIYU_REFRESH_TOKEN" \
+            | swiyu-issuer-cli tenant import-oauth-refresh-token \
+                --tenant "$$DEV_TENANT_ID" --token-stdin --only-if-empty
+        else
+          echo "bootstrap-dev-tenant: SWIYU_REFRESH_TOKEN is empty, skipping" >&2
+        fi
+    restart: "no"
+
   # The issuer-mgmt management API. SWIYU_IDENTIFIER_REGISTRY_URL and
   # SWIYU_ACCESS_TOKEN come from .env; the in-container hostnames for
   # Postgres and Vault are forced here because the host-side values
@@ -114,6 +150,8 @@ services:
       postgres:
         condition: service_healthy
       vault-init:
+        condition: service_completed_successfully
+      bootstrap-dev-tenant:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}

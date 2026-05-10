@@ -1,19 +1,21 @@
-# Build the swiyu-issuer binaries (`issuer-mgmt` and `issuer-oidc`)
-# as release images, using cargo-chef to keep dependency compilation
-# in a cached layer.
+# Build the swiyu-issuer binaries (`issuer-mgmt`, `issuer-oidc`, and
+# `swiyu-issuer-cli`) as release images, using cargo-chef to keep
+# dependency compilation in a cached layer.
 #
 # The build context must be the *workspace root* (one directory up
 # from this file) because swiyu-issuer depends on the sibling crates
 # swiyu-core and swiyu-registries via `path = "../..."`. Compose
 # wires this up with `context: ..` and `dockerfile: swiyu-issuer/Dockerfile`.
 #
-# The Dockerfile produces two runtime images via separate `runtime-*`
+# The Dockerfile produces three runtime images via separate `runtime-*`
 # stages, selected with Docker's `--target` flag:
 #
 #   docker build -f swiyu-issuer/Dockerfile --target runtime-mgmt \
 #       -t swiyu-issuer-mgmt:dev .
 #   docker build -f swiyu-issuer/Dockerfile --target runtime-oidc \
 #       -t swiyu-issuer-oidc:dev .
+#   docker build -f swiyu-issuer/Dockerfile --target runtime-cli \
+#       -t swiyu-issuer-cli:dev .
 #
 # The compose file uses the same flag per service.
 
@@ -43,7 +45,7 @@ COPY --from=planner /app/recipe.json recipe.json
 # Cargo.lock or any crate's Cargo.toml changes.
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --bin issuer-mgmt --bin issuer-oidc -p swiyu-issuer
+RUN cargo build --release --bin issuer-mgmt --bin issuer-oidc --bin swiyu-issuer-cli -p swiyu-issuer
 
 FROM debian:bookworm-slim AS runtime-base
 RUN apt-get update \
@@ -62,3 +64,13 @@ COPY --from=builder /app/target/release/issuer-oidc /usr/local/bin/issuer-oidc
 USER issuer
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/issuer-oidc"]
+
+# Operator/dev-loop CLI. Used by the bootstrap-dev-tenant compose
+# service to seed the dev tenant's oauth_refresh_token from .env on
+# every `docker compose up`. Has no long-running entrypoint —
+# invocations come from the compose service or `docker run` with
+# explicit subcommand args.
+FROM runtime-base AS runtime-cli
+COPY --from=builder /app/target/release/swiyu-issuer-cli /usr/local/bin/swiyu-issuer-cli
+USER issuer
+ENTRYPOINT ["/usr/local/bin/swiyu-issuer-cli"]
