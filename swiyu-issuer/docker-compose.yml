@@ -177,6 +177,11 @@ services:
       SIGNING_ENGINE: ${SIGNING_ENGINE:-vault}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+      # `dev` is the only supported value today; `vault` is not yet implemented.
+      # The well-known master key below encodes the 32-byte ASCII string
+      # `dev-secret-management-master-key` and must never escape dev.
+      SECRET_ENCRYPTION_ENGINE: ${SECRET_ENCRYPTION_ENGINE:-dev}
+      SECRET_ENCRYPTION_DEV_MASTER_KEY: ${SECRET_ENCRYPTION_DEV_MASTER_KEY:-ZGV2LXNlY3JldC1tYW5hZ2VtZW50LW1hc3Rlci1rZXk=}
       SWIYU_IDENTIFIER_REGISTRY_URL: ${SWIYU_IDENTIFIER_REGISTRY_URL}
       SWIYU_STATUS_REGISTRY_URL: ${SWIYU_STATUS_REGISTRY_URL}
       SWIYU_TOKEN_URL: ${SWIYU_TOKEN_URL}
@@ -223,6 +228,8 @@ services:
       SIGNING_ENGINE: ${SIGNING_ENGINE:-vault}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+      SECRET_ENCRYPTION_ENGINE: ${SECRET_ENCRYPTION_ENGINE:-dev}
+      SECRET_ENCRYPTION_DEV_MASTER_KEY: ${SECRET_ENCRYPTION_DEV_MASTER_KEY:-ZGV2LXNlY3JldC1tYW5hZ2VtZW50LW1hc3Rlci1rZXk=}
       RUST_LOG: ${RUST_LOG:-debug,sqlx=info,hyper=info,h2=info,reqwest=info,tower=info,tower_http=info}
     ports:
       - "${ISSUER_OIDC_HOST_PORT:-8081}:8081"

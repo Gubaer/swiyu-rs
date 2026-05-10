@@ -7,7 +7,10 @@ use chrono::Duration;
 use rand_core::OsRng;
 use reqwest::Client;
 use swiyu_issuer::api_management::{AppState, Config, router};
-use swiyu_issuer::domain::{ProviderRegistry, build_signing_engine_from_env};
+use swiyu_issuer::domain::{
+    AnySecretEncryptionEngine, ProviderRegistry, build_secret_encryption_engine_from_env,
+    build_signing_engine_from_env,
+};
 use swiyu_issuer::persistence;
 use swiyu_issuer::worker::{StatusListPublisher, Worker};
 use swiyu_registries::identifier::IdentifierRegistryClient;
@@ -66,6 +69,10 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let status_registry_for_publisher = StatusRegistryClient::new(status_registry_url)?;
     let signing_engine_for_worker = build_signing_engine_from_env(pool.clone())?;
     let signing_engine_for_publisher = build_signing_engine_from_env(pool.clone())?;
+    // Built at startup so SECRET_ENCRYPTION_* misconfiguration fails fast.
+    // No consumer holds the engine yet — tenant repository wiring lands later.
+    let _secret_encryption_engine: Arc<AnySecretEncryptionEngine> =
+        Arc::new(build_secret_encryption_engine_from_env()?);
     // The safety margin is the fraction of the assumed token lifetime
     // *not yet elapsed* when we still consider the token fresh. With a
     // default 1-hour lifetime and a 0.75 refresh fraction, the margin
