@@ -24,5 +24,6 @@ mod persist_issuer;
 mod provision_status_list;
 mod status_lists_persistence;
 mod swap_keys;
+mod swiyu_issuer_cli;
 mod tenants_persistence;
 mod vault_signing_engine;

@@ -1,8 +1,11 @@
 use std::env;
+use std::io;
 
 use chrono::Duration;
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
+use secrecy::SecretString;
 use sqlx::PgPool;
+use swiyu_issuer::cli;
 use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, TenantId};
 use swiyu_issuer::persistence;
 
@@ -32,6 +35,29 @@ enum TenantCommand {
         #[command(subcommand)]
         command: ApiTokenCommand,
     },
+    /// Write a fresh OAuth2 refresh token (the "renewal token" from
+    /// the ePortal) into the named tenant's row. Idempotent.
+    ImportOauthRefreshToken(ImportOauthRefreshTokenArgs),
+}
+
+#[derive(Args, Debug)]
+#[command(group(
+    ArgGroup::new("token_source")
+        .required(true)
+        .args(["token", "token_stdin"])
+))]
+struct ImportOauthRefreshTokenArgs {
+    /// Bare base58 tenant id (no `tenant_` prefix).
+    #[arg(long)]
+    tenant: String,
+    /// The new refresh token value. Mutually exclusive with --token-stdin.
+    #[arg(long)]
+    token: Option<String>,
+    /// Read the new refresh token from stdin instead of the command line.
+    /// Avoids leaking the secret into shell history. Mutually exclusive
+    /// with --token.
+    #[arg(long)]
+    token_stdin: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -69,6 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     expires_in,
                 } => mint_token(tenant, name, expires_in.as_deref()).await,
             },
+            TenantCommand::ImportOauthRefreshToken(args) => import_oauth_refresh_token(args).await,
         },
     }
 }
@@ -102,6 +129,37 @@ async fn mint_token(
         token.id, token.name
     );
 
+    Ok(())
+}
+
+async fn import_oauth_refresh_token(
+    args: ImportOauthRefreshTokenArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tenant_id = TenantId::from_bare(&args.tenant)
+        .map_err(|err| format!("--tenant is not a valid bare tenant id: {err}"))?;
+
+    let raw_token = match (args.token, args.token_stdin) {
+        (Some(value), false) => value,
+        (None, true) => {
+            let mut buf = String::new();
+            io::stdin().read_line(&mut buf)?;
+            buf.trim().to_string()
+        }
+        // clap's ArgGroup enforces exactly one of --token / --token-stdin.
+        _ => unreachable!("ArgGroup invariant: token_source is required and single-pick"),
+    };
+    if raw_token.is_empty() {
+        return Err("refresh token is empty".into());
+    }
+    let token = SecretString::from(raw_token);
+
+    let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
+    let pool: PgPool = persistence::connect(&database_url).await?;
+    persistence::run_migrations(&pool).await?;
+
+    cli::tenant::import_oauth_refresh_token(&pool, &tenant_id, token).await?;
+
+    eprintln!("oauth_refresh_token updated for tenant {}", args.tenant);
     Ok(())
 }
 
