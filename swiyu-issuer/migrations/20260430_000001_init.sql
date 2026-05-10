@@ -384,7 +384,7 @@ CREATE INDEX issued_credentials_holder
 -- ============================================================================
 
 INSERT INTO tenants (id, partner_id) VALUES
-    ('4Mk7yK5pQR7sN3', '4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef');
+    ('4Mk7yK5pQR7sN3', '7355b9bb-d45a-4d42-82ea-0c30b3f2fa25');
 
 -- The seeded issuer carries no SigningEngine key triple (state,
 -- authorized_key_id, assertion_key_id, ...). Use it to exercise the
