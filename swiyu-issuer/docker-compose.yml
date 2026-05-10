@@ -135,11 +135,11 @@ services:
         fi
     restart: "no"
 
-  # The issuer-mgmt management API. SWIYU_IDENTIFIER_REGISTRY_URL and
-  # SWIYU_ACCESS_TOKEN come from .env; the in-container hostnames for
-  # Postgres and Vault are forced here because the host-side values
-  # in .env (localhost:5433, localhost:8200) do not resolve inside
-  # the compose network.
+  # The issuer-mgmt management API. SWIYU_IDENTIFIER_REGISTRY_URL,
+  # SWIYU_STATUS_REGISTRY_URL, and SWIYU_TOKEN_URL come from .env; the
+  # in-container hostnames for Postgres and Vault are forced here
+  # because the host-side values in .env (localhost:5433,
+  # localhost:8200) do not resolve inside the compose network.
   issuer-mgmt:
     build:
       context: ..
@@ -162,7 +162,7 @@ services:
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
       SWIYU_IDENTIFIER_REGISTRY_URL: ${SWIYU_IDENTIFIER_REGISTRY_URL}
       SWIYU_STATUS_REGISTRY_URL: ${SWIYU_STATUS_REGISTRY_URL}
-      SWIYU_ACCESS_TOKEN: ${SWIYU_ACCESS_TOKEN}
+      SWIYU_TOKEN_URL: ${SWIYU_TOKEN_URL}
       # Smoke-test friendly default: debug for our crates, info for
       # known-noisy deps (sqlx prints every prepared statement at debug;
       # hyper/h2/reqwest/tower flood with per-byte trace lines).
