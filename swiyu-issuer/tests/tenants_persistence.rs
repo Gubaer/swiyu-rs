@@ -82,6 +82,6 @@ async fn seeded_dev_tenant_carries_kacon_partner_id(pool: PgPool) {
 
     assert_eq!(
         tenant.partner_id.as_deref(),
-        Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"),
+        Some("7355b9bb-d45a-4d42-82ea-0c30b3f2fa25"),
     );
 }
