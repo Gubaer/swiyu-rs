@@ -218,7 +218,7 @@ http POST :8081/i/9hXq2vRtL8pK7f/credential \
 # Mint a fresh token (CLI; no HTTP)
 # -----------------------------------------------------------------------------
 # Prints a tok_... wire form once on stdout; only the hash is persisted.
-#   cargo run --bin issuer-mgmt -- mint-token \
+#   cargo run --bin swiyu-issuer-cli -- tenant api-token mint \
 #     --tenant 4Mk7yK5pQR7sN3 --name local-dev
-#   cargo run --bin issuer-mgmt -- mint-token \
+#   cargo run --bin swiyu-issuer-cli -- tenant api-token mint \
 #     --tenant 4Mk7yK5pQR7sN3 --name short-lived --expires-in 1h

@@ -15,7 +15,7 @@ info:
 
     Authentication: every request must carry
     `Authorization: Bearer tok_<base58>`. Tokens are tenant-scoped
-    and minted via the `issuer-mgmt mint-token` CLI; alpha/beta
+    and minted via the `swiyu-issuer-cli tenant api-token mint` CLI; alpha/beta
     deployments ship with a documented dev token for the seeded
     tenant. See `specs/impl_auth.md` for the full design.
 
