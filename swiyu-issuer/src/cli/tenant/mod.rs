@@ -1,3 +1,5 @@
+pub mod api_token;
+
 use secrecy::SecretString;
 use sqlx::PgPool;
 

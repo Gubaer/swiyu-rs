@@ -6,7 +6,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand};
 use secrecy::SecretString;
 use sqlx::PgPool;
 use swiyu_issuer::cli;
-use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, TenantId};
+use swiyu_issuer::domain::TenantId;
 use swiyu_issuer::persistence;
 
 #[derive(Parser, Debug)]
@@ -108,25 +108,20 @@ async fn mint_token(
     let tenant_id = TenantId::from_bare(&tenant)
         .map_err(|err| format!("--tenant is not a valid bare tenant id: {err}"))?;
     let expires_in = expires_in.map(parse_duration).transpose()?;
+    let expires_at = expires_in.map(|d| chrono::Utc::now() + d);
 
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
     let pool: PgPool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
 
-    let mut conn = pool.acquire().await?;
-
-    let secret = ApiTokenSecret::generate();
-    let expires_at = expires_in.map(|d| chrono::Utc::now() + d);
-    let token = ApiToken::new(tenant_id, name, secret.hash(), expires_at);
-
-    persistence::api_tokens::insert(&mut conn, &token).await?;
+    let minted = cli::tenant::api_token::mint(&pool, tenant_id, name, expires_at).await?;
 
     // Print the bare wire form on stdout exactly once. The reminder
     // goes to stderr so a `| jq .` or other piping does not lose it.
-    println!("{}", secret.as_wire());
+    println!("{}", minted.secret.as_wire());
     eprintln!(
         "save this token now; only its hash is persisted. id={} name={}",
-        token.id, token.name
+        minted.token.id, minted.token.name
     );
 
     Ok(())
