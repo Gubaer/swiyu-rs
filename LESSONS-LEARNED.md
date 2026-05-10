@@ -12,6 +12,8 @@
 ## Doc Comments
 
 - When referring to a field name or identifier in a doc comment, use a bare backtick identifier: `` `kid` ``, not `` `"kid"` ``.
+- When a doc comment references another item (method, field, type, variant), use an intra-doc link, not plain backticks. Prefer the shortcut form `` [`name`][Type::name] `` over the full-path form `` [`Type::name`] `` — the visible text stays a bare identifier so the prose reads naturally, while the link still resolves. Reserve full-path link text for the rare case where the type qualification adds disambiguation a reader needs. Verify links with `RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" cargo doc -p <crate> --no-deps --document-private-items` after any docs change.
+- Don't link every mention. Link the first reference in a paragraph; leave subsequent prose mentions of the same item as plain backticks. State-machine vocabulary (`Pending`, `InProgress`, etc.) used as English nouns in flowing prose stays plain backticks; link only the items a reader would want to navigate to (methods, error variants, cross-module symbols).
 
 ## Spec file references in comments
 

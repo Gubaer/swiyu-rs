@@ -13,7 +13,9 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::domain::{OperationTask, ProviderRegistry, SigningEngine, StepOutcome, TaskType};
+use crate::domain::{
+    DomainError, OperationTask, ProviderRegistry, SigningEngine, StepOutcome, TaskType,
+};
 use crate::persistence::{self, PersistenceError};
 
 use super::BoxedRng;
@@ -93,7 +95,7 @@ pub struct Worker<R, S, C> {
     /// resolves the provider for `task.tenant_id` once per task and
     /// passes it (as `&AnyTokenProvider`) into the per-step executor.
     providers: Arc<ProviderRegistry>,
-    /// Heap-allocated [`RngCore`] so callers can inject a
+    /// Heap-allocated [`rand_core::RngCore`] so callers can inject a
     /// deterministic implementation in tests without making the
     /// whole struct generic over a fourth parameter.
     rng: BoxedRng,
@@ -162,9 +164,33 @@ where
         info!("worker stopped");
     }
 
+    /// Claims the next runnable task, holding it under
+    /// `FOR UPDATE SKIP LOCKED` until the claim is committed.
+    ///
+    /// Three steps inside one transaction:
+    /// [`find_next_acquirable_for_update`][persistence::operation_tasks::find_next_acquirable_for_update]
+    /// selects the row with the lock,
+    /// [`try_acquire`][OperationTask::try_acquire] drives the in-memory
+    /// aggregate, and
+    /// [`set_acquired`][persistence::operation_tasks::set_acquired]
+    /// persists the new state and attempt count. The lock is held
+    /// across all three so a concurrent worker either skips this row
+    /// entirely or sees the committed `in_progress` value.
     async fn acquire_next(&self) -> Result<Option<OperationTask>, PersistenceError> {
-        let mut conn = self.pool.acquire().await.map_err(PersistenceError::Db)?;
-        persistence::operation_tasks::acquire_next(&mut conn, Utc::now()).await
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(PersistenceError::Db)?;
+        let Some(mut task) =
+            persistence::operation_tasks::find_next_acquirable_for_update(&mut tx, now).await?
+        else {
+            return Ok(None);
+        };
+        task.try_acquire(now)
+            .map_err(|e: DomainError| PersistenceError::DataIntegrity {
+                details: format!("try_acquire: {e}"),
+            })?;
+        persistence::operation_tasks::set_acquired(&mut tx, &task).await?;
+        tx.commit().await.map_err(PersistenceError::Db)?;
+        Ok(Some(task))
     }
 
     async fn execute_task(&mut self, task: &mut OperationTask) -> Result<(), WorkerError> {

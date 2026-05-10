@@ -165,13 +165,13 @@ pub struct OperationTask {
 
 impl OperationTask {
     /// Transitions an `InProgress` task to `Completed` and stamps the
-    /// terminal timestamps. The associated `result_issuer_id` (if
-    /// any) is expected to already be on the aggregate from earlier
+    /// terminal timestamps. The associated [`result_issuer_id`][Self::result_issuer_id]
+    /// (if any) is expected to already be on the aggregate from earlier
     /// step writes.
     ///
-    /// Returns `DomainError::StateTransitionNotAllowed` if the task
-    /// is not currently `InProgress` — calling this on a `Pending`,
-    /// `Completed`, or `Failed` task is a worker-loop bug.
+    /// Returns [`StateTransitionNotAllowed`][DomainError::StateTransitionNotAllowed]
+    /// if the task is not currently `InProgress` — calling this on a
+    /// `Pending`, `Completed`, or `Failed` task is a worker-loop bug.
     pub fn try_complete(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
         match self.state {
             TaskState::InProgress => {
@@ -190,10 +190,10 @@ impl OperationTask {
     /// Transitions an `InProgress` task to `Failed`, stamps the
     /// terminal timestamps, and records the operator-visible error
     /// pair. Used both for non-recoverable step errors
-    /// (`StepOutcome::Terminal`) and for retry-cap exhaustion.
+    /// ([`Terminal`][StepOutcome::Terminal]) and for retry-cap exhaustion.
     ///
-    /// Returns `DomainError::StateTransitionNotAllowed` if the task
-    /// is not currently `InProgress`.
+    /// Returns [`StateTransitionNotAllowed`][DomainError::StateTransitionNotAllowed]
+    /// if the task is not currently `InProgress`.
     pub fn try_fail(
         &mut self,
         error_code: String,
@@ -211,6 +211,38 @@ impl OperationTask {
                 Ok(())
             }
             _ => Err(DomainError::StateTransitionNotAllowed),
+        }
+    }
+
+    /// Claims a runnable task for the worker. Legal from `Pending`
+    /// (first pickup) and from `InProgress` (re-acquisition: either a
+    /// scheduled retry whose timer has elapsed, or recovery after a
+    /// worker crash mid-step).
+    ///
+    /// Pending → InProgress leaves [`attempts`][Self::attempts] untouched:
+    /// the upcoming run is the first attempt for this step, recorded as
+    /// `attempts == 0` while it executes. InProgress → InProgress
+    /// increments [`attempts`][Self::attempts]: a previous attempt has
+    /// already completed (failed or crashed) and the upcoming run is
+    /// the next one. The aggregate cannot tell scheduled-retry from
+    /// crash-recovery from row state alone, and treats them
+    /// identically.
+    ///
+    /// Returns [`StateTransitionNotAllowed`][DomainError::StateTransitionNotAllowed]
+    /// from `Completed` or `Failed`; terminal tasks are not re-acquirable.
+    pub fn try_acquire(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
+        match self.state {
+            TaskState::Pending => {
+                self.state = TaskState::InProgress;
+                self.updated_at = now;
+                Ok(())
+            }
+            TaskState::InProgress => {
+                self.attempts = self.attempts.saturating_add(1);
+                self.updated_at = now;
+                Ok(())
+            }
+            TaskState::Completed | TaskState::Failed => Err(DomainError::StateTransitionNotAllowed),
         }
     }
 }
@@ -351,5 +383,43 @@ mod tests {
             .try_fail("e".into(), "m".into(), chrono::Utc::now())
             .unwrap_err();
         assert!(matches!(err, DomainError::StateTransitionNotAllowed));
+    }
+
+    #[test]
+    fn try_acquire_pending_to_in_progress_keeps_attempts() {
+        let mut task = fixture_task_in_state(TaskState::Pending);
+        task.attempts = 0;
+        let now = chrono::Utc::now();
+        task.try_acquire(now).unwrap();
+        assert_eq!(task.state, TaskState::InProgress);
+        assert_eq!(task.attempts, 0);
+        assert_eq!(task.updated_at, now);
+    }
+
+    #[test]
+    fn try_acquire_in_progress_to_in_progress_increments_attempts() {
+        let mut task = fixture_task_in_state(TaskState::InProgress);
+        task.attempts = 2;
+        let now = chrono::Utc::now();
+        task.try_acquire(now).unwrap();
+        assert_eq!(task.state, TaskState::InProgress);
+        assert_eq!(task.attempts, 3);
+        assert_eq!(task.updated_at, now);
+    }
+
+    #[test]
+    fn try_acquire_rejects_completed() {
+        let mut task = fixture_task_in_state(TaskState::Completed);
+        let err = task.try_acquire(chrono::Utc::now()).unwrap_err();
+        assert!(matches!(err, DomainError::StateTransitionNotAllowed));
+        assert_eq!(task.state, TaskState::Completed);
+    }
+
+    #[test]
+    fn try_acquire_rejects_failed() {
+        let mut task = fixture_task_in_state(TaskState::Failed);
+        let err = task.try_acquire(chrono::Utc::now()).unwrap_err();
+        assert!(matches!(err, DomainError::StateTransitionNotAllowed));
+        assert_eq!(task.state, TaskState::Failed);
     }
 }

@@ -110,36 +110,38 @@ pub async fn find_latest_by_type_and_issuer(
     row.as_ref().map(row_to_task).transpose()
 }
 
-/// Atomically picks the oldest runnable task and stamps it `in_progress`.
+/// Returns the next runnable task while holding a row-level lock on
+/// it. The caller is expected to be inside a transaction; the lock
+/// is released when that transaction commits or rolls back.
 ///
 /// "Runnable" means state is `pending` or `in_progress` (the latter
-/// covers tasks resumed after worker crash) and `next_attempt_at` is
-/// null or has already passed. Returns `None` when there is nothing to
-/// run. The query uses `FOR UPDATE SKIP LOCKED` so a future split into
-/// multiple workers does not require schema or query changes.
-pub async fn acquire_next(
+/// covers tasks resumed after a worker crash and retries whose timer
+/// has elapsed) and `next_attempt_at` is null or has already passed.
+/// Returns `None` when there is nothing to run.
+///
+/// Uses `FOR UPDATE SKIP LOCKED` so concurrent workers see the
+/// already-locked row as absent and pick the next eligible row
+/// instead. Pair with [`try_acquire`][OperationTask::try_acquire] (to
+/// mutate the in-memory aggregate) and [`set_acquired`] (to persist)
+/// before committing the transaction.
+pub async fn find_next_acquirable_for_update(
     conn: &mut PgConnection,
     now: DateTime<Utc>,
 ) -> Result<Option<OperationTask>, PersistenceError> {
     let row = sqlx::query(
         r#"
-        UPDATE operation_tasks
-        SET state = 'in_progress',
-            updated_at = $1
-        WHERE id = (
-            SELECT id FROM operation_tasks
-            WHERE state IN ('pending', 'in_progress')
-              AND (next_attempt_at IS NULL OR next_attempt_at <= $1)
-            ORDER BY next_attempt_at NULLS FIRST, created_at
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED
-        )
-        RETURNING id, tenant_id, task_type, state, step,
-                  attempts, next_attempt_at,
-                  error_code, error_message,
-                  input, state_data,
-                  result_issuer_id,
-                  created_at, updated_at, completed_at
+        SELECT id, tenant_id, task_type, state, step,
+               attempts, next_attempt_at,
+               error_code, error_message,
+               input, state_data,
+               result_issuer_id,
+               created_at, updated_at, completed_at
+        FROM operation_tasks
+        WHERE state IN ('pending', 'in_progress')
+          AND (next_attempt_at IS NULL OR next_attempt_at <= $1)
+        ORDER BY next_attempt_at NULLS FIRST, created_at
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
         "#,
     )
     .bind(now)
@@ -147,6 +149,39 @@ pub async fn acquire_next(
     .await?;
 
     row.as_ref().map(row_to_task).transpose()
+}
+
+/// Persists the post-[`try_acquire`][OperationTask::try_acquire]
+/// columns of an [`OperationTask`]: `state`, `attempts`, and
+/// `updated_at`. The caller controls the transaction; this helper
+/// does not commit. Run inside the same transaction that called
+/// [`find_next_acquirable_for_update`] so the row remains locked until
+/// the UPDATE commits.
+pub async fn set_acquired(
+    conn: &mut PgConnection,
+    task: &OperationTask,
+) -> Result<(), PersistenceError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE operation_tasks
+        SET state = $1,
+            attempts = $2,
+            updated_at = $3
+        WHERE id = $4
+        "#,
+    )
+    .bind(task.state.as_str())
+    .bind(task.attempts as i32)
+    .bind(task.updated_at)
+    .bind(task.id.bare())
+    .execute(conn)
+    .await
+    .map_err(map_database_error)?;
+
+    if result.rows_affected() == 0 {
+        return Err(PersistenceError::NotFound);
+    }
+    Ok(())
 }
 
 /// Records that the current step succeeded and advances to `next_step`.
@@ -206,10 +241,16 @@ pub async fn advance_step(
 }
 
 /// Records a retryable failure and schedules the next attempt.
+///
+/// Stores `next_attempt_at` and the operator-visible error pair; does
+/// not change `attempts` or `state`. The state stays `in_progress`
+/// for the duration of the retry window — the next worker poll picks
+/// the row up via the `next_attempt_at <= now` filter and bumps
+/// `attempts` through [`try_acquire`][OperationTask::try_acquire] /
+/// [`set_acquired`].
 pub async fn schedule_retry(
     conn: &mut PgConnection,
     task_id: &TaskId,
-    attempts: u32,
     next_attempt_at: DateTime<Utc>,
     error_code: &str,
     error_message: &str,
@@ -218,15 +259,13 @@ pub async fn schedule_retry(
     let result = sqlx::query(
         r#"
         UPDATE operation_tasks
-        SET attempts = $1,
-            next_attempt_at = $2,
-            error_code = $3,
-            error_message = $4,
-            updated_at = $5
-        WHERE id = $6
+        SET next_attempt_at = $1,
+            error_code = $2,
+            error_message = $3,
+            updated_at = $4
+        WHERE id = $5
         "#,
     )
-    .bind(attempts as i32)
     .bind(next_attempt_at)
     .bind(error_code)
     .bind(error_message)
@@ -243,16 +282,18 @@ pub async fn schedule_retry(
 }
 
 /// Persists the terminal-state columns of an [`OperationTask`] whose
-/// in-memory state has just been mutated by `try_complete` /
-/// `try_fail`.
+/// in-memory state has just been mutated by
+/// [`try_complete`][OperationTask::try_complete] /
+/// [`try_fail`][OperationTask::try_fail].
 ///
 /// The caller controls the transaction; this helper does not commit.
 /// Writes `state`, `next_attempt_at`, `error_code`, `error_message`,
 /// `result_issuer_id`, `updated_at`, and `completed_at` from the
 /// aggregate. The aggregate is the sole source of truth for the
 /// transition's validity (the `state = 'in_progress'` SQL guard is
-/// gone — `OperationTask::try_complete` / `try_fail` enforce it in
-/// memory before this is called).
+/// gone — [`try_complete`][OperationTask::try_complete] /
+/// [`try_fail`][OperationTask::try_fail] enforce it in memory before
+/// this is called).
 pub async fn set_terminal_state(
     conn: &mut PgConnection,
     task: &OperationTask,
