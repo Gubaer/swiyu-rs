@@ -67,9 +67,9 @@ pub enum ResolveError {
 ///
 /// A 12-character ASCII-hex string is treated as a BLAKE3 hash and looked up in the
 /// key store; the entry's stored DID string is then parsed into a [`DID`]. Anything
-/// else is parsed directly with [`DID::parse`] without consulting the key store —
-/// this means foreign DIDs (e.g. an issuer DID looked up at the trust registry) are
-/// accepted even when they aren't present locally.
+/// else is parsed directly via the `FromStr` impl on [`DID`] without consulting the
+/// key store — this means foreign DIDs (e.g. an issuer DID looked up at the trust
+/// registry) are accepted even when they aren't present locally.
 pub(crate) fn resolve_did(store: &KeyStore, target: &str) -> Result<DID, ResolveError> {
     if is_hash(target) {
         debug!("resolving '{target}' as BLAKE3 hash via key store");

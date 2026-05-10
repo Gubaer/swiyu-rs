@@ -456,7 +456,7 @@ impl DIDLogEntry {
     /// list — `method`, `scid`, `portable`, etc. are not present in
     /// non-genesis entries. did:tdw 0.3 and did:webvh 1.0 share the
     /// same body shape; only the wire encoding differs and that is
-    /// handled in [`Self::to_json`].
+    /// handled by the `From<DIDLogEntry> for Value` impl.
     pub fn new_deactivation(
         format: &LogEntryFormat,
         prev_version_id: &str,
@@ -747,8 +747,8 @@ impl DIDLog {
     /// Parses a DID log from JSONL text.
     ///
     /// Blank lines are skipped. Each line must be a single JSON value that parses via
-    /// [`DIDLogEntry::try_from_json`]; on failure, the 1-based line number is included in
-    /// the error message.
+    /// the `TryFrom<&Value> for DIDLogEntry` impl; on failure, the 1-based line number
+    /// is included in the error message.
     pub fn try_from_jsonl(text: &str) -> DIDLogResult<Self> {
         let mut entries = Vec::new();
         for (i, line) in text.lines().enumerate() {
