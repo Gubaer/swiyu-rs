@@ -188,7 +188,7 @@ The migration file follows the existing `YYYYMMDD_NNNNNN_<name>.sql` pattern (ne
 
 ### `VaultSigningEngine` — Middle maturity
 
-**Status.** Shipped. Selected at startup with `SIGNING_ENGINE=vault`; configured via `VAULT_ADDR`, `VAULT_TOKEN`, optional `VAULT_TRANSIT_PATH` (default `transit`), and optional `VAULT_REQUEST_TIMEOUT_SECS` (default 5). Used for staging and small-scale production where a dedicated HSM is not yet available.
+**Status.** Shipped. Selected at startup with `SIGNING_ENGINE=vault`; configured via `VAULT_ADDR`, `VAULT_TOKEN`, optional `SIGNING_VAULT_TRANSIT_PATH` (default `transit`), and optional `VAULT_REQUEST_TIMEOUT_SECS` (default 5). `VAULT_ADDR`, `VAULT_TOKEN`, and `VAULT_REQUEST_TIMEOUT_SECS` are shared with the secret-encryption engine; the Transit mount path is engine-scoped (the secret-encryption engine reads `SECRET_ENCRYPTION_VAULT_TRANSIT_PATH`) so each engine can live under its own mount with its own ACL policy. Used for staging and small-scale production where a dedicated HSM is not yet available.
 
 **Backend.** HashiCorp Vault, Transit Secrets Engine. Both `ed25519` and `ecdsa-p256` are first-class native key types — no extra wrapping or external crypto needed.
 

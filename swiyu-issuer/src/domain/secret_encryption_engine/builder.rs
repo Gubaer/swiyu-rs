@@ -5,13 +5,13 @@
 //!   `SECRET_ENCRYPTION_ENGINE`         — `dev` (default) or `vault`
 //!   `SECRET_ENCRYPTION_DEV_MASTER_KEY` — required when engine=`dev`
 //!
-//! When engine=`vault` the builder additionally reads the same set of
-//! variables the signing-engine builder reads (`VAULT_ADDR`,
-//! `VAULT_TOKEN`, `VAULT_TRANSIT_PATH`, `VAULT_REQUEST_TIMEOUT_SECS`).
-//! A single Vault deployment serves both engines; operators wanting to
-//! isolate signing keys from secret-encryption keys point each engine
-//! at a different Vault mount via the relevant `*_TRANSIT_PATH` knob
-//! (out-of-band Vault configuration).
+//! When engine=`vault` the builder additionally reads `VAULT_ADDR`,
+//! `VAULT_TOKEN`, `SECRET_ENCRYPTION_VAULT_TRANSIT_PATH`, and
+//! `VAULT_REQUEST_TIMEOUT_SECS`. The server-identity vars
+//! (`VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_REQUEST_TIMEOUT_SECS`) are
+//! shared with the signing-engine builder; the Transit mount path is
+//! engine-scoped so signing keys and secret-encryption keys can live
+//! under different mounts with different ACL policies.
 
 use std::env;
 use std::time::Duration;
@@ -112,7 +112,7 @@ fn non_blank_env(name: &'static str) -> Result<String, BuildError> {
 fn build_vault() -> Result<VaultSecretEncryptionEngine, BuildError> {
     let address = non_blank_env("VAULT_ADDR")?;
     let token = non_blank_env("VAULT_TOKEN")?;
-    let transit_path_raw = env::var("VAULT_TRANSIT_PATH").unwrap_or_default();
+    let transit_path_raw = env::var("SECRET_ENCRYPTION_VAULT_TRANSIT_PATH").unwrap_or_default();
     let transit_path = match transit_path_raw.trim() {
         "" => VaultSecretEncryptionEngineConfig::DEFAULT_TRANSIT_PATH.to_string(),
         s => s.to_string(),

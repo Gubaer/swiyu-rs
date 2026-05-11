@@ -24,10 +24,13 @@ const VAULT_MESSAGE_AUTHENTICATION_FAILED: &str = "cipher: message authenticatio
 ///
 /// Populated from environment variables in the binary; see `.env.example`
 /// for the variables that map to each field. Shares `VAULT_ADDR`,
-/// `VAULT_TOKEN`, and `VAULT_TRANSIT_PATH` with
-/// [`VaultSigningEngine`][crate::domain::signing_engine::VaultSigningEngine] —
-/// operators wanting to isolate signing keys from secret-encryption keys
-/// must configure a different Vault mount point out of band.
+/// `VAULT_TOKEN`, and `VAULT_REQUEST_TIMEOUT_SECS` with
+/// [`VaultSigningEngine`][crate::domain::signing_engine::VaultSigningEngine].
+/// The Transit mount path is engine-scoped: this engine reads
+/// `SECRET_ENCRYPTION_VAULT_TRANSIT_PATH`, the signing engine reads
+/// `SIGNING_VAULT_TRANSIT_PATH`, both defaulting to `transit`. Operators
+/// who want to isolate signing keys from secret-encryption keys point
+/// each engine at a different mount with its own ACL policy.
 pub struct VaultSecretEncryptionEngineConfig {
     pub address: Url,
     pub token: SecretString,

@@ -219,8 +219,8 @@ Derivation is performed on every encrypt and decrypt call. A small in-memory `Ha
 
 **Configuration.** Three environment variables:
 
-- `VAULT_ADDR`, `VAULT_TOKEN` — reused from `VaultSigningEngine`. Same client.
-- `VAULT_TRANSIT_PATH` — defaults to `transit`. Shared with `VaultSigningEngine`. Operators who want to isolate signing keys from secret-encryption keys should give them different mount points; that is an out-of-band Vault configuration decision and not something this engine enforces.
+- `VAULT_ADDR`, `VAULT_TOKEN` — reused from `VaultSigningEngine`. Same client identity, single Vault server per deployment.
+- `SECRET_ENCRYPTION_VAULT_TRANSIT_PATH` — defaults to `transit`. Engine-scoped: `VaultSigningEngine` reads its own `SIGNING_VAULT_TRANSIT_PATH`. Operators who want to isolate signing keys from secret-encryption keys give each engine a different mount with a different ACL policy; that is an out-of-band Vault configuration step and not something this engine enforces.
 
 The engine does **not** enumerate `key_name`s at startup. With tenant-scoped families (see *Tenant-scoped key naming*) the set of concrete `key_name`s grows as tenants are created, so a static list is not the right model. Misconfiguration — a missing tenant key in Vault — surfaces at first encrypt or decrypt as `KeyNotFound`, logged loudly. The set of families that the application uses is captured in the naming helper (code), not in environment configuration.
 

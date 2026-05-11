@@ -9,8 +9,13 @@
 //! | `SIGNING_ENGINE`             | no                   | `"dev"`                                              |
 //! | `VAULT_ADDR`                 | when engine=`vault`  | —                                                    |
 //! | `VAULT_TOKEN`                | when engine=`vault`  | —                                                    |
-//! | `VAULT_TRANSIT_PATH`         | no                   | [`VaultSigningEngineConfig::DEFAULT_TRANSIT_PATH`]   |
+//! | `SIGNING_VAULT_TRANSIT_PATH` | no                   | [`VaultSigningEngineConfig::DEFAULT_TRANSIT_PATH`]   |
 //! | `VAULT_REQUEST_TIMEOUT_SECS` | no                   | [`VaultSigningEngineConfig::DEFAULT_REQUEST_TIMEOUT`]|
+//!
+//! `VAULT_ADDR`, `VAULT_TOKEN`, and `VAULT_REQUEST_TIMEOUT_SECS` are
+//! shared with the secret-encryption engine; the Transit mount path
+//! is engine-scoped so signing keys and secret-encryption keys can
+//! live under different mounts with different ACL policies.
 
 use std::env;
 use std::time::Duration;
@@ -54,7 +59,7 @@ fn non_blank_env(name: &'static str) -> Result<String, BuildError> {
 fn build_vault() -> Result<VaultSigningEngine, BuildError> {
     let address = non_blank_env("VAULT_ADDR")?;
     let token = non_blank_env("VAULT_TOKEN")?;
-    let transit_path_raw = env::var("VAULT_TRANSIT_PATH").unwrap_or_default();
+    let transit_path_raw = env::var("SIGNING_VAULT_TRANSIT_PATH").unwrap_or_default();
     let transit_path = match transit_path_raw.trim() {
         "" => VaultSigningEngineConfig::DEFAULT_TRANSIT_PATH.to_string(),
         s => s.to_string(),
