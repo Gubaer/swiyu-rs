@@ -137,7 +137,7 @@ pub struct KeyStoreListEntry {
     pub did: String,
 }
 
-/// A resolved key store entry for a single DID, returned by [`KeyStore::create`] and
+/// A resolved key store entry for a single DID, returned by [`KeyStore::commit`] and
 /// [`KeyStore::lookup`].
 ///
 /// Keys are loaded from disk on demand; constructing this type performs no I/O beyond what
