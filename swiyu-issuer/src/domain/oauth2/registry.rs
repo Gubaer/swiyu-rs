@@ -1,9 +1,10 @@
 //! `ProviderRegistry` — process-wide map of `tenant_id → provider`.
 //!
-//! Holds one `AnyTokenProvider` per tenant, constructed lazily on
-//! first request and cached for the lifetime of the registry.
-//! Concurrent first-use of the same tenant collapses to a single
-//! construction via a double-checked write-lock acquisition.
+//! Holds one [`AnyTokenProvider`][super::AnyTokenProvider] per
+//! tenant, constructed lazily on first request and cached for the
+//! lifetime of the registry. Concurrent first-use of the same tenant
+//! collapses to a single construction via a double-checked write-lock
+//! acquisition.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,20 +14,23 @@ use reqwest::Client;
 use tokio::sync::RwLock;
 
 use crate::domain::TenantId;
+use crate::domain::secret_encryption_engine::AnySecretEncryptionEngine;
 
 use super::{AnyTokenProvider, OAuth2TokenProvider};
 
-/// Process-wide cache of `TokenProvider` instances keyed by tenant.
+/// Process-wide cache of [`TokenProvider`][super::TokenProvider]
+/// instances keyed by tenant.
 ///
 /// Built once at startup from the shared infrastructure handles
 /// (`pool`, `http`, `token_url`, `safety_margin`) and threaded into
-/// the `Worker` and `StatusListPublisher` as `Arc<ProviderRegistry>`.
-/// Each tenant's provider is constructed on first use and reused
-/// thereafter so the in-memory access-token cache, the single-flight
-/// gate, and the `FOR UPDATE` row-lock window all live on a single
-/// long-lived instance per tenant.
+/// the [`Worker`][crate::worker::Worker] and
+/// [`StatusListPublisher`][crate::worker::StatusListPublisher] as
+/// `Arc<ProviderRegistry>`. Each tenant's provider is constructed on
+/// first use and reused thereafter so the in-memory access-token
+/// cache, the single-flight gate, and the `FOR UPDATE` row-lock
+/// window all live on a single long-lived instance per tenant.
 pub struct ProviderRegistry {
-    /// Pool handed to every `OAuth2TokenProvider` this registry
+    /// Pool handed to every [`OAuth2TokenProvider`] this registry
     /// builds; each provider opens its own transaction inside the
     /// `refresh_token` grant and relies on Postgres row locking
     /// rather than an in-process mutex for cross-replica safety.
@@ -38,6 +42,10 @@ pub struct ProviderRegistry {
     /// Token endpoint URL. Same value for every tenant — the OAuth2
     /// authorization server is shared; only credentials differ.
     token_url: String,
+    /// Engine each provider uses to decrypt the persisted secrets and
+    /// re-encrypt the rotated refresh token. Cloned (cheap `Arc`)
+    /// into every provider built by [`provider_for`][Self::provider_for].
+    engine: Arc<AnySecretEncryptionEngine>,
     /// Refresh pre-emptively when a cached access token has less than
     /// this much time remaining. Propagated unchanged into every
     /// provider so the entire process refreshes on the same schedule.
@@ -54,12 +62,14 @@ impl ProviderRegistry {
         pool: sqlx::PgPool,
         http: Client,
         token_url: String,
+        engine: Arc<AnySecretEncryptionEngine>,
         safety_margin: Duration,
     ) -> Self {
         Self {
             pool,
             http,
             token_url,
+            engine,
             safety_margin,
             providers: RwLock::new(HashMap::new()),
         }
@@ -89,6 +99,7 @@ impl ProviderRegistry {
             self.pool.clone(),
             self.http.clone(),
             self.token_url.clone(),
+            Arc::clone(&self.engine),
             self.safety_margin,
         );
         let any = Arc::new(AnyTokenProvider::OAuth2(provider));
@@ -103,8 +114,16 @@ mod tests {
 
     use sqlx::PgPool;
 
+    use crate::domain::secret_encryption_engine::DevSecretEncryptionEngine;
+
     fn http_client() -> Client {
         Client::builder().build().unwrap()
+    }
+
+    fn test_engine() -> Arc<AnySecretEncryptionEngine> {
+        Arc::new(AnySecretEncryptionEngine::Dev(
+            DevSecretEncryptionEngine::new([0u8; 32]),
+        ))
     }
 
     fn registry(pool: PgPool) -> ProviderRegistry {
@@ -112,6 +131,7 @@ mod tests {
             pool,
             http_client(),
             "http://example.invalid/token".to_string(),
+            test_engine(),
             Duration::seconds(30),
         )
     }

@@ -121,6 +121,14 @@ fn outcome_for_persistence_error(operation: &'static str, e: PersistenceError) -
             error_code: "persist_issuer_failed".into(),
             error_message: format!("{operation}: unique violation: {what}"),
         },
+        // This saga step does not touch encrypted columns, so a
+        // SecretEncryptionError here points at a structural bug or a
+        // backend misconfiguration; surface as Terminal so the
+        // operator sees it instead of having the worker burn retries.
+        PersistenceError::Encryption(err) => StepOutcome::Terminal {
+            error_code: "persist_issuer_failed".into(),
+            error_message: format!("{operation}: secret encryption: {err}"),
+        },
     }
 }
 

@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::domain::secret_encryption_engine::SecretEncryptionError;
+
 #[derive(Debug, Error)]
 pub enum PersistenceError {
     #[error("not found")]
@@ -10,4 +12,6 @@ pub enum PersistenceError {
     DataIntegrity { details: String },
     #[error("database error")]
     Db(#[from] sqlx::Error),
+    #[error("encryption error")]
+    Encryption(#[from] SecretEncryptionError),
 }

@@ -6,7 +6,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand};
 use secrecy::SecretString;
 use sqlx::PgPool;
 use swiyu_issuer::cli;
-use swiyu_issuer::domain::TenantId;
+use swiyu_issuer::domain::{TenantId, build_secret_encryption_engine_from_env};
 use swiyu_issuer::persistence;
 
 #[derive(Parser, Debug)]
@@ -194,10 +194,16 @@ async fn import_oauth_refresh_token(
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
     let pool: PgPool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
+    let engine = build_secret_encryption_engine_from_env()?;
 
-    let outcome =
-        cli::tenant::import_oauth_refresh_token(&pool, &tenant_id, token, args.only_if_empty)
-            .await?;
+    let outcome = cli::tenant::import_oauth_refresh_token(
+        &pool,
+        &tenant_id,
+        token,
+        args.only_if_empty,
+        &engine,
+    )
+    .await?;
 
     match outcome {
         cli::tenant::SeedOutcome::Wrote => {
@@ -241,6 +247,7 @@ async fn set_oauth_credentials(
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
     let pool: PgPool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
+    let engine = build_secret_encryption_engine_from_env()?;
 
     let outcome = cli::tenant::set_oauth_credentials(
         &pool,
@@ -248,6 +255,7 @@ async fn set_oauth_credentials(
         args.client_id,
         client_secret,
         args.only_if_empty,
+        &engine,
     )
     .await?;
 

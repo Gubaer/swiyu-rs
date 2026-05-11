@@ -4,6 +4,7 @@ use secrecy::SecretString;
 use sqlx::PgPool;
 
 use crate::domain::TenantId;
+use crate::domain::secret_encryption_engine::AnySecretEncryptionEngine;
 use crate::persistence::{self, PersistenceError};
 
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +48,7 @@ pub async fn import_oauth_refresh_token(
     tenant_id: &TenantId,
     token: SecretString,
     only_if_empty: bool,
+    engine: &AnySecretEncryptionEngine,
 ) -> Result<SeedOutcome, ImportOauthRefreshTokenError> {
     let mut tx = pool.begin().await?;
 
@@ -60,7 +62,7 @@ pub async fn import_oauth_refresh_token(
         return Ok(SeedOutcome::Skipped);
     }
 
-    persistence::tenants::write_oauth_refresh_token(&mut tx, tenant_id, &token).await?;
+    persistence::tenants::write_oauth_refresh_token(&mut tx, tenant_id, &token, engine).await?;
     tx.commit().await?;
     Ok(SeedOutcome::Wrote)
 }
@@ -95,6 +97,7 @@ pub async fn set_oauth_credentials(
     client_id: String,
     client_secret: SecretString,
     only_if_empty: bool,
+    engine: &AnySecretEncryptionEngine,
 ) -> Result<SeedOutcome, SetOauthCredentialsError> {
     let mut tx = pool.begin().await?;
 
@@ -113,6 +116,7 @@ pub async fn set_oauth_credentials(
         tenant_id,
         &client_id,
         &client_secret,
+        engine,
     )
     .await?;
     tx.commit().await?;

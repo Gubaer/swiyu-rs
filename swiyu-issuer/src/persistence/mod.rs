@@ -8,6 +8,7 @@ pub mod oidc;
 pub mod operation_tasks;
 mod pool;
 pub mod status_lists;
+pub mod tenant_secret_keys;
 pub mod tenants;
 
 pub use errors::PersistenceError;

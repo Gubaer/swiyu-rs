@@ -89,19 +89,22 @@ impl RngCore for ConstantRng {
     }
 }
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: &str) {
-    sqlx::query(
-        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
-         VALUES ($1, $2, $3, $4, $5)",
+async fn insert_test_tenant(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    partner_id: &str,
+    engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
+) {
+    common::oauth::insert_tenant_with_oauth_secrets(
+        pool,
+        tenant_id,
+        Some(partner_id),
+        engine,
+        "test-client",
+        "test-secret",
+        "test-refresh",
     )
-    .bind(tenant_id.bare())
-    .bind(partner_id)
-    .bind("test-client")
-    .bind("test-secret")
-    .bind("test-refresh")
-    .execute(pool)
-    .await
-    .unwrap();
+    .await;
 }
 
 fn pending_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
@@ -138,12 +141,13 @@ fn build_registry_client(server: &MockServer) -> IdentifierRegistryClient {
 /// closes and any further `provider.get()` calls would fail.
 async fn build_provider_setup(
     pool: &PgPool,
+    engine: std::sync::Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
 ) -> (
     MockServer,
     std::sync::Arc<swiyu_issuer::domain::ProviderRegistry>,
 ) {
     let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
     (server, providers)
 }
 
@@ -194,8 +198,9 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
         .mount(&server)
         .await;
 
+    let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID).await;
+    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(tenant_id.clone(), issuer_id.clone());
@@ -204,7 +209,8 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) =
+        build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
@@ -285,8 +291,9 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
         .mount(&server)
         .await;
 
+    let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID).await;
+    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(tenant_id.clone(), issuer_id.clone());
@@ -295,7 +302,8 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) =
+        build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
     // ConstantRng(0) → backoff_delay returns 0ms, so the retry fires on
     // the very next poll without waiting on real exponential backoff.
@@ -352,8 +360,9 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
         .mount(&server)
         .await;
 
+    let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID).await;
+    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &engine).await;
 
     // Pre-populate state_data with allocate_did's output, simulating a
     // crash that occurred after allocate_did succeeded but before
@@ -369,7 +378,8 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) =
+        build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),

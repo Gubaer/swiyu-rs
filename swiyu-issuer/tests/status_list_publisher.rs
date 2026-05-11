@@ -51,26 +51,30 @@ impl RngCore for ConstantRng {
     }
 }
 
-async fn build_provider_setup(pool: &PgPool) -> (MockServer, Arc<ProviderRegistry>) {
+async fn build_provider_setup(
+    pool: &PgPool,
+    engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
+) -> (MockServer, Arc<ProviderRegistry>) {
     let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
     (server, providers)
 }
 
-async fn seeded_environment(pool: &PgPool) -> (Issuer, StatusList, DevSigningEngine) {
+async fn seeded_environment(
+    pool: &PgPool,
+    secret_engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
+) -> (Issuer, StatusList, DevSigningEngine) {
     let tenant_id = TenantId::generate();
-    sqlx::query(
-        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
-         VALUES ($1, $2, $3, $4, $5)",
+    common::oauth::insert_tenant_with_oauth_secrets(
+        pool,
+        &tenant_id,
+        Some(PARTNER_ID),
+        secret_engine,
+        "test-client",
+        "test-secret",
+        "test-refresh",
     )
-    .bind(tenant_id.bare())
-    .bind(PARTNER_ID)
-    .bind("test-client")
-    .bind("test-secret")
-    .bind("test-refresh")
-    .execute(pool)
-    .await
-    .unwrap();
+    .await;
 
     let engine = DevSigningEngine::new(pool.clone());
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
@@ -137,14 +141,15 @@ async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64, i64
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
-    let (_issuer, list, engine) = seeded_environment(&pool).await;
+    let secret_engine = common::oauth::test_engine();
+    let (_issuer, list, engine) = seeded_environment(&pool, &secret_engine).await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
     let registry = MockStatusRegistry::new();
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -169,7 +174,8 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool) {
-    let (_issuer, list, engine) = seeded_environment(&pool).await;
+    let secret_engine = common::oauth::test_engine();
+    let (_issuer, list, engine) = seeded_environment(&pool, &secret_engine).await;
     let list_id = list.id.clone();
 
     let registry = MockStatusRegistry::new();
@@ -178,7 +184,7 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
         body: "service unavailable".into(),
     });
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -214,7 +220,8 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
 
 #[sqlx::test(migrations = "./migrations")]
 async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
-    let (_issuer, list, engine) = seeded_environment(&pool).await;
+    let secret_engine = common::oauth::test_engine();
+    let (_issuer, list, engine) = seeded_environment(&pool, &secret_engine).await;
     let list_id = list.id.clone();
 
     let registry = MockStatusRegistry::new();
@@ -223,7 +230,7 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
         body: "forbidden".into(),
     });
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -251,7 +258,8 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool) {
-    let (_issuer, list, engine) = seeded_environment(&pool).await;
+    let secret_engine = common::oauth::test_engine();
+    let (_issuer, list, engine) = seeded_environment(&pool, &secret_engine).await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
@@ -268,7 +276,7 @@ async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool)
     let registry = MockStatusRegistry::new();
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,

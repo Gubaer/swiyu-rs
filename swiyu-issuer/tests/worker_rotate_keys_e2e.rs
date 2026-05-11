@@ -74,24 +74,30 @@ impl RngCore for ConstantRng {
     }
 }
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: &str) {
-    sqlx::query(
-        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
-         VALUES ($1, $2, $3, $4, $5)",
+async fn insert_test_tenant(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    partner_id: &str,
+    engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
+) {
+    common::oauth::insert_tenant_with_oauth_secrets(
+        pool,
+        tenant_id,
+        Some(partner_id),
+        engine,
+        "test-client",
+        "test-secret",
+        "test-refresh",
     )
-    .bind(tenant_id.bare())
-    .bind(partner_id)
-    .bind("test-client")
-    .bind("test-secret")
-    .bind("test-refresh")
-    .execute(pool)
-    .await
-    .unwrap();
+    .await;
 }
 
-async fn build_provider_setup(pool: &PgPool) -> (MockServer, Arc<ProviderRegistry>) {
+async fn build_provider_setup(
+    pool: &PgPool,
+    engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
+) -> (MockServer, Arc<ProviderRegistry>) {
     let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
     (server, providers)
 }
 
@@ -211,8 +217,9 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
     registry.enqueue_publish(PublishCall::Ok);
 
+    let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID).await;
+    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &secret_engine).await;
     let (issuer, engine) = insert_active_issuer(&pool, &tenant_id).await;
 
     let task = rotate_task(tenant_id.clone(), issuer.id.clone(), vec!["all"]);
@@ -221,7 +228,7 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
@@ -301,8 +308,9 @@ async fn rotates_only_authentication(pool: PgPool) {
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
     registry.enqueue_publish(PublishCall::Ok);
 
+    let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID).await;
+    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &secret_engine).await;
     let (issuer, engine) = insert_active_issuer(&pool, &tenant_id).await;
     let original_authorized: KeyPairId = issuer.authorized_key_id.unwrap();
     let original_assertion: KeyPairId = issuer.assertion_key_id.unwrap();
@@ -313,7 +321,7 @@ async fn rotates_only_authentication(pool: PgPool) {
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),

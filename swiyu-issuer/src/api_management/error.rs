@@ -115,6 +115,10 @@ impl From<PersistenceError> for ApiError {
                 ApiError::Internal(Box::new(std::io::Error::other(details)))
             }
             PersistenceError::Db(err) => ApiError::Internal(Box::new(err)),
+            PersistenceError::Encryption(err) => {
+                tracing::error!(error = %err, "secret-encryption failure in management API");
+                ApiError::Internal(Box::new(err))
+            }
         }
     }
 }

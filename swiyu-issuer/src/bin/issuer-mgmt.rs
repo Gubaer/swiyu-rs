@@ -69,9 +69,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let status_registry_for_publisher = StatusRegistryClient::new(status_registry_url)?;
     let signing_engine_for_worker = build_signing_engine_from_env(pool.clone())?;
     let signing_engine_for_publisher = build_signing_engine_from_env(pool.clone())?;
-    // Built at startup so SECRET_ENCRYPTION_* misconfiguration fails fast.
-    // No consumer holds the engine yet — tenant repository wiring lands later.
-    let _secret_encryption_engine: Arc<AnySecretEncryptionEngine> =
+    let secret_encryption_engine: Arc<AnySecretEncryptionEngine> =
         Arc::new(build_secret_encryption_engine_from_env()?);
     // The safety margin is the fraction of the assumed token lifetime
     // *not yet elapsed* when we still consider the token fresh. With a
@@ -85,6 +83,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         pool.clone(),
         token_http_client,
         token_url,
+        Arc::clone(&secret_encryption_engine),
         safety_margin,
     ));
     let worker = Worker::new(

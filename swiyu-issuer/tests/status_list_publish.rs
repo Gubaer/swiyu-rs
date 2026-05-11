@@ -41,9 +41,12 @@ fn build_status_client(server: &MockServer) -> StatusRegistryClient {
     StatusRegistryClient::with_http(server.uri(), reqwest::Client::new())
 }
 
-async fn build_provider_setup(pool: &PgPool) -> (MockServer, Arc<ProviderRegistry>) {
+async fn build_provider_setup(
+    pool: &PgPool,
+    engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
+) -> (MockServer, Arc<ProviderRegistry>) {
     let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
     (server, providers)
 }
 
@@ -79,20 +82,19 @@ impl RngCore for ConstantRng {
 async fn seeded_environment(
     pool: &PgPool,
     server: &MockServer,
+    secret_engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
 ) -> (Issuer, StatusList, DevSigningEngine) {
     let tenant_id = TenantId::generate();
-    sqlx::query(
-        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
-         VALUES ($1, $2, $3, $4, $5)",
+    common::oauth::insert_tenant_with_oauth_secrets(
+        pool,
+        &tenant_id,
+        Some(PARTNER_ID),
+        secret_engine,
+        "test-client",
+        "test-secret",
+        "test-refresh",
     )
-    .bind(tenant_id.bare())
-    .bind(PARTNER_ID)
-    .bind("test-client")
-    .bind("test-secret")
-    .bind("test-refresh")
-    .execute(pool)
-    .await
-    .unwrap();
+    .await;
 
     let engine = DevSigningEngine::new(pool.clone());
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
@@ -168,11 +170,12 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let (issuer, list, engine) = seeded_environment(&pool, &server).await;
+    let secret_engine = common::oauth::test_engine();
+    let (issuer, list, engine) = seeded_environment(&pool, &server, &secret_engine).await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -236,11 +239,12 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let (_issuer, list, engine) = seeded_environment(&pool, &server).await;
+    let secret_engine = common::oauth::test_engine();
+    let (_issuer, list, engine) = seeded_environment(&pool, &server, &secret_engine).await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -287,7 +291,8 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let (_issuer, list, engine) = seeded_environment(&pool, &server).await;
+    let secret_engine = common::oauth::test_engine();
+    let (_issuer, list, engine) = seeded_environment(&pool, &server, &secret_engine).await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
@@ -301,7 +306,7 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
         .await
         .unwrap();
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
