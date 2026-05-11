@@ -13,6 +13,7 @@ Status: living document. Reflects the persistence layer as it stands today.
 - `errors.rs` — `PersistenceError` enum.
 - `helpers.rs` — internal helpers, including `map_database_error` which maps Postgres SQLSTATE 23505 (`unique_violation`) onto `PersistenceError::UniqueViolation`.
 - `tenants.rs`, `issuers.rs`, `api_tokens.rs`, `credential_offers.rs`, `issued_credentials.rs`, `operation_tasks.rs`, `status_lists.rs` — one submodule per aggregate.
+- `tenant_secret_keys.rs` — pure functions that derive the `SecretEncryptionEngine` key names for a given tenant (`oauth2_client_secret:<tenant_id>`, `oauth2_refresh_token:<tenant_id>`). Kept separate so the naming convention has one home and the write/read paths in `tenants.rs` cannot drift.
 - `oidc/` — submodule grouping the OIDC token endpoint's persistent state: `access_tokens.rs`, `nonces.rs`, plus an `oidc/credential_offers.rs` for offer lookups the OIDC handlers need.
 
 `swiyu-issuer/migrations/` holds versioned `.sql` migration files. The binaries call `sqlx::migrate!("./migrations").run(pool)` at startup.
@@ -58,17 +59,18 @@ Format validation lives in the newtype constructor (`generate()` produces only v
 Migrations live in `swiyu-issuer/migrations/`. Two files are in place today:
 
 - `20260430_000001_init.sql` — a consolidation of the early-development migrations (originally 0001 through 0015) into a single pre-production baseline. The expand/contract history of the alpha period was discarded because the data was throwaway.
-- `20260601_000001_tenants_oauth.sql` — adds OAuth2 credential columns to `tenants`.
+- `20260601_000001_tenants_oauth.sql` — adds OAuth2 credential columns (`oauth_client_id`, `oauth_client_secret`, `oauth_refresh_token`) to `tenants` as TEXT.
+- `20260612_000001_tenants_oauth_encrypted.sql` — re-types `oauth_client_secret` and `oauth_refresh_token` from TEXT to BYTEA to hold self-describing ciphertext produced by the `SecretEncryptionEngine`. Destructive (drops any existing values); dev environments re-seed on the next compose-up.
 
 All subsequent schema changes go in their own numbered migration on top of the baseline. The naming convention (`<DATE>_<SEQ>_<description>.sql`) is documented in `LESSONS-LEARNED.md`; in short, only the leading date is the sqlx migration version, so two files sharing a date prefix collide.
 
 ### `tenants`
 
-`id` (TEXT, PK), `partner_id` (TEXT, nullable), `oauth_client_id` / `oauth_client_secret` / `oauth_refresh_token` (TEXT, all nullable).
+`id` (TEXT, PK), `partner_id` (TEXT, nullable), `oauth_client_id` (TEXT, nullable), `oauth_client_secret` (BYTEA, nullable), `oauth_refresh_token` (BYTEA, nullable).
 
 `partner_id` is the SWIYU business-partner UUID. Nullable so non-registry-touching tenants stay possible; the worker's `allocate_did` step fails Terminal with `tenant_missing_partner_id` when it is `NULL` and a registry call is required.
 
-The OAuth2 triple is plaintext on the row by design: the secret and refresh token are recurring runtime credentials that the runtime rotates on every successful `refresh_token` grant, not one-shot bearer tokens. The application wraps both in `secrecy::SecretString` end-to-end so the values never appear in `Debug` output or logs. Operators populate `oauth_client_id` / `oauth_client_secret` via direct SQL at onboarding; the refresh token's recurring import path is the `tenant-mgmt import-oidc-refresh-token` subcommand. See [`aspect-oauth2.md`](aspect-oauth2.md) and [`impl-oauth2.md`](impl-oauth2.md).
+The two BYTEA columns hold self-describing ciphertext blobs produced by the `SecretEncryptionEngine` (format version, `key_name`, and `key_version` travel inside the blob, so no companion columns are needed to identify the key under which a value was encrypted). The domain `Tenant` carries them as `Option<Ciphertext>`; decryption happens at the OAuth2 provider boundary, not on every load of the tenant row. Plaintext secrets remain wrapped in `secrecy::SecretString` while they cross the application layer (zeroize-on-drop, redacted `Debug`). Operators populate `oauth_client_id` / `oauth_client_secret` via the `swiyu-issuer-cli tenant set-oauth-credentials` subcommand; the refresh token's recurring import path is `swiyu-issuer-cli tenant import-oauth-refresh-token`. `oauth_client_id` itself is not a secret and stays TEXT. See [`aspect-oauth2.md`](aspect-oauth2.md), [`impl-oauth2.md`](impl-oauth2.md), and [`aspect-secret-management.md`](aspect-secret-management.md).
 
 ### `issuers`
 
@@ -178,7 +180,7 @@ The `uuid` feature is present because `issuers.{authorized,authentication,assert
 - Every function takes a sqlx executor argument (`&mut PgConnection`) so it composes into transactions.
 - Every function takes `TenantId` and, where relevant, `IssuerId` as required arguments. Tenant scoping is enforced at the signature level, before SQL ever runs.
 - Query predicates filter by both `tenant_id` and `issuer_id` even when only one would suffice; combined with future RLS, this is defense in depth.
-- Errors flow through `helpers::map_database_error` (which lifts SQLSTATE 23505 unique-violations into `PersistenceError::UniqueViolation`) and otherwise propagate via `?` and the `From<sqlx::Error>` impl on `PersistenceError::Db`.
+- Errors flow through `helpers::map_database_error` (which lifts SQLSTATE 23505 unique-violations into `PersistenceError::UniqueViolation`) and otherwise propagate via `?` and the `From<sqlx::Error>` impl on `PersistenceError::Db`. Encryption-layer failures surface as `PersistenceError::Encryption` via a `From<SecretEncryptionError>` impl, so functions that encrypt or decrypt on the way to/from the row can propagate with `?`.
 
 ## Resolved decisions
 
@@ -187,13 +189,14 @@ These were open in earlier drafts and are now settled in the code:
 - **OIDC ephemeral storage**: focused tables (`oidc_access_tokens`, `oidc_nonces`), not a single table with a kind discriminator.
 - **What to retain of an issued credential**: metadata plus an `integrity_hash`; the signed compact SD-JWT VC bytes are not persisted.
 - **Pre-auth code storage**: bare nullable column on `credential_offers`, not a separate bridge table.
+- **OAuth2 secret storage at rest**: encrypted via the `SecretEncryptionEngine` and stored as self-describing ciphertext blobs in BYTEA columns. Per-tenant key names (`oauth2_client_secret:<tenant_id>`, `oauth2_refresh_token:<tenant_id>`) are derived by `persistence::tenant_secret_keys`. The earlier "plaintext text with `SecretString` only in-memory" arrangement is gone.
 
 ## Still not implemented
 
 - Postgres row-level security policies. The schema is shaped to support them (tenant_id on every aggregate) but no policies are installed yet.
 - Periodic-cleanup sweeper for expired `oidc_access_tokens`, `oidc_nonces`, and pre-auth codes. Expired rows currently accumulate until the surrounding flow ignores them on read.
 - Audit log table and writer. The aspect describes the intended shape; no schema or code is in place.
-- AEAD-wrapped per-tenant KEK for the dev keystore. Plaintext today; the aspect mentions wrapping as a possible intermediate step before KMS adoption.
+- DevSigningEngine private keys remain plaintext BYTEA in `signing_engine_dev_keypairs`. Wrapping them through the same `SecretEncryptionEngine` path that now protects the OAuth2 secrets is a candidate next step; not done today because the dev signing engine is dev/test-only and the production path goes through Vault Transit, which holds the keys natively.
 
 ## Open
 
