@@ -8,6 +8,7 @@ pub mod nonce;
 pub mod oauth2;
 pub mod operation_task;
 pub mod pre_auth_code;
+pub mod secret_encryption_engine;
 pub mod signing_engine;
 pub mod status_list;
 pub mod tenant;
@@ -36,10 +37,16 @@ pub use oauth2::{
 };
 pub use operation_task::{OperationTask, StepOutcome, StepResult, TaskState, TaskType};
 pub use pre_auth_code::PreAuthCode;
+pub use secret_encryption_engine::{
+    AnySecretEncryptionEngine, BuildError as SecretEncryptionEngineBuildError, Ciphertext,
+    DevSecretEncryptionEngine, SecretEncryptionEngine, SecretEncryptionError,
+    VaultSecretEncryptionEngine, VaultSecretEncryptionEngineConfig,
+    build_from_env as build_secret_encryption_engine_from_env,
+};
 pub use signing_engine::{
     AnySigningEngine, BuildError as SigningEngineBuildError, DevSigningEngine, GeneratedKeyPair,
     KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine, SigningEngineError,
     VaultSigningEngine, VaultSigningEngineConfig, build_from_env as build_signing_engine_from_env,
 };
 pub use status_list::{BITSTRING_BYTES, StatusList, StatusListIndex, StatusValue};
-pub use tenant::{OAuthSecret, Tenant};
+pub use tenant::Tenant;

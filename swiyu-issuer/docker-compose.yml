@@ -123,17 +123,39 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}
       DEV_TENANT_ID: ${DEV_TENANT_ID:-4Mk7yK5pQR7sN3}
       SWIYU_CLIENT_ID: ${SWIYU_CLIENT_ID}
       SWIYU_CLIENT_SECRET: ${SWIYU_CLIENT_SECRET}
       SWIYU_REFRESH_TOKEN: ${SWIYU_REFRESH_TOKEN}
+      # Must match the values handed to issuer-mgmt / issuer-oidc:
+      # the secrets the CLI writes here are decrypted by those
+      # services at runtime under the same engine.
+      SECRET_ENCRYPTION_ENGINE: ${SECRET_ENCRYPTION_ENGINE:-dev}
+      SECRET_ENCRYPTION_DEV_MASTER_KEY: ${SECRET_ENCRYPTION_DEV_MASTER_KEY:-ZGV2LXNlY3JldC1tYW5hZ2VtZW50LW1hc3Rlci1rZXk=}
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
       RUST_LOG: ${RUST_LOG:-info,swiyu_issuer=debug}
     entrypoint:
       - /bin/sh
       - -c
       - |
+        if [ "$$SECRET_ENCRYPTION_ENGINE" = "vault" ]; then
+          # Operator-provisioning step for the dev stack: the runtime
+          # never calls `vault write -f {transit}/keys/*`. Idempotent;
+          # vault returns success if the key already exists.
+          for family in oauth2_client_secret oauth2_refresh_token; do
+            curl -fsS -X POST \
+              -H "X-Vault-Token: $$VAULT_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"type":"aes256-gcm96"}' \
+              "$$VAULT_ADDR/v1/transit/keys/tenant/$$DEV_TENANT_ID/$$family" >/dev/null \
+              || { echo "bootstrap-dev-tenant: failed to provision Vault key tenant/$$DEV_TENANT_ID/$$family" >&2; exit 1; }
+          done
+        fi
         if [ -n "$$SWIYU_CLIENT_ID" ] && [ -n "$$SWIYU_CLIENT_SECRET" ]; then
           printf '%s' "$$SWIYU_CLIENT_SECRET" \
             | swiyu-issuer-cli tenant set-oauth-credentials \
@@ -177,6 +199,13 @@ services:
       SIGNING_ENGINE: ${SIGNING_ENGINE:-vault}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+      # `dev` selects the in-process AES-256-GCM backend; `vault` selects
+      # the Vault Transit backend (requires per-tenant Transit keys to be
+      # provisioned out of band before any encrypt/decrypt call). The
+      # well-known master key below encodes the 32-byte ASCII string
+      # `dev-secret-management-master-key` and must never escape dev.
+      SECRET_ENCRYPTION_ENGINE: ${SECRET_ENCRYPTION_ENGINE:-dev}
+      SECRET_ENCRYPTION_DEV_MASTER_KEY: ${SECRET_ENCRYPTION_DEV_MASTER_KEY:-ZGV2LXNlY3JldC1tYW5hZ2VtZW50LW1hc3Rlci1rZXk=}
       SWIYU_IDENTIFIER_REGISTRY_URL: ${SWIYU_IDENTIFIER_REGISTRY_URL}
       SWIYU_STATUS_REGISTRY_URL: ${SWIYU_STATUS_REGISTRY_URL}
       SWIYU_TOKEN_URL: ${SWIYU_TOKEN_URL}
@@ -223,6 +252,8 @@ services:
       SIGNING_ENGINE: ${SIGNING_ENGINE:-vault}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+      SECRET_ENCRYPTION_ENGINE: ${SECRET_ENCRYPTION_ENGINE:-dev}
+      SECRET_ENCRYPTION_DEV_MASTER_KEY: ${SECRET_ENCRYPTION_DEV_MASTER_KEY:-ZGV2LXNlY3JldC1tYW5hZ2VtZW50LW1hc3Rlci1rZXk=}
       RUST_LOG: ${RUST_LOG:-debug,sqlx=info,hyper=info,h2=info,reqwest=info,tower=info,tower_http=info}
     ports:
       - "${ISSUER_OIDC_HOST_PORT:-8081}:8081"

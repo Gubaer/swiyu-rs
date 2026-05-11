@@ -7,6 +7,7 @@
 //! that locks the row for update.
 
 use std::future::Future;
+use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 use reqwest::{Client, StatusCode};
@@ -17,6 +18,7 @@ use tokio::sync::{Mutex, RwLock};
 use swiyu_registries::common::AccessToken;
 
 use crate::domain::TenantId;
+use crate::domain::secret_encryption_engine::AnySecretEncryptionEngine;
 use crate::persistence::{
     PersistenceError,
     tenants::{TenantOauthCreds, read_oauth_credentials_for_update, write_oauth_refresh_token},
@@ -38,7 +40,7 @@ struct CachedToken {
     /// safety margin is applied at read time, not baked in here.
     expires_at: DateTime<Utc>,
     /// Raw access-token string, retained in test builds only so unit
-    /// tests can assert on rotation. `AccessToken`'s payload is
+    /// tests can assert on rotation. [`AccessToken`]'s payload is
     /// otherwise opaque to crates outside `swiyu-registries`.
     #[cfg(test)]
     access_raw: String,
@@ -54,6 +56,11 @@ pub struct OAuth2TokenProvider {
     pool: sqlx::PgPool,
     http: Client,
     token_url: String,
+    /// Engine used to decrypt the persisted client secret + refresh
+    /// token at read time and to re-encrypt the rotated refresh token
+    /// at write time. Shared with every other provider in the
+    /// process via [`ProviderRegistry`][super::ProviderRegistry].
+    engine: Arc<AnySecretEncryptionEngine>,
     /// The most recent successful grant, in memory.
     cached: RwLock<Option<CachedToken>>,
     /// Per-instance single-flight gate so concurrent `get()` calls
@@ -70,6 +77,7 @@ impl OAuth2TokenProvider {
         pool: sqlx::PgPool,
         http: Client,
         token_url: String,
+        engine: Arc<AnySecretEncryptionEngine>,
         safety_margin: Duration,
     ) -> Self {
         Self {
@@ -77,6 +85,7 @@ impl OAuth2TokenProvider {
             pool,
             http,
             token_url,
+            engine,
             cached: RwLock::new(None),
             refresh_lock: Mutex::new(()),
             safety_margin,
@@ -110,7 +119,8 @@ impl OAuth2TokenProvider {
             .await
             .map_err(|e| TokenProviderError::Persistence(PersistenceError::Db(e)))?;
 
-        let creds = read_oauth_credentials_for_update(&mut tx, &self.tenant_id).await?;
+        let creds =
+            read_oauth_credentials_for_update(&mut tx, &self.tenant_id, &self.engine).await?;
         let creds = creds.ok_or_else(|| {
             TokenProviderError::MissingCredentials(format!("tenant {} not found", self.tenant_id))
         })?;
@@ -125,7 +135,7 @@ impl OAuth2TokenProvider {
             .await?;
 
         let new_refresh = SecretString::from(response.refresh_token);
-        write_oauth_refresh_token(&mut tx, &self.tenant_id, &new_refresh).await?;
+        write_oauth_refresh_token(&mut tx, &self.tenant_id, &new_refresh, &self.engine).await?;
         tx.commit()
             .await
             .map_err(|e| TokenProviderError::Persistence(PersistenceError::Db(e)))?;
@@ -293,13 +303,19 @@ fn format_oauth_error(status: StatusCode, body: &str) -> String {
 mod tests {
     use super::*;
 
-    use std::sync::Arc;
     use std::time::Duration as StdDuration;
 
     use serde_json::json;
     use sqlx::PgPool;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::domain::secret_encryption_engine::{
+        DevSecretEncryptionEngine, SecretEncryptionEngine,
+    };
+    use crate::persistence::tenant_secret_keys::{
+        oauth2_client_secret_key_name, oauth2_refresh_token_key_name,
+    };
 
     fn http_client() -> Client {
         Client::builder()
@@ -314,13 +330,44 @@ mod tests {
         Duration::seconds(30)
     }
 
+    fn test_engine() -> Arc<AnySecretEncryptionEngine> {
+        Arc::new(AnySecretEncryptionEngine::Dev(
+            DevSecretEncryptionEngine::new([0x42u8; 32]),
+        ))
+    }
+
+    async fn encrypt_for(
+        engine: &AnySecretEncryptionEngine,
+        key_name: &str,
+        plaintext: &str,
+    ) -> Vec<u8> {
+        engine
+            .encrypt(key_name, plaintext.as_bytes())
+            .await
+            .unwrap()
+            .into_bytes()
+    }
+
     async fn seed_tenant_with_creds(
         pool: &PgPool,
         tenant_id: &TenantId,
+        engine: &AnySecretEncryptionEngine,
         client_id: Option<&str>,
         client_secret: Option<&str>,
         refresh_token: Option<&str>,
     ) {
+        let client_secret_blob = match client_secret {
+            None => None,
+            Some(s) => {
+                Some(encrypt_for(engine, &oauth2_client_secret_key_name(tenant_id), s).await)
+            }
+        };
+        let refresh_token_blob = match refresh_token {
+            None => None,
+            Some(s) => {
+                Some(encrypt_for(engine, &oauth2_refresh_token_key_name(tenant_id), s).await)
+            }
+        };
         sqlx::query(
             r#"
             INSERT INTO tenants
@@ -331,21 +378,30 @@ mod tests {
         .bind(tenant_id.bare())
         .bind("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef")
         .bind(client_id)
-        .bind(client_secret)
-        .bind(refresh_token)
+        .bind(client_secret_blob)
+        .bind(refresh_token_blob)
         .execute(pool)
         .await
         .unwrap();
     }
 
-    async fn read_refresh_column(pool: &PgPool, tenant_id: &TenantId) -> Option<String> {
-        let row: (Option<String>,) =
+    async fn read_refresh_column(
+        pool: &PgPool,
+        tenant_id: &TenantId,
+        engine: &AnySecretEncryptionEngine,
+    ) -> Option<String> {
+        let row: (Option<Vec<u8>>,) =
             sqlx::query_as("SELECT oauth_refresh_token FROM tenants WHERE id = $1")
                 .bind(tenant_id.bare())
                 .fetch_one(pool)
                 .await
                 .unwrap();
-        row.0
+        let bytes = row.0?;
+        let plaintext = engine
+            .decrypt(&oauth2_refresh_token_key_name(tenant_id), &bytes.into())
+            .await
+            .unwrap();
+        Some(String::from_utf8(plaintext).unwrap())
     }
 
     fn ok_token_response(access: &str, refresh: &str, expires_in: i64) -> ResponseTemplate {
@@ -371,10 +427,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
         seed_tenant_with_creds(
             &pool,
             &tenant_id,
+            &engine,
             Some("client-A"),
             Some("secret-A"),
             Some("initial-refresh"),
@@ -386,6 +444,7 @@ mod tests {
             pool.clone(),
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         );
 
@@ -396,7 +455,9 @@ mod tests {
             Some("access-A")
         );
         assert_eq!(
-            read_refresh_column(&pool, &tenant_id).await.as_deref(),
+            read_refresh_column(&pool, &tenant_id, &engine)
+                .await
+                .as_deref(),
             Some("rotated-refresh"),
         );
     }
@@ -411,10 +472,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
         seed_tenant_with_creds(
             &pool,
             &tenant_id,
+            &engine,
             Some("client"),
             Some("secret"),
             Some("refresh"),
@@ -426,6 +489,7 @@ mod tests {
             pool,
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         );
 
@@ -450,10 +514,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
         seed_tenant_with_creds(
             &pool,
             &tenant_id,
+            &engine,
             Some("client"),
             Some("secret"),
             Some("refresh"),
@@ -465,6 +531,7 @@ mod tests {
             pool.clone(),
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         );
 
@@ -477,7 +544,9 @@ mod tests {
             Some("access-fresh"),
         );
         assert_eq!(
-            read_refresh_column(&pool, &tenant_id).await.as_deref(),
+            read_refresh_column(&pool, &tenant_id, &engine)
+                .await
+                .as_deref(),
             Some("rotated-2"),
         );
     }
@@ -497,10 +566,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
         seed_tenant_with_creds(
             &pool,
             &tenant_id,
+            &engine,
             Some("client"),
             Some("secret"),
             Some("refresh"),
@@ -512,6 +583,7 @@ mod tests {
             pool,
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         );
 
@@ -539,10 +611,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
         seed_tenant_with_creds(
             &pool,
             &tenant_id,
+            &engine,
             Some("client"),
             Some("secret"),
             Some("dead-refresh"),
@@ -554,6 +628,7 @@ mod tests {
             pool.clone(),
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         );
 
@@ -566,7 +641,9 @@ mod tests {
         }
         // Transaction rolled back: the dead refresh token is unchanged.
         assert_eq!(
-            read_refresh_column(&pool, &tenant_id).await.as_deref(),
+            read_refresh_column(&pool, &tenant_id, &engine)
+                .await
+                .as_deref(),
             Some("dead-refresh"),
         );
         assert!(provider.cached_access_raw().await.is_none());
@@ -581,10 +658,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
         seed_tenant_with_creds(
             &pool,
             &tenant_id,
+            &engine,
             Some("client"),
             Some("secret"),
             Some("refresh"),
@@ -596,6 +675,7 @@ mod tests {
             pool,
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         );
 
@@ -609,14 +689,24 @@ mod tests {
         let server = MockServer::start().await;
         // No mock — provider must not call the endpoint.
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
-        seed_tenant_with_creds(&pool, &tenant_id, None, Some("secret"), Some("refresh")).await;
+        seed_tenant_with_creds(
+            &pool,
+            &tenant_id,
+            &engine,
+            None,
+            Some("secret"),
+            Some("refresh"),
+        )
+        .await;
 
         let provider = OAuth2TokenProvider::new(
             tenant_id,
             pool,
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         );
 
@@ -644,10 +734,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
         seed_tenant_with_creds(
             &pool,
             &tenant_id,
+            &engine,
             Some("client"),
             Some("secret"),
             Some("refresh"),
@@ -659,6 +751,7 @@ mod tests {
             pool,
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         ));
 
@@ -686,10 +779,12 @@ mod tests {
             .mount(&server)
             .await;
 
+        let engine = test_engine();
         let tenant_id = TenantId::generate();
         seed_tenant_with_creds(
             &pool,
             &tenant_id,
+            &engine,
             Some("client"),
             Some("secret"),
             Some("refresh"),
@@ -701,6 +796,7 @@ mod tests {
             pool,
             http_client(),
             server.uri(),
+            Arc::clone(&engine),
             safety_margin(),
         );
 

@@ -76,6 +76,10 @@ fn outcome_for_persistence_error(operation: &'static str, e: PersistenceError) -
             error_code: "provision_status_list_failed".into(),
             error_message: format!("{operation}: unique violation: {what}"),
         },
+        PersistenceError::Encryption(err) => StepOutcome::Terminal {
+            error_code: "provision_status_list_failed".into(),
+            error_message: format!("{operation}: secret encryption: {err}"),
+        },
     }
 }
 

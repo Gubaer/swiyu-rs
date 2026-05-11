@@ -72,24 +72,30 @@ impl RngCore for ConstantRng {
     }
 }
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: &str) {
-    sqlx::query(
-        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
-         VALUES ($1, $2, $3, $4, $5)",
+async fn insert_test_tenant(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    partner_id: &str,
+    engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
+) {
+    common::oauth::insert_tenant_with_oauth_secrets(
+        pool,
+        tenant_id,
+        Some(partner_id),
+        engine,
+        "test-client",
+        "test-secret",
+        "test-refresh",
     )
-    .bind(tenant_id.bare())
-    .bind(partner_id)
-    .bind("test-client")
-    .bind("test-secret")
-    .bind("test-refresh")
-    .execute(pool)
-    .await
-    .unwrap();
+    .await;
 }
 
-async fn build_provider_setup(pool: &PgPool) -> (MockServer, Arc<ProviderRegistry>) {
+async fn build_provider_setup(
+    pool: &PgPool,
+    engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
+) -> (MockServer, Arc<ProviderRegistry>) {
     let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri());
+    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
     (server, providers)
 }
 
@@ -247,8 +253,9 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     // One publish_log_entry call from publish_didlog.
     registry.enqueue_publish(PublishCall::Ok);
 
+    let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID).await;
+    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &secret_engine).await;
     let (issuer_id, engine) = insert_active_issuer(&pool, &tenant_id).await;
 
     let pending_a = insert_pending_offer(&pool, &tenant_id, &issuer_id).await;
@@ -261,7 +268,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     operation_tasks::insert(&mut conn, &task).await.unwrap();
     drop(conn);
 
-    let (_token_server, providers) = build_provider_setup(&pool).await;
+    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),

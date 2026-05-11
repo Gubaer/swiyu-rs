@@ -2,9 +2,13 @@ use secrecy::{ExposeSecret, SecretString};
 use sqlx::Row;
 use sqlx::postgres::PgConnection;
 
+use crate::domain::secret_encryption_engine::{
+    AnySecretEncryptionEngine, Ciphertext, SecretEncryptionEngine,
+};
 use crate::domain::{Tenant, TenantId};
 
 use super::PersistenceError;
+use super::tenant_secret_keys::{oauth2_client_secret_key_name, oauth2_refresh_token_key_name};
 
 pub async fn find_by_id(
     conn: &mut PgConnection,
@@ -42,7 +46,7 @@ pub struct TenantOauthCreds {
 }
 
 /// Reads the three OAuth2 credential columns under a `FOR UPDATE`
-/// row lock.
+/// row lock and decrypts the two encrypted columns through `engine`.
 ///
 /// Must be called from within a transaction — the lock is released
 /// when the surrounding transaction commits or rolls back. Returns
@@ -50,6 +54,7 @@ pub struct TenantOauthCreds {
 pub async fn read_oauth_credentials_for_update(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
+    engine: &AnySecretEncryptionEngine,
 ) -> Result<Option<TenantOauthCreds>, PersistenceError> {
     let row = sqlx::query(
         r#"
@@ -69,16 +74,43 @@ pub async fn read_oauth_credentials_for_update(
         return Ok(None);
     };
     let client_id: Option<String> = row.try_get("oauth_client_id")?;
-    let client_secret: Option<String> = row.try_get("oauth_client_secret")?;
-    let refresh_token: Option<String> = row.try_get("oauth_refresh_token")?;
+    let client_secret_blob: Option<Vec<u8>> = row.try_get("oauth_client_secret")?;
+    let refresh_token_blob: Option<Vec<u8>> = row.try_get("oauth_refresh_token")?;
+
+    let client_secret = match client_secret_blob {
+        None => None,
+        Some(bytes) => Some(
+            decrypt_to_secret_string(
+                engine,
+                &oauth2_client_secret_key_name(tenant_id),
+                &Ciphertext::from(bytes),
+                "oauth_client_secret",
+            )
+            .await?,
+        ),
+    };
+    let refresh_token = match refresh_token_blob {
+        None => None,
+        Some(bytes) => Some(
+            decrypt_to_secret_string(
+                engine,
+                &oauth2_refresh_token_key_name(tenant_id),
+                &Ciphertext::from(bytes),
+                "oauth_refresh_token",
+            )
+            .await?,
+        ),
+    };
+
     Ok(Some(TenantOauthCreds {
         client_id,
-        client_secret: client_secret.map(SecretString::from),
-        refresh_token: refresh_token.map(SecretString::from),
+        client_secret,
+        refresh_token,
     }))
 }
 
-/// Writes a new value for `oauth_refresh_token`.
+/// Writes a new value for `oauth_refresh_token`, encrypting it under
+/// the tenant's `oauth2_refresh_token` key.
 ///
 /// The caller controls the surrounding transaction; this helper does
 /// not commit. Pairs with [`read_oauth_credentials_for_update`] to
@@ -87,7 +119,13 @@ pub async fn write_oauth_refresh_token(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
     refresh_token: &SecretString,
+    engine: &AnySecretEncryptionEngine,
 ) -> Result<(), PersistenceError> {
+    let key_name = oauth2_refresh_token_key_name(tenant_id);
+    let ciphertext = engine
+        .encrypt(&key_name, refresh_token.expose_secret().as_bytes())
+        .await?;
+
     let result = sqlx::query(
         r#"
         UPDATE tenants
@@ -95,7 +133,7 @@ pub async fn write_oauth_refresh_token(
         WHERE id = $2
         "#,
     )
-    .bind(refresh_token.expose_secret())
+    .bind(ciphertext.as_bytes())
     .bind(tenant_id)
     .execute(conn)
     .await?;
@@ -107,19 +145,27 @@ pub async fn write_oauth_refresh_token(
 }
 
 /// Writes new values for `oauth_client_id` and `oauth_client_secret`
-/// in a single statement.
+/// in a single statement; the secret is encrypted under the tenant's
+/// `oauth2_client_secret` key.
 ///
 /// The caller controls the surrounding transaction; this helper does
 /// not commit. The two columns are always written together — partial
-/// updates would leave the row in a state
+/// updates would leave the row in a state the
 /// [`OAuth2TokenProvider`][crate::domain::oauth2::OAuth2TokenProvider]
-/// rejects with [`MissingCredentials`][crate::domain::oauth2::TokenProviderError::MissingCredentials].
+/// rejects with
+/// [`MissingCredentials`][crate::domain::oauth2::TokenProviderError::MissingCredentials].
 pub async fn write_oauth_client_credentials(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
     client_id: &str,
     client_secret: &SecretString,
+    engine: &AnySecretEncryptionEngine,
 ) -> Result<(), PersistenceError> {
+    let key_name = oauth2_client_secret_key_name(tenant_id);
+    let ciphertext = engine
+        .encrypt(&key_name, client_secret.expose_secret().as_bytes())
+        .await?;
+
     let result = sqlx::query(
         r#"
         UPDATE tenants
@@ -129,7 +175,7 @@ pub async fn write_oauth_client_credentials(
         "#,
     )
     .bind(client_id)
-    .bind(client_secret.expose_secret())
+    .bind(ciphertext.as_bytes())
     .bind(tenant_id)
     .execute(conn)
     .await?;
@@ -138,4 +184,17 @@ pub async fn write_oauth_client_credentials(
         return Err(PersistenceError::NotFound);
     }
     Ok(())
+}
+
+async fn decrypt_to_secret_string(
+    engine: &AnySecretEncryptionEngine,
+    key_name: &str,
+    ciphertext: &Ciphertext,
+    column: &str,
+) -> Result<SecretString, PersistenceError> {
+    let plaintext = engine.decrypt(key_name, ciphertext).await?;
+    let s = String::from_utf8(plaintext).map_err(|err| PersistenceError::DataIntegrity {
+        details: format!("{column}: decrypted bytes are not valid UTF-8: {err}"),
+    })?;
+    Ok(SecretString::from(s))
 }

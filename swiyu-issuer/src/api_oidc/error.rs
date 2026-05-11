@@ -87,6 +87,10 @@ impl From<PersistenceError> for OidcError {
                     "unique constraint violated: {what}"
                 ))))
             }
+            PersistenceError::Encryption(err) => {
+                tracing::error!(error = %err, "secret-encryption failure in OIDC layer");
+                OidcError::Internal(Box::new(err))
+            }
         }
     }
 }

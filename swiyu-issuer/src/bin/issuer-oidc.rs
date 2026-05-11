@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use chrono::Duration;
 use swiyu_issuer::api_oidc::{AppState, Config, router};
-use swiyu_issuer::domain::build_signing_engine_from_env;
+use swiyu_issuer::domain::{
+    AnySecretEncryptionEngine, build_secret_encryption_engine_from_env,
+    build_signing_engine_from_env,
+};
 use swiyu_issuer::persistence;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -33,6 +36,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     persistence::run_migrations(&pool).await?;
 
     let engine = Arc::new(build_signing_engine_from_env(pool.clone())?);
+    // Built at startup so SECRET_ENCRYPTION_* misconfiguration fails fast.
+    // No consumer holds the engine yet — tenant repository wiring lands later.
+    let _secret_encryption_engine: Arc<AnySecretEncryptionEngine> =
+        Arc::new(build_secret_encryption_engine_from_env()?);
 
     let state = AppState::new(
         pool,

@@ -81,27 +81,21 @@ impl RngCore for ConstantRng {
     }
 }
 
-async fn insert_tenant_with_oauth(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query(
-        "INSERT INTO tenants (id, partner_id, oauth_client_id, oauth_client_secret, oauth_refresh_token)
-         VALUES ($1, $2, $3, $4, $5)",
+async fn insert_tenant_with_oauth(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
+) {
+    common::oauth::insert_tenant_with_oauth_secrets(
+        pool,
+        tenant_id,
+        Some(PARTNER_ID),
+        engine,
+        "test-client",
+        "test-secret",
+        "test-refresh",
     )
-    .bind(tenant_id.bare())
-    .bind(PARTNER_ID)
-    .bind("test-client")
-    .bind("test-secret")
-    .bind("test-refresh")
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
-async fn read_refresh_token(pool: &PgPool, tenant_id: &TenantId) -> Option<String> {
-    sqlx::query_scalar("SELECT oauth_refresh_token FROM tenants WHERE id = $1")
-        .bind(tenant_id.bare())
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    .await;
 }
 
 fn pending_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
@@ -186,7 +180,12 @@ fn build_worker(
 #[sqlx::test(migrations = "./migrations")]
 async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(pool: PgPool) {
     let token_server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), token_server.uri());
+    let secret_engine = common::oauth::test_engine();
+    let providers = common::oauth::build_provider_registry(
+        pool.clone(),
+        token_server.uri(),
+        Arc::clone(&secret_engine),
+    );
 
     let registry_server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -206,7 +205,7 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
         .await;
 
     let tenant_id = TenantId::generate();
-    insert_tenant_with_oauth(&pool, &tenant_id).await;
+    insert_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(tenant_id.clone(), issuer_id.clone());
@@ -235,7 +234,9 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
     // The wiremock token stub returned `rotated-refresh`; the
     // OAuth2TokenProvider should have written it back to the row.
     assert_eq!(
-        read_refresh_token(&pool, &tenant_id).await.as_deref(),
+        common::oauth::read_refresh_token(&pool, &tenant_id, &secret_engine)
+            .await
+            .as_deref(),
         Some("rotated-refresh"),
         "refresh token was not rotated in the DB",
     );
@@ -261,7 +262,12 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
 #[sqlx::test(migrations = "./migrations")]
 async fn registry_401_triggers_invalidate_and_retry(pool: PgPool) {
     let token_server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), token_server.uri());
+    let secret_engine = common::oauth::test_engine();
+    let providers = common::oauth::build_provider_registry(
+        pool.clone(),
+        token_server.uri(),
+        Arc::clone(&secret_engine),
+    );
 
     let registry_server = MockServer::start().await;
     // First allocate POST: 401 — simulates a stale access token at
@@ -291,7 +297,7 @@ async fn registry_401_triggers_invalidate_and_retry(pool: PgPool) {
         .await;
 
     let tenant_id = TenantId::generate();
-    insert_tenant_with_oauth(&pool, &tenant_id).await;
+    insert_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(tenant_id.clone(), issuer_id.clone());

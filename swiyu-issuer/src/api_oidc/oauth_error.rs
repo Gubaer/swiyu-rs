@@ -134,6 +134,10 @@ impl From<PersistenceError> for OAuthError {
                 OAuthError::Internal(Box::new(std::io::Error::other(details)))
             }
             PersistenceError::Db(err) => OAuthError::Internal(Box::new(err)),
+            PersistenceError::Encryption(err) => {
+                tracing::error!(error = %err, "secret-encryption failure in OAuth token path");
+                OAuthError::Internal(Box::new(err))
+            }
         }
     }
 }
