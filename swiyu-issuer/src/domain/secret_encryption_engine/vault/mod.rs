@@ -24,7 +24,8 @@ const VAULT_MESSAGE_AUTHENTICATION_FAILED: &str = "cipher: message authenticatio
 ///
 /// Populated from environment variables in the binary; see `.env.example`
 /// for the variables that map to each field. Shares `VAULT_ADDR`,
-/// `VAULT_TOKEN`, and `VAULT_TRANSIT_PATH` with `VaultSigningEngine` —
+/// `VAULT_TOKEN`, and `VAULT_TRANSIT_PATH` with
+/// [`VaultSigningEngine`][crate::domain::signing_engine::VaultSigningEngine] —
 /// operators wanting to isolate signing keys from secret-encryption keys
 /// must configure a different Vault mount point out of band.
 pub struct VaultSecretEncryptionEngineConfig {
@@ -39,13 +40,13 @@ impl VaultSecretEncryptionEngineConfig {
     pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 }
 
-/// Middle-maturity `SecretEncryptionEngine` backed by Vault Transit.
+/// Middle-maturity [`SecretEncryptionEngine`] backed by Vault Transit.
 ///
 /// Symmetric keys never leave Vault; encryption and decryption happen
 /// server-side. The engine itself is stateless beyond the HTTP client
 /// and never provisions keys — operators create per-tenant Transit keys
 /// out of band. A request against a missing key surfaces as
-/// `KeyNotFound` at first use.
+/// [`KeyNotFound`][super::SecretEncryptionError::KeyNotFound] at first use.
 pub struct VaultSecretEncryptionEngine {
     client: Client,
     address: Url,

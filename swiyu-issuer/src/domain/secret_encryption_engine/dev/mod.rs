@@ -20,14 +20,15 @@ const HKDF_INFO_PREFIX: &[u8] = b"swiyu-issuer/v1/secret-management/";
 const DEV_KEY_VERSION: u32 = 1;
 const MASTER_KEY_LEN: usize = 32;
 
-/// Low-maturity `SecretEncryptionEngine` for development and integration
+/// Low-maturity [`SecretEncryptionEngine`] for development and integration
 /// tests.
 ///
 /// A single in-process master key is the only long-term secret. Per-key
 /// AES-256 keys are derived via HKDF-SHA256 with `key_name` mixed into
 /// `info`, so distinct `key_name`s yield distinct derived keys without
 /// the engine knowing anything about tenants. Must not be used in
-/// production — production uses `VaultSecretEncryptionEngine`.
+/// production — production uses
+/// [`VaultSecretEncryptionEngine`][super::VaultSecretEncryptionEngine].
 pub struct DevSecretEncryptionEngine {
     master_key: Arc<SecretBox<[u8; MASTER_KEY_LEN]>>,
 }
