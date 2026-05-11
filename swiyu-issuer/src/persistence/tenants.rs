@@ -1,17 +1,16 @@
 use secrecy::{ExposeSecret, SecretString};
 use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 
 use crate::domain::{Tenant, TenantId};
 
 use super::PersistenceError;
-use super::helpers::integrity_from;
 
 pub async fn find_by_id(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
 ) -> Result<Option<Tenant>, PersistenceError> {
-    let row = sqlx::query(
+    let tenant = sqlx::query_as::<_, Tenant>(
         r#"
         SELECT id,
                partner_id,
@@ -22,39 +21,23 @@ pub async fn find_by_id(
         WHERE id = $1
         "#,
     )
-    .bind(tenant_id.bare())
+    .bind(tenant_id)
     .fetch_optional(conn)
     .await?;
 
-    row.map(|row| row_to_tenant(&row)).transpose()
-}
-
-fn row_to_tenant(row: &PgRow) -> Result<Tenant, PersistenceError> {
-    let id: String = row.try_get("id")?;
-    let partner_id: Option<String> = row.try_get("partner_id")?;
-    let oauth_client_id: Option<String> = row.try_get("oauth_client_id")?;
-    let oauth_client_secret: Option<String> = row.try_get("oauth_client_secret")?;
-    let oauth_refresh_token: Option<String> = row.try_get("oauth_refresh_token")?;
-    Ok(Tenant {
-        id: TenantId::from_bare(id).map_err(integrity_from)?,
-        partner_id,
-        oauth_client_id,
-        oauth_client_secret: oauth_client_secret.map(SecretString::from),
-        oauth_refresh_token: oauth_refresh_token.map(SecretString::from),
-    })
+    Ok(tenant)
 }
 
 /// OAuth2 credentials read from one tenant row.
 ///
 /// Validation of which missing-value combinations are tolerable
-/// lives in the caller (`OAuth2TokenProvider`), not here.
+/// lives in the caller ([`OAuth2TokenProvider`][crate::domain::oauth2::OAuth2TokenProvider]),
+/// not here.
 pub struct TenantOauthCreds {
-    /// SWIYU OAuth2 client id. NULL for tenants that do not call
-    /// SWIYU registries.
+    /// NULL for tenants that do not call SWIYU registries.
     pub client_id: Option<String>,
-    /// SWIYU OAuth2 client secret.
     pub client_secret: Option<SecretString>,
-    /// SWIYU OAuth2 refresh token. Rotated on every successful grant.
+    /// Rotated on every successful grant.
     pub refresh_token: Option<SecretString>,
 }
 
@@ -78,7 +61,7 @@ pub async fn read_oauth_credentials_for_update(
         FOR UPDATE
         "#,
     )
-    .bind(tenant_id.bare())
+    .bind(tenant_id)
     .fetch_optional(conn)
     .await?;
 
@@ -98,7 +81,7 @@ pub async fn read_oauth_credentials_for_update(
 /// Writes a new value for `oauth_refresh_token`.
 ///
 /// The caller controls the surrounding transaction; this helper does
-/// not commit. Pairs with `read_oauth_credentials_for_update` to
+/// not commit. Pairs with [`read_oauth_credentials_for_update`] to
 /// implement the rotation step of an OAuth2 refresh-token grant.
 pub async fn write_oauth_refresh_token(
     conn: &mut PgConnection,
@@ -113,7 +96,7 @@ pub async fn write_oauth_refresh_token(
         "#,
     )
     .bind(refresh_token.expose_secret())
-    .bind(tenant_id.bare())
+    .bind(tenant_id)
     .execute(conn)
     .await?;
 
@@ -128,8 +111,9 @@ pub async fn write_oauth_refresh_token(
 ///
 /// The caller controls the surrounding transaction; this helper does
 /// not commit. The two columns are always written together — partial
-/// updates would leave the row in a state the OAuth2TokenProvider
-/// rejects with `MissingCredentials`.
+/// updates would leave the row in a state
+/// [`OAuth2TokenProvider`][crate::domain::oauth2::OAuth2TokenProvider]
+/// rejects with [`MissingCredentials`][crate::domain::oauth2::TokenProviderError::MissingCredentials].
 pub async fn write_oauth_client_credentials(
     conn: &mut PgConnection,
     tenant_id: &TenantId,
@@ -146,7 +130,7 @@ pub async fn write_oauth_client_credentials(
     )
     .bind(client_id)
     .bind(client_secret.expose_secret())
-    .bind(tenant_id.bare())
+    .bind(tenant_id)
     .execute(conn)
     .await?;
 

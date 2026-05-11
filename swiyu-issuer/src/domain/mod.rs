@@ -42,4 +42,4 @@ pub use signing_engine::{
     VaultSigningEngine, VaultSigningEngineConfig, build_from_env as build_signing_engine_from_env,
 };
 pub use status_list::{BITSTRING_BYTES, StatusList, StatusListIndex, StatusValue};
-pub use tenant::Tenant;
+pub use tenant::{OAuthSecret, Tenant};
