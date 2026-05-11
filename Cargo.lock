@@ -3125,7 +3125,7 @@ dependencies = [
 
 [[package]]
 name = "swiyu-issuer"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "axum",
  "base64",
