@@ -151,19 +151,19 @@ A small helper module lives alongside the tenant repository, not inside the engi
 
 ```rust
 pub fn oauth2_refresh_token_key_name(tenant_id: &TenantId) -> String {
-    format!("tenant/{tenant_id}/oauth2_refresh_token")
+    format!("tenant-{tenant_id}-oauth2_refresh_token")
 }
 
 pub fn oauth2_client_secret_key_name(tenant_id: &TenantId) -> String {
-    format!("tenant/{tenant_id}/oauth2_client_secret")
+    format!("tenant-{tenant_id}-oauth2_client_secret")
 }
 ```
 
-`TenantId`'s `Display` impl produces the canonical stable identifier (UUID). When a new family is introduced it gets a new function in the same module. Centralising the format here means the literal `tenant/{tenant_id}/{family}` template appears in exactly one place per family; call sites refer to the family by function name. The engine never sees the family separately from the rest of the key name.
+Hyphens, not slashes: Vault Transit's `keys/<name>` route uses a name regex that rejects `/`, so a slash-delimited convention is unroutable in Transit. `TenantId` is bare base58 (no `-`) and family names use `_` internally (no `-`), so `tenant-<tenant_id>-<family>` parses unambiguously. When a new family is introduced it gets a new function in the same module. Centralising the format here means the literal template appears in exactly one place per family; call sites refer to the family by function name. The engine never sees the family separately from the rest of the key name.
 
 ### Bounds
 
-The envelope's `key_name_len` field is one byte (max 255). A typical name — `tenant/<uuid>/oauth2_refresh_token` — is around 60 bytes, comfortably within budget. Future families with longer names would need to stay under the same bound.
+The envelope's `key_name_len` field is one byte (max 255). A typical name — `tenant-<tenant_id>-oauth2_refresh_token` — is around 45 bytes, comfortably within budget. Future families with longer names would need to stay under the same bound.
 
 ### Set of secret families
 

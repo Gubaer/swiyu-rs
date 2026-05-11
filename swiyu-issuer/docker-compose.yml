@@ -152,8 +152,8 @@ services:
               -H "X-Vault-Token: $$VAULT_TOKEN" \
               -H "Content-Type: application/json" \
               -d '{"type":"aes256-gcm96"}' \
-              "$$VAULT_ADDR/v1/transit/keys/tenant/$$DEV_TENANT_ID/$$family" >/dev/null \
-              || { echo "bootstrap-dev-tenant: failed to provision Vault key tenant/$$DEV_TENANT_ID/$$family" >&2; exit 1; }
+              "$$VAULT_ADDR/v1/transit/keys/tenant-$$DEV_TENANT_ID-$$family" >/dev/null \
+              || { echo "bootstrap-dev-tenant: failed to provision Vault key tenant-$$DEV_TENANT_ID-$$family" >&2; exit 1; }
           done
         fi
         if [ -n "$$SWIYU_CLIENT_ID" ] && [ -n "$$SWIYU_CLIENT_SECRET" ]; then

@@ -13,7 +13,7 @@ Status: living document. Reflects the persistence layer as it stands today.
 - `errors.rs` — `PersistenceError` enum.
 - `helpers.rs` — internal helpers, including `map_database_error` which maps Postgres SQLSTATE 23505 (`unique_violation`) onto `PersistenceError::UniqueViolation`.
 - `tenants.rs`, `issuers.rs`, `api_tokens.rs`, `credential_offers.rs`, `issued_credentials.rs`, `operation_tasks.rs`, `status_lists.rs` — one submodule per aggregate.
-- `tenant_secret_keys.rs` — pure functions that derive the `SecretEncryptionEngine` key names for a given tenant (`oauth2_client_secret:<tenant_id>`, `oauth2_refresh_token:<tenant_id>`). Kept separate so the naming convention has one home and the write/read paths in `tenants.rs` cannot drift.
+- `tenant_secret_keys.rs` — pure functions that derive the `SecretEncryptionEngine` key names for a given tenant (`tenant-<tenant_id>-oauth2_client_secret`, `tenant-<tenant_id>-oauth2_refresh_token`). Kept separate so the naming convention has one home and the write/read paths in `tenants.rs` cannot drift.
 - `oidc/` — submodule grouping the OIDC token endpoint's persistent state: `access_tokens.rs`, `nonces.rs`, plus an `oidc/credential_offers.rs` for offer lookups the OIDC handlers need.
 
 `swiyu-issuer/migrations/` holds versioned `.sql` migration files. The binaries call `sqlx::migrate!("./migrations").run(pool)` at startup.
@@ -187,7 +187,7 @@ These were open in earlier drafts and are now settled in the code:
 - **OIDC ephemeral storage**: focused tables (`oidc_access_tokens`, `oidc_nonces`), not a single table with a kind discriminator.
 - **What to retain of an issued credential**: metadata plus an `integrity_hash`; the signed compact SD-JWT VC bytes are not persisted.
 - **Pre-auth code storage**: bare nullable column on `credential_offers`, not a separate bridge table.
-- **OAuth2 secret storage at rest**: encrypted via the `SecretEncryptionEngine` and stored as self-describing ciphertext blobs in BYTEA columns. Per-tenant key names (`oauth2_client_secret:<tenant_id>`, `oauth2_refresh_token:<tenant_id>`) are derived by `persistence::tenant_secret_keys`. The earlier "plaintext text with `SecretString` only in-memory" arrangement is gone.
+- **OAuth2 secret storage at rest**: encrypted via the `SecretEncryptionEngine` and stored as self-describing ciphertext blobs in BYTEA columns. Per-tenant key names (`tenant-<tenant_id>-oauth2_client_secret`, `tenant-<tenant_id>-oauth2_refresh_token`) are derived by `persistence::tenant_secret_keys`. The earlier "plaintext text with `SecretString` only in-memory" arrangement is gone.
 
 ## Still not implemented
 
