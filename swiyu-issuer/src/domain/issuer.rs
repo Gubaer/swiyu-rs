@@ -38,6 +38,32 @@ impl IssuerState {
     }
 }
 
+impl sqlx::Type<sqlx::Postgres> for IssuerState {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for IssuerState {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        IssuerState::parse(s).map_err(|e| Box::new(e) as sqlx::error::BoxDynError)
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for IssuerState {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.as_str(), buf)
+    }
+}
+
 /// Outcome of [`Issuer::try_deactivate`].
 ///
 /// `Already` is the saga-resume case: the worker crashed last time
@@ -60,7 +86,7 @@ pub enum MarkOutcome {
 /// Issuers created through that flow have all three populated; the
 /// OIDC binary refuses to issue credentials when `assertion_key_id`
 /// is `None`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Issuer {
     pub id: IssuerId,
     pub tenant_id: TenantId,

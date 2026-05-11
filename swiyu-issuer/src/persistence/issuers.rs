@@ -1,12 +1,12 @@
 use chrono::{DateTime, Utc};
 use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 use uuid::Uuid;
 
 use crate::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
 
 use super::PersistenceError;
-use super::helpers::{integrity_from, map_database_error};
+use super::helpers::map_database_error;
 
 pub async fn exists_for_tenant(
     conn: &mut PgConnection,
@@ -20,8 +20,8 @@ pub async fn exists_for_tenant(
         WHERE id = $1 AND tenant_id = $2
         "#,
     )
-    .bind(issuer_id.bare())
-    .bind(tenant_id.bare())
+    .bind(issuer_id)
+    .bind(tenant_id)
     .fetch_optional(conn)
     .await?;
 
@@ -42,7 +42,7 @@ pub async fn find_by_id(
     conn: &mut PgConnection,
     issuer_id: &IssuerId,
 ) -> Result<Option<Issuer>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, Issuer>(
         r#"
         SELECT id, tenant_id, did,
                state, description,
@@ -53,11 +53,10 @@ pub async fn find_by_id(
         WHERE id = $1
         "#,
     )
-    .bind(issuer_id.bare())
+    .bind(issuer_id)
     .fetch_optional(conn)
-    .await?;
-
-    row.map(|row| row_to_issuer(&row)).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 /// Tenant-scoped variant of [`find_by_id`].
@@ -72,7 +71,7 @@ pub async fn find_by_id_for_tenant(
     tenant_id: &TenantId,
     issuer_id: &IssuerId,
 ) -> Result<Option<Issuer>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, Issuer>(
         r#"
         SELECT id, tenant_id, did,
                state, description,
@@ -83,12 +82,11 @@ pub async fn find_by_id_for_tenant(
         WHERE id = $1 AND tenant_id = $2
         "#,
     )
-    .bind(issuer_id.bare())
-    .bind(tenant_id.bare())
+    .bind(issuer_id)
+    .bind(tenant_id)
     .fetch_optional(conn)
-    .await?;
-
-    row.map(|row| row_to_issuer(&row)).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 /// Tenant-scoped variant of [`find_by_id_for_tenant`] that takes a
@@ -106,7 +104,7 @@ pub async fn find_by_id_for_update_for_tenant(
     tenant_id: &TenantId,
     issuer_id: &IssuerId,
 ) -> Result<Option<Issuer>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, Issuer>(
         r#"
         SELECT id, tenant_id, did,
                state, description,
@@ -118,12 +116,11 @@ pub async fn find_by_id_for_update_for_tenant(
         FOR UPDATE
         "#,
     )
-    .bind(issuer_id.bare())
-    .bind(tenant_id.bare())
+    .bind(issuer_id)
+    .bind(tenant_id)
     .fetch_optional(conn)
-    .await?;
-
-    row.map(|row| row_to_issuer(&row)).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 /// Writes a new `state` value for the named issuer.
@@ -149,9 +146,9 @@ pub async fn set_state(
         WHERE id = $2 AND tenant_id = $3
         "#,
     )
-    .bind(state.as_str())
-    .bind(issuer_id.bare())
-    .bind(tenant_id.bare())
+    .bind(state)
+    .bind(issuer_id)
+    .bind(tenant_id)
     .execute(conn)
     .await?;
 
@@ -209,11 +206,11 @@ pub async fn swap_key_triple(
                OR assertion_key_id IS DISTINCT FROM $3)
         "#,
     )
-    .bind(authorized.as_uuid())
-    .bind(authentication.as_uuid())
-    .bind(assertion.as_uuid())
-    .bind(issuer_id.bare())
-    .bind(tenant_id.bare())
+    .bind(authorized)
+    .bind(authentication)
+    .bind(assertion)
+    .bind(issuer_id)
+    .bind(tenant_id)
     .execute(&mut *conn)
     .await?;
 
@@ -228,8 +225,8 @@ pub async fn swap_key_triple(
         WHERE id = $1 AND tenant_id = $2
         "#,
     )
-    .bind(issuer_id.bare())
-    .bind(tenant_id.bare())
+    .bind(issuer_id)
+    .bind(tenant_id)
     .fetch_optional(&mut *conn)
     .await?;
 
@@ -266,14 +263,14 @@ pub async fn insert(conn: &mut PgConnection, issuer: &Issuer) -> Result<(), Pers
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         "#,
     )
-    .bind(issuer.id.bare())
-    .bind(issuer.tenant_id.bare())
+    .bind(&issuer.id)
+    .bind(&issuer.tenant_id)
     .bind(&issuer.did)
-    .bind(issuer.state.map(IssuerState::as_str))
+    .bind(issuer.state)
     .bind(issuer.description.as_deref())
-    .bind(issuer.authorized_key_id.map(|k| *k.as_uuid()))
-    .bind(issuer.authentication_key_id.map(|k| *k.as_uuid()))
-    .bind(issuer.assertion_key_id.map(|k| *k.as_uuid()))
+    .bind(issuer.authorized_key_id)
+    .bind(issuer.authentication_key_id)
+    .bind(issuer.assertion_key_id)
     .bind(issuer.display_name.as_deref())
     .bind(issuer.logo_uri.as_deref())
     .bind(issuer.locale.as_deref())
@@ -312,7 +309,7 @@ pub async fn list(
     };
     let limit_plus_one = i64::from(query.limit) + 1;
 
-    let rows = sqlx::query(
+    let mut issuers = sqlx::query_as::<_, Issuer>(
         r#"
         SELECT id, tenant_id, did,
                state, description,
@@ -327,14 +324,12 @@ pub async fn list(
         LIMIT $4
         "#,
     )
-    .bind(tenant_id.bare())
+    .bind(tenant_id)
     .bind(cursor_created_at)
     .bind(cursor_issuer_id.as_deref())
     .bind(limit_plus_one)
     .fetch_all(conn)
     .await?;
-
-    let mut issuers: Vec<Issuer> = rows.iter().map(row_to_issuer).collect::<Result<_, _>>()?;
 
     let has_more = issuers.len() as i64 > i64::from(query.limit);
     if has_more {
@@ -344,38 +339,5 @@ pub async fn list(
     Ok(ListPage {
         items: issuers,
         has_more,
-    })
-}
-
-fn row_to_issuer(row: &PgRow) -> Result<Issuer, PersistenceError> {
-    let id: String = row.try_get("id")?;
-    let tenant_id: String = row.try_get("tenant_id")?;
-    let did: String = row.try_get("did")?;
-    let state: Option<String> = row.try_get("state")?;
-    let description: Option<String> = row.try_get("description")?;
-    let authorized_key_id: Option<Uuid> = row.try_get("authorized_key_id")?;
-    let authentication_key_id: Option<Uuid> = row.try_get("authentication_key_id")?;
-    let assertion_key_id: Option<Uuid> = row.try_get("assertion_key_id")?;
-    let display_name: Option<String> = row.try_get("display_name")?;
-    let logo_uri: Option<String> = row.try_get("logo_uri")?;
-    let locale: Option<String> = row.try_get("locale")?;
-    let created_at: DateTime<Utc> = row.try_get("created_at")?;
-
-    Ok(Issuer {
-        id: IssuerId::from_bare(id).map_err(integrity_from)?,
-        tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
-        did,
-        state: state
-            .map(|s| IssuerState::parse(&s))
-            .transpose()
-            .map_err(integrity_from)?,
-        description,
-        authorized_key_id: authorized_key_id.map(KeyPairId::from),
-        authentication_key_id: authentication_key_id.map(KeyPairId::from),
-        assertion_key_id: assertion_key_id.map(KeyPairId::from),
-        display_name,
-        logo_uri,
-        locale,
-        created_at,
     })
 }

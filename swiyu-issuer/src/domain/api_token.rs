@@ -14,7 +14,7 @@ const WIRE_PREFIX: &str = "tok_";
 ///
 /// The wire form is `tok_<bare>` where `<bare>` is the base58
 /// encoding of `API_TOKEN_BYTES` random bytes. Internally only the
-/// bare body is held; [`Self::as_wire`] reattaches the prefix on demand.
+/// bare body is held; [`as_wire`][Self::as_wire] reattaches the prefix on demand.
 ///
 /// `ApiTokenSecret` deliberately does not implement `Clone`,
 /// `Display`, or `serde::Serialize`. The custom `Debug` impl redacts
@@ -33,9 +33,9 @@ impl ApiTokenSecret {
     /// Parses a wire-form token (`tok_<base58>`) into its bare body.
     ///
     /// Errors are deliberately coarse — anything malformed maps to a
-    /// single [`DomainError::InvalidInput`] variant, so the auth
-    /// extractor cannot distinguish "bad prefix" from "non-base58
-    /// body" in its 401 response.
+    /// single [`InvalidInput`][DomainError::InvalidInput] variant, so
+    /// the auth extractor cannot distinguish "bad prefix" from
+    /// "non-base58 body" in its 401 response.
     pub fn from_wire(s: &str) -> Result<Self, DomainError> {
         let bare = s
             .strip_prefix(WIRE_PREFIX)
@@ -97,26 +97,47 @@ impl ApiTokenHash {
     }
 }
 
-/// A persisted API token row.
-#[derive(Debug, Clone)]
+impl sqlx::Type<sqlx::Postgres> for ApiTokenHash {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ApiTokenHash {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        Ok(Self::from_stored(s))
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for ApiTokenHash {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.0.as_str(), buf)
+    }
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ApiToken {
     pub id: ApiTokenId,
     pub tenant_id: TenantId,
     pub name: String,
-    /// The bare secret is never stored; only its hash is persisted.
     pub token_hash: ApiTokenHash,
     pub created_at: DateTime<Utc>,
     /// `None` means the token never expires.
     pub expires_at: Option<DateTime<Utc>>,
-    /// `None` means the token has not been revoked. See [`ApiToken::is_valid_at`].
+    /// `None` means the token has not been revoked. See [`is_valid_at`][Self::is_valid_at].
     pub revoked_at: Option<DateTime<Utc>>,
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
 impl ApiToken {
-    /// Constructs a fresh token for `tenant_id` with the given name
-    /// and optional expiry. Generates a new id; the caller computes
-    /// the hash from the bare secret it minted alongside.
     pub fn new(
         tenant_id: TenantId,
         name: String,

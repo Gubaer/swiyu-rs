@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 use swiyu_core::statuslist::{
     SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY, StatusList as CoreStatusList,
 };
@@ -46,8 +46,8 @@ pub async fn provision_for_issuer(
         VALUES ($1, $2, $3, $4, $5)
         "#,
     )
-    .bind(new_id.bare())
-    .bind(issuer_id.bare())
+    .bind(&new_id)
+    .bind(issuer_id)
     .bind(vec![0u8; BITSTRING_BYTES])
     .bind(registry_entry_id)
     .bind(registry_url)
@@ -61,8 +61,8 @@ pub async fn provision_for_issuer(
         WHERE id = $2
         "#,
     )
-    .bind(new_id.bare())
-    .bind(issuer_id.bare())
+    .bind(&new_id)
+    .bind(issuer_id)
     .execute(&mut *conn)
     .await?;
 
@@ -87,7 +87,7 @@ pub async fn current_for_issuer(
         WHERE id = $1
         "#,
     )
-    .bind(issuer_id.bare())
+    .bind(issuer_id)
     .fetch_optional(&mut *conn)
     .await?;
 
@@ -125,7 +125,7 @@ pub async fn current_for_issuer_with_url(
         WHERE i.id = $1
         "#,
     )
-    .bind(issuer_id.bare())
+    .bind(issuer_id)
     .fetch_optional(&mut *conn)
     .await?;
 
@@ -157,7 +157,7 @@ pub async fn allocate_index(
     conn: &mut PgConnection,
     list_id: &StatusListId,
 ) -> Result<Option<StatusListIndex>, PersistenceError> {
-    let row = sqlx::query(
+    let allocated: Option<StatusListIndex> = sqlx::query_scalar(
         r#"
         UPDATE status_lists
         SET allocated_count = allocated_count + 1,
@@ -166,22 +166,12 @@ pub async fn allocate_index(
         RETURNING allocated_count - 1 AS allocated_index
         "#,
     )
-    .bind(list_id.bare())
+    .bind(list_id)
     .bind(SWIYU_STATUS_LIST_CAPACITY as i32)
     .fetch_optional(&mut *conn)
     .await?;
 
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let raw: i32 = row.try_get("allocated_index")?;
-    let index = u32::try_from(raw)
-        .ok()
-        .and_then(|value| StatusListIndex::try_from(value).ok())
-        .ok_or_else(|| PersistenceError::DataIntegrity {
-            details: format!("status_lists row {list_id} returned out-of-range index {raw}"),
-        })?;
-    Ok(Some(index))
+    Ok(allocated)
 }
 
 /// Flips the two-bit slot at `index` in the list's bitstring to
@@ -199,7 +189,7 @@ pub async fn write_bit(
     index: StatusListIndex,
     value: StatusValue,
 ) -> Result<(), PersistenceError> {
-    let row = sqlx::query(
+    let bitstring: Option<Vec<u8>> = sqlx::query_scalar(
         r#"
         SELECT bitstring
         FROM status_lists
@@ -207,14 +197,13 @@ pub async fn write_bit(
         FOR UPDATE
         "#,
     )
-    .bind(list_id.bare())
+    .bind(list_id)
     .fetch_optional(&mut *conn)
     .await?;
 
-    let Some(row) = row else {
+    let Some(bitstring) = bitstring else {
         return Err(PersistenceError::NotFound);
     };
-    let bitstring: Vec<u8> = row.try_get("bitstring")?;
     if bitstring.len() != BITSTRING_BYTES {
         return Err(PersistenceError::DataIntegrity {
             details: format!(
@@ -241,7 +230,7 @@ pub async fn write_bit(
         "#,
     )
     .bind(bitstring)
-    .bind(list_id.bare())
+    .bind(list_id)
     .execute(&mut *conn)
     .await?;
 
@@ -280,7 +269,7 @@ pub async fn record_publish_success(
     )
     .bind(target)
     .bind(now)
-    .bind(list_id.bare())
+    .bind(list_id)
     .execute(&mut *conn)
     .await?;
     Ok(result.rows_affected() > 0)
@@ -314,7 +303,7 @@ pub async fn record_publish_failure(
     .bind(now)
     .bind(error_message)
     .bind(next_attempt_at)
-    .bind(list_id.bare())
+    .bind(list_id)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -344,7 +333,7 @@ pub async fn acquire_next_dirty(
     lease_duration: Duration,
 ) -> Result<Option<StatusList>, PersistenceError> {
     let lease_expiry = now + lease_duration;
-    let row = sqlx::query(
+    sqlx::query_as::<_, StatusList>(
         r#"
         UPDATE status_lists
         SET next_publish_attempt_at = $1
@@ -366,65 +355,6 @@ pub async fn acquire_next_dirty(
     .bind(lease_expiry)
     .bind(now)
     .fetch_optional(&mut *conn)
-    .await?;
-
-    row.as_ref().map(row_to_status_list).transpose()
-}
-
-fn row_to_status_list(row: &PgRow) -> Result<StatusList, PersistenceError> {
-    let id: String = row.try_get("id")?;
-    let issuer_id: String = row.try_get("issuer_id")?;
-    let bitstring: Vec<u8> = row.try_get("bitstring")?;
-    let allocated_count: i32 = row.try_get("allocated_count")?;
-    let committed_version: i64 = row.try_get("committed_version")?;
-    let published_version: i64 = row.try_get("published_version")?;
-    let last_publish_attempt_at: Option<DateTime<Utc>> = row.try_get("last_publish_attempt_at")?;
-    let last_publish_error: Option<String> = row.try_get("last_publish_error")?;
-    let next_publish_attempt_at: Option<DateTime<Utc>> = row.try_get("next_publish_attempt_at")?;
-    let publish_attempts: i32 = row.try_get("publish_attempts")?;
-    let created_at: DateTime<Utc> = row.try_get("created_at")?;
-    let registry_entry_id: Option<String> = row.try_get("registry_entry_id")?;
-    let registry_url: Option<String> = row.try_get("registry_url")?;
-
-    if bitstring.len() != BITSTRING_BYTES {
-        return Err(PersistenceError::DataIntegrity {
-            details: format!(
-                "status_lists row {id} carries bitstring of unexpected length: {}",
-                bitstring.len()
-            ),
-        });
-    }
-
-    let allocated_count =
-        u32::try_from(allocated_count).map_err(|_| PersistenceError::DataIntegrity {
-            details: format!("status_lists row {id} has negative allocated_count"),
-        })?;
-    let committed_version =
-        u64::try_from(committed_version).map_err(|_| PersistenceError::DataIntegrity {
-            details: format!("status_lists row {id} has negative committed_version"),
-        })?;
-    let published_version =
-        u64::try_from(published_version).map_err(|_| PersistenceError::DataIntegrity {
-            details: format!("status_lists row {id} has negative published_version"),
-        })?;
-    let publish_attempts =
-        u32::try_from(publish_attempts).map_err(|_| PersistenceError::DataIntegrity {
-            details: format!("status_lists row {id} has negative publish_attempts"),
-        })?;
-
-    Ok(StatusList {
-        id: StatusListId::from_bare(id).map_err(integrity_from)?,
-        issuer_id: IssuerId::from_bare(issuer_id).map_err(integrity_from)?,
-        bitstring,
-        allocated_count,
-        committed_version,
-        published_version,
-        last_publish_attempt_at,
-        last_publish_error,
-        next_publish_attempt_at,
-        publish_attempts,
-        created_at,
-        registry_entry_id,
-        registry_url,
-    })
+    .await
+    .map_err(PersistenceError::from)
 }

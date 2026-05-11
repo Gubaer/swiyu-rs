@@ -6,17 +6,12 @@
 //! here serve the wallet flow, where the bare pre-auth code is the
 //! lookup key rather than the offer id.
 
-use chrono::{DateTime, Utc};
-use serde_json::Value;
-use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 
-use crate::domain::{
-    CredentialOffer, CredentialOfferId, CredentialOfferState, IssuerId, PreAuthCode, TenantId,
-};
+use crate::domain::{CredentialOffer, CredentialOfferId, IssuerId, PreAuthCode, TenantId};
 
 use super::super::PersistenceError;
-use super::super::helpers::{integrity_from, map_database_error};
+use super::super::helpers::map_database_error;
 
 /// Looks up a credential offer by its bare pre-auth code, scoped to
 /// `(tenant_id, issuer_id)` for defense in depth.
@@ -37,7 +32,7 @@ pub async fn find_by_pre_auth_code(
     issuer_id: &IssuerId,
     pre_auth_code: &PreAuthCode,
 ) -> Result<Option<CredentialOffer>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, CredentialOffer>(
         r#"
         SELECT id, tenant_id, issuer_id, vct, claims, state,
                pre_auth_code, expires_at, created_at,
@@ -48,13 +43,12 @@ pub async fn find_by_pre_auth_code(
           AND issuer_id = $3
         "#,
     )
-    .bind(pre_auth_code.as_str())
-    .bind(tenant_id.bare())
-    .bind(issuer_id.bare())
+    .bind(pre_auth_code)
+    .bind(tenant_id)
+    .bind(issuer_id)
     .fetch_optional(conn)
-    .await?;
-
-    row.map(|row| row_to_offer(&row)).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 /// Returns the named offer while holding a row-level lock on it. The
@@ -79,7 +73,7 @@ pub async fn find_by_id_for_update(
     issuer_id: &IssuerId,
     offer_id: &CredentialOfferId,
 ) -> Result<CredentialOffer, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, CredentialOffer>(
         r#"
         SELECT id, tenant_id, issuer_id, vct, claims, state,
                pre_auth_code, expires_at, created_at,
@@ -89,14 +83,12 @@ pub async fn find_by_id_for_update(
         FOR UPDATE
         "#,
     )
-    .bind(offer_id.bare())
-    .bind(tenant_id.bare())
-    .bind(issuer_id.bare())
+    .bind(offer_id)
+    .bind(tenant_id)
+    .bind(issuer_id)
     .fetch_optional(conn)
     .await?
-    .ok_or(PersistenceError::NotFound)?;
-
-    row_to_offer(&row)
+    .ok_or(PersistenceError::NotFound)
 }
 
 /// Persists the post-[`try_issue`][CredentialOffer::try_issue]
@@ -126,11 +118,11 @@ pub async fn set_issued_state(
         WHERE id = $3 AND tenant_id = $4 AND issuer_id = $5
         "#,
     )
-    .bind(offer.state.as_str())
+    .bind(offer.state)
     .bind(offer.issued_at)
-    .bind(offer.id.bare())
-    .bind(offer.tenant_id.bare())
-    .bind(offer.issuer_id.bare())
+    .bind(&offer.id)
+    .bind(&offer.tenant_id)
+    .bind(&offer.issuer_id)
     .execute(conn)
     .await
     .map_err(map_database_error)?;
@@ -139,32 +131,4 @@ pub async fn set_issued_state(
         return Err(PersistenceError::NotFound);
     }
     Ok(())
-}
-
-fn row_to_offer(row: &PgRow) -> Result<CredentialOffer, PersistenceError> {
-    let id: String = row.try_get("id")?;
-    let tenant_id: String = row.try_get("tenant_id")?;
-    let issuer_id: String = row.try_get("issuer_id")?;
-    let vct: String = row.try_get("vct")?;
-    let claims: Value = row.try_get("claims")?;
-    let state_str: String = row.try_get("state")?;
-    let pre_auth_code: Option<String> = row.try_get("pre_auth_code")?;
-    let expires_at: DateTime<Utc> = row.try_get("expires_at")?;
-    let created_at: DateTime<Utc> = row.try_get("created_at")?;
-    let issued_at: Option<DateTime<Utc>> = row.try_get("issued_at")?;
-    let cancelled_at: Option<DateTime<Utc>> = row.try_get("cancelled_at")?;
-
-    Ok(CredentialOffer {
-        id: CredentialOfferId::from_bare(id).map_err(integrity_from)?,
-        tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
-        issuer_id: IssuerId::from_bare(issuer_id).map_err(integrity_from)?,
-        vct,
-        claims,
-        state: CredentialOfferState::try_from(state_str.as_str()).map_err(integrity_from)?,
-        pre_auth_code: pre_auth_code.map(PreAuthCode::from_stored),
-        expires_at,
-        created_at,
-        issued_at,
-        cancelled_at,
-    })
 }

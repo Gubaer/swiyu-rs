@@ -1,14 +1,10 @@
 use chrono::{DateTime, Utc};
-use serde_json::Value;
-use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 
-use crate::domain::{
-    CredentialOffer, CredentialOfferId, CredentialOfferState, IssuerId, PreAuthCode, TenantId,
-};
+use crate::domain::{CredentialOffer, CredentialOfferId, CredentialOfferState, IssuerId, TenantId};
 
 use super::PersistenceError;
-use super::helpers::{integrity_from, map_database_error};
+use super::helpers::map_database_error;
 
 pub async fn insert(
     conn: &mut PgConnection,
@@ -24,13 +20,13 @@ pub async fn insert(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         "#,
     )
-    .bind(offer.id.bare())
-    .bind(offer.tenant_id.bare())
-    .bind(offer.issuer_id.bare())
+    .bind(&offer.id)
+    .bind(&offer.tenant_id)
+    .bind(&offer.issuer_id)
     .bind(&offer.vct)
     .bind(&offer.claims)
-    .bind(offer.state.as_str())
-    .bind(offer.pre_auth_code.as_ref().map(PreAuthCode::as_str))
+    .bind(offer.state)
+    .bind(offer.pre_auth_code.as_ref())
     .bind(offer.expires_at)
     .bind(offer.created_at)
     .bind(offer.issued_at)
@@ -48,7 +44,7 @@ pub async fn find_by_id(
     issuer_id: &IssuerId,
     offer_id: &CredentialOfferId,
 ) -> Result<CredentialOffer, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, CredentialOffer>(
         r#"
         SELECT id, tenant_id, issuer_id, vct, claims, state,
                pre_auth_code, expires_at, created_at,
@@ -57,16 +53,12 @@ pub async fn find_by_id(
         WHERE id = $1 AND tenant_id = $2 AND issuer_id = $3
         "#,
     )
-    .bind(offer_id.bare())
-    .bind(tenant_id.bare())
-    .bind(issuer_id.bare())
+    .bind(offer_id)
+    .bind(tenant_id)
+    .bind(issuer_id)
     .fetch_optional(conn)
-    .await?;
-
-    match row {
-        None => Err(PersistenceError::NotFound),
-        Some(row) => row_to_offer(&row),
-    }
+    .await?
+    .ok_or(PersistenceError::NotFound)
 }
 
 pub use super::ListPage;
@@ -99,10 +91,9 @@ pub async fn list(
         Some((ts, id)) => (Some(ts), Some(id)),
         None => (None, None),
     };
-    let state_filter_str: Option<&'static str> = query.state_filter.map(|s| s.as_str());
     let limit_plus_one = i64::from(query.limit) + 1;
 
-    let rows = sqlx::query(
+    let mut offers = sqlx::query_as::<_, CredentialOffer>(
         r#"
         SELECT id, tenant_id, issuer_id, vct, claims, state,
                pre_auth_code, expires_at, created_at,
@@ -122,18 +113,15 @@ pub async fn list(
         LIMIT $7
         "#,
     )
-    .bind(tenant_id.bare())
-    .bind(issuer_id.bare())
+    .bind(tenant_id)
+    .bind(issuer_id)
     .bind(cursor_created_at)
     .bind(cursor_offer_id.as_deref())
-    .bind(state_filter_str)
+    .bind(query.state_filter)
     .bind(query.now)
     .bind(limit_plus_one)
     .fetch_all(conn)
     .await?;
-
-    let mut offers: Vec<CredentialOffer> =
-        rows.iter().map(row_to_offer).collect::<Result<_, _>>()?;
 
     let has_more = offers.len() as i64 > i64::from(query.limit);
     if has_more {
@@ -173,9 +161,9 @@ pub async fn cancel(
               AND state = 'pending'
         "#,
     )
-    .bind(offer_id.bare())
-    .bind(tenant_id.bare())
-    .bind(issuer_id.bare())
+    .bind(offer_id)
+    .bind(tenant_id)
+    .bind(issuer_id)
     .bind(cancelled_at)
     .execute(conn)
     .await?;
@@ -226,39 +214,11 @@ pub async fn cancel_all_pending_for_issuer(
               AND state = 'pending'
         "#,
     )
-    .bind(tenant_id.bare())
-    .bind(issuer_id.bare())
+    .bind(tenant_id)
+    .bind(issuer_id)
     .bind(cancelled_at)
     .execute(conn)
     .await?;
 
     Ok(result.rows_affected())
-}
-
-fn row_to_offer(row: &PgRow) -> Result<CredentialOffer, PersistenceError> {
-    let id: String = row.try_get("id")?;
-    let tenant_id: String = row.try_get("tenant_id")?;
-    let issuer_id: String = row.try_get("issuer_id")?;
-    let vct: String = row.try_get("vct")?;
-    let claims: Value = row.try_get("claims")?;
-    let state_str: String = row.try_get("state")?;
-    let pre_auth_code: Option<String> = row.try_get("pre_auth_code")?;
-    let expires_at: DateTime<Utc> = row.try_get("expires_at")?;
-    let created_at: DateTime<Utc> = row.try_get("created_at")?;
-    let issued_at: Option<DateTime<Utc>> = row.try_get("issued_at")?;
-    let cancelled_at: Option<DateTime<Utc>> = row.try_get("cancelled_at")?;
-
-    Ok(CredentialOffer {
-        id: CredentialOfferId::from_bare(id).map_err(integrity_from)?,
-        tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
-        issuer_id: IssuerId::from_bare(issuer_id).map_err(integrity_from)?,
-        vct,
-        claims,
-        state: CredentialOfferState::try_from(state_str.as_str()).map_err(integrity_from)?,
-        pre_auth_code: pre_auth_code.map(PreAuthCode::from_stored),
-        expires_at,
-        created_at,
-        issued_at,
-        cancelled_at,
-    })
 }

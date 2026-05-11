@@ -1,11 +1,10 @@
 use chrono::{DateTime, Utc};
-use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 
-use crate::domain::{ApiToken, ApiTokenHash, ApiTokenId, TenantId};
+use crate::domain::{ApiToken, ApiTokenHash, ApiTokenId};
 
 use super::PersistenceError;
-use super::helpers::{integrity_from, map_database_error};
+use super::helpers::map_database_error;
 
 pub async fn insert(conn: &mut PgConnection, token: &ApiToken) -> Result<(), PersistenceError> {
     sqlx::query(
@@ -17,10 +16,10 @@ pub async fn insert(conn: &mut PgConnection, token: &ApiToken) -> Result<(), Per
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
-    .bind(token.id.bare())
-    .bind(token.tenant_id.bare())
+    .bind(&token.id)
+    .bind(&token.tenant_id)
     .bind(&token.name)
-    .bind(token.token_hash.as_str())
+    .bind(&token.token_hash)
     .bind(token.created_at)
     .bind(token.expires_at)
     .bind(token.revoked_at)
@@ -44,7 +43,7 @@ pub async fn find_valid_by_hash(
     token_hash: &ApiTokenHash,
     now: DateTime<Utc>,
 ) -> Result<Option<ApiToken>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, ApiToken>(
         r#"
         SELECT id, tenant_id, name, token_hash,
                created_at, expires_at, revoked_at, last_used_at
@@ -54,12 +53,11 @@ pub async fn find_valid_by_hash(
           AND (expires_at IS NULL OR expires_at > $2)
         "#,
     )
-    .bind(token_hash.as_str())
+    .bind(token_hash)
     .bind(now)
     .fetch_optional(conn)
-    .await?;
-
-    row.map(|row| row_to_token(&row)).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 /// Bumps `last_used_at` for the named token. The auth path calls
@@ -79,32 +77,10 @@ pub async fn mark_used(
         WHERE id = $1
         "#,
     )
-    .bind(id.bare())
+    .bind(id)
     .bind(now)
     .execute(conn)
     .await?;
 
     Ok(())
-}
-
-fn row_to_token(row: &PgRow) -> Result<ApiToken, PersistenceError> {
-    let id: String = row.try_get("id")?;
-    let tenant_id: String = row.try_get("tenant_id")?;
-    let name: String = row.try_get("name")?;
-    let token_hash: String = row.try_get("token_hash")?;
-    let created_at: DateTime<Utc> = row.try_get("created_at")?;
-    let expires_at: Option<DateTime<Utc>> = row.try_get("expires_at")?;
-    let revoked_at: Option<DateTime<Utc>> = row.try_get("revoked_at")?;
-    let last_used_at: Option<DateTime<Utc>> = row.try_get("last_used_at")?;
-
-    Ok(ApiToken {
-        id: ApiTokenId::from_bare(id).map_err(integrity_from)?,
-        tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
-        name,
-        token_hash: ApiTokenHash::from_stored(token_hash),
-        created_at,
-        expires_at,
-        revoked_at,
-        last_used_at,
-    })
 }

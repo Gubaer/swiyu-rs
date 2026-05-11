@@ -67,6 +67,32 @@ impl NonceHash {
     }
 }
 
+impl sqlx::Type<sqlx::Postgres> for NonceHash {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for NonceHash {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        Ok(Self::from_stored(s))
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for NonceHash {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.0.as_str(), buf)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

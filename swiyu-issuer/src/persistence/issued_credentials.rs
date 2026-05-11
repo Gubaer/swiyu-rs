@@ -1,14 +1,12 @@
 use chrono::{DateTime, Utc};
-use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 
 use crate::domain::{
-    CredentialOfferId, INTEGRITY_HASH_LEN, IssuedCredential, IssuedCredentialId,
-    IssuedCredentialState, IssuerId, StatusListId, StatusListIndex, TenantId,
+    IssuedCredential, IssuedCredentialId, IssuedCredentialState, IssuerId, TenantId,
 };
 
 use super::PersistenceError;
-use super::helpers::{integrity_from, map_database_error};
+use super::helpers::map_database_error;
 
 pub async fn insert(
     conn: &mut PgConnection,
@@ -26,15 +24,15 @@ pub async fn insert(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         "#,
     )
-    .bind(credential.id.bare())
-    .bind(credential.tenant_id.bare())
-    .bind(credential.issuer_id.bare())
-    .bind(credential.credential_offer_id.bare())
+    .bind(&credential.id)
+    .bind(&credential.tenant_id)
+    .bind(&credential.issuer_id)
+    .bind(&credential.credential_offer_id)
     .bind(&credential.vct)
     .bind(&credential.holder_key_jkt)
-    .bind(credential.status_list_id.bare())
-    .bind(credential.status_list_index.value() as i32)
-    .bind(credential.state.as_str())
+    .bind(&credential.status_list_id)
+    .bind(credential.status_list_index)
+    .bind(credential.state)
     .bind(&credential.integrity_hash[..])
     .bind(credential.issued_at)
     .bind(credential.expires_at)
@@ -52,7 +50,7 @@ pub async fn find(
     tenant_id: &TenantId,
     credential_id: &IssuedCredentialId,
 ) -> Result<Option<IssuedCredential>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, IssuedCredential>(
         r#"
         SELECT id, tenant_id, issuer_id, credential_offer_id,
                vct, holder_key_jkt,
@@ -63,12 +61,11 @@ pub async fn find(
         WHERE id = $1 AND tenant_id = $2
         "#,
     )
-    .bind(credential_id.bare())
-    .bind(tenant_id.bare())
+    .bind(credential_id)
+    .bind(tenant_id)
     .fetch_optional(conn)
-    .await?;
-
-    row.map(|row| row_to_credential(&row)).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 pub use super::ListPage;
@@ -99,12 +96,10 @@ pub async fn list(
         Some((ts, id)) => (Some(ts), Some(id)),
         None => (None, None),
     };
-    let issuer_filter: Option<&str> = query.filters.issuer_id.as_ref().map(IssuerId::bare);
-    let state_filter: Option<&'static str> = query.filters.state.map(IssuedCredentialState::as_str);
     let vct_filter: Option<&str> = query.filters.vct.as_deref();
     let limit_plus_one = i64::from(query.limit) + 1;
 
-    let rows = sqlx::query(
+    let mut credentials = sqlx::query_as::<_, IssuedCredential>(
         r#"
         SELECT id, tenant_id, issuer_id, credential_offer_id,
                vct, holder_key_jkt,
@@ -121,20 +116,15 @@ pub async fn list(
         LIMIT $7
         "#,
     )
-    .bind(tenant_id.bare())
-    .bind(issuer_filter)
-    .bind(state_filter)
+    .bind(tenant_id)
+    .bind(query.filters.issuer_id.as_ref())
+    .bind(query.filters.state)
     .bind(vct_filter)
     .bind(cursor_issued_at)
     .bind(cursor_credential_id.as_deref())
     .bind(limit_plus_one)
     .fetch_all(conn)
     .await?;
-
-    let mut credentials: Vec<IssuedCredential> = rows
-        .iter()
-        .map(row_to_credential)
-        .collect::<Result<_, _>>()?;
 
     let has_more = credentials.len() as i64 > i64::from(query.limit);
     if has_more {
@@ -168,9 +158,9 @@ pub async fn set_state(
         WHERE id = $1 AND tenant_id = $2
         "#,
     )
-    .bind(credential_id.bare())
-    .bind(tenant_id.bare())
-    .bind(state.as_str())
+    .bind(credential_id)
+    .bind(tenant_id)
+    .bind(state)
     .execute(conn)
     .await?;
 
@@ -178,55 +168,4 @@ pub async fn set_state(
         return Err(PersistenceError::NotFound);
     }
     Ok(())
-}
-
-fn row_to_credential(row: &PgRow) -> Result<IssuedCredential, PersistenceError> {
-    let id: String = row.try_get("id")?;
-    let tenant_id: String = row.try_get("tenant_id")?;
-    let issuer_id: String = row.try_get("issuer_id")?;
-    let credential_offer_id: String = row.try_get("credential_offer_id")?;
-    let vct: String = row.try_get("vct")?;
-    let holder_key_jkt: String = row.try_get("holder_key_jkt")?;
-    let status_list_id: String = row.try_get("status_list_id")?;
-    let status_list_index_raw: i32 = row.try_get("status_list_index")?;
-    let state_str: String = row.try_get("state")?;
-    let integrity_hash_raw: Vec<u8> = row.try_get("integrity_hash")?;
-    let issued_at: DateTime<Utc> = row.try_get("issued_at")?;
-    let expires_at: DateTime<Utc> = row.try_get("expires_at")?;
-
-    let status_list_index = u32::try_from(status_list_index_raw)
-        .ok()
-        .and_then(|value| StatusListIndex::try_from(value).ok())
-        .ok_or_else(|| PersistenceError::DataIntegrity {
-            details: format!(
-                "issued_credentials row {id} carries out-of-range status_list_index {status_list_index_raw}"
-            ),
-        })?;
-
-    if integrity_hash_raw.len() != INTEGRITY_HASH_LEN {
-        return Err(PersistenceError::DataIntegrity {
-            details: format!(
-                "issued_credentials row {id} carries integrity_hash of unexpected length {}",
-                integrity_hash_raw.len()
-            ),
-        });
-    }
-    let mut integrity_hash = [0u8; INTEGRITY_HASH_LEN];
-    integrity_hash.copy_from_slice(&integrity_hash_raw);
-
-    Ok(IssuedCredential {
-        id: IssuedCredentialId::from_bare(id).map_err(integrity_from)?,
-        tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
-        issuer_id: IssuerId::from_bare(issuer_id).map_err(integrity_from)?,
-        credential_offer_id: CredentialOfferId::from_bare(credential_offer_id)
-            .map_err(integrity_from)?,
-        vct,
-        holder_key_jkt,
-        status_list_id: StatusListId::from_bare(status_list_id).map_err(integrity_from)?,
-        status_list_index,
-        state: IssuedCredentialState::parse(&state_str).map_err(integrity_from)?,
-        integrity_hash,
-        issued_at,
-        expires_at,
-    })
 }

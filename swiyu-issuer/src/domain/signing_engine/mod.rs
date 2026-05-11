@@ -98,6 +98,32 @@ impl std::fmt::Display for KeyPairId {
     }
 }
 
+impl sqlx::Type<sqlx::Postgres> for KeyPairId {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <Uuid as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <Uuid as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for KeyPairId {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let uuid = <Uuid as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        Ok(Self(uuid))
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for KeyPairId {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <Uuid as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+    }
+}
+
 /// Raw public-key material returned by a `SigningEngine`.
 ///
 /// Distinct from `swiyu_core::diddoc::public_keys::PublicKey`, which is

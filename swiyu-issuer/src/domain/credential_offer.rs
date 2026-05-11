@@ -46,6 +46,32 @@ impl TryFrom<&str> for CredentialOfferState {
     }
 }
 
+impl sqlx::Type<sqlx::Postgres> for CredentialOfferState {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for CredentialOfferState {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        CredentialOfferState::try_from(s).map_err(|e| Box::new(e) as sqlx::error::BoxDynError)
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for CredentialOfferState {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.as_str(), buf)
+    }
+}
+
 /// A pending or settled OID4VCI credential offer.
 ///
 /// Created by the management API when a business application asks
@@ -55,7 +81,7 @@ impl TryFrom<&str> for CredentialOfferState {
 /// the pending window** because the OID4VCI by-reference flow makes
 /// the bare value retrievable at request time; it is set to `None`
 /// at the first terminal-state transition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct CredentialOffer {
     /// Generated at construction time by the application, not by
     /// the database.

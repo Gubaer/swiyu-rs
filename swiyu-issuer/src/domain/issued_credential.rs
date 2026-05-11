@@ -4,14 +4,12 @@ use super::DomainError;
 use super::ids::{CredentialOfferId, IssuedCredentialId, IssuerId, StatusListId, TenantId};
 use super::status_list::StatusListIndex;
 
-/// Lifecycle state of an `IssuedCredential`.
+/// Lifecycle state of an [`IssuedCredential`].
 ///
 /// New credentials start in `Active`. `Suspended` is reversible
 /// (`Active` ↔ `Suspended`); `Revoked` is terminal. `Expired` is
-/// **not** an `IssuedCredentialState` variant — expiry is a derived
-/// view at read time, against the credential's `exp` claim. See
-/// `aspect-credential-management.md` (Lifecycle states / Expiry is a
-/// view, not a state).
+/// **not** a variant — expiry is a derived view at read time,
+/// against the credential's `exp` claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IssuedCredentialState {
     Active,
@@ -44,22 +42,46 @@ impl IssuedCredentialState {
     }
 }
 
+impl sqlx::Type<sqlx::Postgres> for IssuedCredentialState {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for IssuedCredentialState {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        IssuedCredentialState::parse(s).map_err(|e| Box::new(e) as sqlx::error::BoxDynError)
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for IssuedCredentialState {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.as_str(), buf)
+    }
+}
+
 /// Length in bytes of the issuer-side integrity hash of a signed
 /// credential.
 ///
-/// SHA-256 over the SD-JWT VC compact serialisation. See
-/// `aspect-credential-management.md` (What is persisted, what is not).
+/// SHA-256 over the SD-JWT VC compact serialisation.
 pub const INTEGRITY_HASH_LEN: usize = 32;
 
 /// The issuer's record of a credential it has signed.
 ///
 /// Holds metadata only. The signed SD-JWT VC itself is not persisted —
-/// the wallet keeps the only copy. `integrity_hash` is the only trace
-/// of the issued bytes that survives on the issuer side, used to
-/// answer "did we sign this?" without retaining the credential's
-/// claims. See `aspect-credential-management.md` (What is persisted,
-/// what is not).
-#[derive(Debug, Clone)]
+/// the wallet keeps the only copy. [`integrity_hash`][Self::integrity_hash]
+/// is the only trace of the issued bytes that survives on the issuer
+/// side, used to answer "did we sign this?" without retaining the
+/// credential's claims.
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct IssuedCredential {
     pub id: IssuedCredentialId,
     pub tenant_id: TenantId,
@@ -88,17 +110,16 @@ pub struct IssuedCredential {
     /// and never re-pointed for the lifetime of the row.
     pub status_list_id: StatusListId,
 
-    /// Position within `status_list_id` that holds this credential's
-    /// status bits. Allocated at issuance from the issuer's current
-    /// list and not reused — see
-    /// `aspect-credential-management.md` (Status-list integration /
-    /// Bit allocation).
+    /// Position within [`status_list_id`][Self::status_list_id] that
+    /// holds this credential's status bits. Allocated at issuance from
+    /// the issuer's current list and never reused.
     pub status_list_index: StatusListIndex,
 
     pub state: IssuedCredentialState,
 
     /// SHA-256 of the SD-JWT VC compact serialisation handed to the
     /// wallet at issuance.
+    #[sqlx(try_from = "Vec<u8>")]
     pub integrity_hash: [u8; INTEGRITY_HASH_LEN],
 
     pub issued_at: DateTime<Utc>,
@@ -147,7 +168,7 @@ impl IssuedCredential {
     ///
     /// # Errors
     ///
-    /// Returns [`DomainError::StateTransitionNotAllowed`] if the
+    /// Returns [`StateTransitionNotAllowed`][DomainError::StateTransitionNotAllowed] if the
     /// credential is not currently `Active`.
     pub fn try_suspend(&mut self) -> Result<(), DomainError> {
         match self.state {
@@ -163,7 +184,7 @@ impl IssuedCredential {
     ///
     /// # Errors
     ///
-    /// Returns [`DomainError::StateTransitionNotAllowed`] if the
+    /// Returns [`StateTransitionNotAllowed`][DomainError::StateTransitionNotAllowed] if the
     /// credential is not currently `Suspended`.
     pub fn try_unsuspend(&mut self) -> Result<(), DomainError> {
         match self.state {
@@ -180,7 +201,7 @@ impl IssuedCredential {
     ///
     /// # Errors
     ///
-    /// Returns [`DomainError::StateTransitionNotAllowed`] if the
+    /// Returns [`StateTransitionNotAllowed`][DomainError::StateTransitionNotAllowed] if the
     /// credential is already `Revoked`.
     pub fn try_revoke(&mut self) -> Result<(), DomainError> {
         match self.state {

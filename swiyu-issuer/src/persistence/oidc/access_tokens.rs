@@ -8,13 +8,12 @@
 //! an OAuth `invalid_grant`.
 
 use chrono::{DateTime, Utc};
-use sqlx::Row;
-use sqlx::postgres::{PgConnection, PgRow};
+use sqlx::postgres::PgConnection;
 
 use crate::domain::{AccessToken, AccessTokenHash, CredentialOfferId, IssuerId, TenantId};
 
 use super::super::PersistenceError;
-use super::super::helpers::{integrity_from, map_database_error};
+use super::super::helpers::map_database_error;
 
 pub async fn insert(
     conn: &mut PgConnection,
@@ -31,10 +30,10 @@ pub async fn insert(
         VALUES ($1, $2, $3, $4, $5)
         "#,
     )
-    .bind(token_hash.as_str())
-    .bind(tenant_id.bare())
-    .bind(issuer_id.bare())
-    .bind(offer_id.bare())
+    .bind(token_hash)
+    .bind(tenant_id)
+    .bind(issuer_id)
+    .bind(offer_id)
     .bind(expires_at)
     .execute(conn)
     .await
@@ -55,19 +54,18 @@ pub async fn find_valid_by_hash(
     token_hash: &AccessTokenHash,
     now: DateTime<Utc>,
 ) -> Result<Option<AccessToken>, PersistenceError> {
-    let row = sqlx::query(
+    sqlx::query_as::<_, AccessToken>(
         r#"
         SELECT token_hash, tenant_id, issuer_id, offer_id, expires_at
         FROM oidc_access_tokens
         WHERE token_hash = $1 AND expires_at > $2
         "#,
     )
-    .bind(token_hash.as_str())
+    .bind(token_hash)
     .bind(now)
     .fetch_optional(conn)
-    .await?;
-
-    row.map(|row| row_to_access_token(&row)).transpose()
+    .await
+    .map_err(PersistenceError::from)
 }
 
 /// Removes the access-token row for `token_hash`. Idempotent: a
@@ -86,24 +84,8 @@ pub async fn delete_by_hash(
         WHERE token_hash = $1
         "#,
     )
-    .bind(token_hash.as_str())
+    .bind(token_hash)
     .execute(conn)
     .await?;
     Ok(())
-}
-
-fn row_to_access_token(row: &PgRow) -> Result<AccessToken, PersistenceError> {
-    let token_hash: String = row.try_get("token_hash")?;
-    let tenant_id: String = row.try_get("tenant_id")?;
-    let issuer_id: String = row.try_get("issuer_id")?;
-    let offer_id: String = row.try_get("offer_id")?;
-    let expires_at: DateTime<Utc> = row.try_get("expires_at")?;
-
-    Ok(AccessToken {
-        token_hash: AccessTokenHash::from_stored(token_hash),
-        tenant_id: TenantId::from_bare(tenant_id).map_err(integrity_from)?,
-        issuer_id: IssuerId::from_bare(issuer_id).map_err(integrity_from)?,
-        offer_id: CredentialOfferId::from_bare(offer_id).map_err(integrity_from)?,
-        expires_at,
-    })
 }

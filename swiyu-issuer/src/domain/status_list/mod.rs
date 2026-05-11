@@ -51,30 +51,69 @@ impl std::fmt::Display for StatusListIndex {
     }
 }
 
+impl sqlx::Type<sqlx::Postgres> for StatusListIndex {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <i32 as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <i32 as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for StatusListIndex {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let raw = <i32 as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        let unsigned = u32::try_from(raw).map_err(|_| {
+            Box::new(DomainError::InvalidInput {
+                details: format!("status_list_index is negative: {raw}"),
+            }) as sqlx::error::BoxDynError
+        })?;
+        Self::try_from(unsigned).map_err(|e| Box::new(e) as sqlx::error::BoxDynError)
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for StatusListIndex {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        // `as i32` is safe: `TryFrom<u32>` caps the inner value at
+        // `SWIYU_STATUS_LIST_CAPACITY` (131072), well below `i32::MAX`.
+        <i32 as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&(self.0 as i32), buf)
+    }
+}
+
 /// One status list owned by an issuer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct StatusList {
     pub id: StatusListId,
     pub issuer_id: IssuerId,
 
-    /// Raw bitstring; length is exactly [`BITSTRING_BYTES`].
+    /// Raw bitstring; length is exactly [`BITSTRING_BYTES`]. The DB-level
+    /// `CHECK (octet_length(bitstring) = 32768)` constraint enforces the
+    /// length invariant on write, so the read path trusts it.
     pub bitstring: Vec<u8>,
 
     /// Number of indices already handed out by the issuance path.
     /// The next free index is `allocated_count`. Once it reaches
     /// `SWIYU_STATUS_LIST_CAPACITY` a fresh status list is provisioned.
+    #[sqlx(try_from = "i32")]
     pub allocated_count: u32,
 
     /// Increments on every committed bit update (issuance or lifecycle op).
     /// The difference from `published_version` drives the publish worker's
     /// "is this list dirty?" probe.
+    #[sqlx(try_from = "i64")]
     pub committed_version: u64,
     /// Increments after a successful publish round to the SWIYU Status Registry.
+    #[sqlx(try_from = "i64")]
     pub published_version: u64,
 
     pub last_publish_attempt_at: Option<DateTime<Utc>>,
     pub last_publish_error: Option<String>,
     pub next_publish_attempt_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "i32")]
     pub publish_attempts: u32,
 
     pub created_at: DateTime<Utc>,
