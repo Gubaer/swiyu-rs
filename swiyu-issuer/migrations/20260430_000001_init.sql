@@ -1,12 +1,15 @@
 -- Initial schema for swiyu-issuer.
 --
 -- This file is the consolidation of the early-development migrations
--- (originally 0001 through 0015 — including the status-list,
--- issued-credentials, and registry-coordinate additions) into a
--- single baseline. The project is still pre-production; collapsing
--- was cheaper than carrying the expand/contract history. Subsequent
--- schema changes go in their own numbered migration on top of this
--- one.
+-- into a single pre-production baseline. The originals covered 0001
+-- through 0015 (status-list, issued-credentials, registry-coordinate
+-- additions), the OAuth2 credential columns on tenants (originally a
+-- separate `tenants_oauth` migration), and the subsequent re-type of
+-- those secret columns from TEXT to BYTEA for encryption-at-rest
+-- (originally `tenants_oauth_encrypted`). The project is still
+-- pre-production; collapsing was cheaper than carrying the
+-- expand/contract history. Subsequent schema changes go in their own
+-- numbered migration on top of this one.
 --
 -- See specs/impl_persistence.md and
 -- specs/impl-credential-management.md for design rationale.
@@ -15,15 +18,36 @@
 -- Tenants
 -- ============================================================================
 --
--- Organisational entities operating issuers. `partner_id` is the
--- SWIYU business-partner UUID; the worker's allocate_did step reads
--- it when calling the registry. Nullable so non-registry-touching
--- tenants stay possible; the worker fails the task Terminal with
--- 'tenant_missing_partner_id' when this column is NULL.
+-- Organisational entities operating issuers.
+--
+-- `partner_id` is the SWIYU business-partner UUID; the worker's
+-- allocate_did step reads it when calling the registry. Nullable so
+-- non-registry-touching tenants stay possible; the worker fails the
+-- task Terminal with 'tenant_missing_partner_id' when this column is
+-- NULL.
+--
+-- The three OAuth2 columns hold per-tenant SWIYU credentials and are
+-- all NULLable: tenants that do not call SWIYU registries leave them
+-- unset, and workers requesting a token for such a tenant fail
+-- Terminal with 'tenant_missing_oauth_credentials'.
+--   `oauth_client_id`     — ePortal "customer key". Not a secret;
+--                           stored as TEXT.
+--   `oauth_client_secret` — ePortal "customer secret". Persisted as a
+--                           self-describing ciphertext blob produced
+--                           by the SecretEncryptionEngine; the bare
+--                           value never reaches the database.
+--   `oauth_refresh_token` — ePortal "renewal token". Same shape and
+--                           protection as oauth_client_secret;
+--                           rotated by the runtime on every
+--                           successful refresh_token grant.
+-- See specs/impl-oauth2.md and specs/impl-secret-management.md.
 
 CREATE TABLE tenants (
     id TEXT PRIMARY KEY,
-    partner_id TEXT
+    partner_id TEXT,
+    oauth_client_id TEXT,
+    oauth_client_secret BYTEA,
+    oauth_refresh_token BYTEA
 );
 
 -- ============================================================================

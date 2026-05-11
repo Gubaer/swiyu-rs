@@ -58,9 +58,7 @@ Format validation lives in the newtype constructor (`generate()` produces only v
 
 Migrations live in `swiyu-issuer/migrations/`. Two files are in place today:
 
-- `20260430_000001_init.sql` — a consolidation of the early-development migrations (originally 0001 through 0015) into a single pre-production baseline. The expand/contract history of the alpha period was discarded because the data was throwaway.
-- `20260601_000001_tenants_oauth.sql` — adds OAuth2 credential columns (`oauth_client_id`, `oauth_client_secret`, `oauth_refresh_token`) to `tenants` as TEXT.
-- `20260612_000001_tenants_oauth_encrypted.sql` — re-types `oauth_client_secret` and `oauth_refresh_token` from TEXT to BYTEA to hold self-describing ciphertext produced by the `SecretEncryptionEngine`. Destructive (drops any existing values); dev environments re-seed on the next compose-up.
+- `20260430_000001_init.sql` — single pre-production baseline. Collapses the original 0001 through 0015 migrations together with the subsequent OAuth2 column additions and their re-typing for encryption-at-rest. The expand/contract history of the alpha period was discarded because the data is throwaway and the file is easier to read as one piece.
 
 All subsequent schema changes go in their own numbered migration on top of the baseline. The naming convention (`<DATE>_<SEQ>_<description>.sql`) is documented in `LESSONS-LEARNED.md`; in short, only the leading date is the sqlx migration version, so two files sharing a date prefix collide.
 

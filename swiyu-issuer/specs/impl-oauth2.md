@@ -309,16 +309,15 @@ let outcome = with_refreshed_token(&provider, |token| {
 
 ## Persistence
 
-Schema additions to the existing `tenants` table, applied as a new migration `20260601_000001_tenants_oauth.sql`:
+The `tenants` table carries three OAuth2 columns; in the consolidated `20260430_000001_init.sql` baseline they look like:
 
 ```sql
-ALTER TABLE tenants
-    ADD COLUMN oauth_client_id     TEXT,
-    ADD COLUMN oauth_client_secret TEXT,
-    ADD COLUMN oauth_refresh_token TEXT;
+oauth_client_id     TEXT,
+oauth_client_secret BYTEA,
+oauth_refresh_token BYTEA
 ```
 
-All four columns are `NULL`-able because tenants that do not call SWIYU registries (today: none, but the option is preserved) do not need OAuth2 credentials. Workers requesting a token for such a tenant fail Terminal with `MissingCredentials`. Operators populate `oauth_client_id` and `oauth_client_secret` via direct SQL at onboarding (a one-off operation); the recurring operation — pasting a fresh renewal token from the ePortal after a >7-day cliff or credential rotation — is supported by the `tenant import-oauth-refresh-token` subcommand below. The runtime updates `oauth_refresh_token` on every successful grant.
+`oauth_client_id` is not a secret and stays TEXT. The two secret columns are BYTEA because they hold self-describing ciphertext blobs produced by the `SecretEncryptionEngine`; see [`impl-secret-management.md`](impl-secret-management.md) for the envelope format. All three are `NULL`-able because tenants that do not call SWIYU registries (today: none, but the option is preserved) do not need OAuth2 credentials. Workers requesting a token for such a tenant fail Terminal with `MissingCredentials`. Operators populate `oauth_client_id` and `oauth_client_secret` via direct SQL at onboarding (a one-off operation); the recurring operation — pasting a fresh renewal token from the ePortal after a >7-day cliff or credential rotation — is supported by the `tenant import-oauth-refresh-token` subcommand below. The runtime updates `oauth_refresh_token` on every successful grant.
 
 ### Operator subcommand
 
