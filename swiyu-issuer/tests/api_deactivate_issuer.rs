@@ -309,20 +309,36 @@ async fn unknown_issuer_returns_404(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
-    // Migration 0001 seeds an issuer in tenant 4Mk7yK5pQR7sN3 with
-    // state = NULL — the pre-management-flow shape. The deactivate
-    // endpoint must hide that row the same way GET does.
-    let legacy_tenant = TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap();
-    let legacy_issuer = IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap();
+    // A row that carries `state IS NULL` represents the
+    // pre-management-flow shape; the deactivate endpoint must hide it
+    // the same way GET does.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let legacy = Issuer {
+        id: IssuerId::generate(),
+        tenant_id: tenant_id.clone(),
+        did: "did:tdw:example.com:legacy".into(),
+        state: None,
+        description: None,
+        authorized_key_id: None,
+        authentication_key_id: None,
+        assertion_key_id: None,
+        display_name: None,
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    };
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::issuers::insert(&mut conn, &legacy)
+        .await
+        .unwrap();
+    drop(conn);
 
-    // Replace the seeded tenant_id binding here: insert_test_tenant
-    // would clash on the PK. Mint a token for the existing tenant.
-    let secret = mint_test_token(&pool, &legacy_tenant).await;
     let app = router(build_state(pool.clone()).await);
-
     let response = app
         .oneshot(post_request_no_body(
-            &format!("/api/v1/issuers/{}/deactivate", legacy_issuer.bare()),
+            &format!("/api/v1/issuers/{}/deactivate", legacy.id.bare()),
             Some(&secret.as_wire()),
         ))
         .await

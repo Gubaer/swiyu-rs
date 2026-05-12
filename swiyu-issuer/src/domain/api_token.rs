@@ -172,19 +172,10 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
-    /// Bare body of the dev token seeded by migration
-    /// `20260502_000003_api_tokens.sql`.
-    const DEV_TOKEN_BARE: &str = "DevDevDevDevDevDevDevDevDevDevDevDevDevDe";
-
-    /// Hash literal in the same migration. If `DEV_TOKEN_BARE` ever
-    /// changes, recomputing this hash and updating both the migration
-    /// and the constant below is mandatory.
-    const DEV_TOKEN_HASH: &str = "eNmyzEH7r3JEawZtuEkdePoqyEoNSoKG7FJVZPwXHbh";
-
     fn make_token() -> ApiToken {
         let secret = ApiTokenSecret::generate();
         ApiToken::new(
-            TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap(),
+            TenantId::generate(),
             "test-token".to_string(),
             secret.hash(),
             None,
@@ -253,15 +244,6 @@ mod tests {
         let rendered = format!("{secret:?}");
         assert!(!rendered.contains(secret.bare()));
         assert!(rendered.contains("redacted"));
-    }
-
-    #[test]
-    fn dev_token_hash_matches_migration() {
-        // Cross-check: the literal in 20260502_000003_api_tokens.sql
-        // must match SHA-256 base58 of DEV_TOKEN_BARE. If this fails,
-        // either the bare body changed or the migration drifted.
-        let secret = ApiTokenSecret::from_wire(&format!("tok_{DEV_TOKEN_BARE}")).unwrap();
-        assert_eq!(secret.hash().as_str(), DEV_TOKEN_HASH);
     }
 
     #[test]

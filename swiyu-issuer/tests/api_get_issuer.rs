@@ -19,12 +19,6 @@ use swiyu_issuer::persistence;
 
 const TEST_BASE_URL: &str = "http://localhost:8080";
 
-// IDs hard-coded by migration 0001 / 0004. Reproduced here so the tests
-// covering the seeded-legacy filter do not need to query the DB to learn
-// what they are.
-const SEEDED_TENANT_BARE: &str = "4Mk7yK5pQR7sN3";
-const SEEDED_ISSUER_BARE: &str = "9hXq2vRtL8pK7f";
-
 async fn build_state(pool: PgPool) -> AppState {
     AppState::new(
         pool,
@@ -169,18 +163,33 @@ async fn returns_404_for_cross_tenant_issuer(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn returns_404_for_seeded_legacy_issuer(pool: PgPool) {
-    // The seeded dev issuer (migration 0001) carries no state and no
-    // SigningEngine key triple. The handler hides such rows from the
-    // v1 surface.
-    let seeded_tenant = TenantId::from_bare(SEEDED_TENANT_BARE).unwrap();
-    let seeded_issuer = IssuerId::from_bare(SEEDED_ISSUER_BARE).unwrap();
-    let secret = mint_test_token(&pool, &seeded_tenant).await;
+async fn returns_404_for_legacy_issuer(pool: PgPool) {
+    // A row that lacks state and the SigningEngine key triple
+    // represents a half-provisioned issuer; the handler hides such
+    // rows from the v1 surface.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let issuer = Issuer {
+        id: IssuerId::generate(),
+        tenant_id: tenant_id.clone(),
+        did: "did:tdw:example.com:legacy".into(),
+        state: None,
+        description: Some("Legacy fixture (no state, no key triple)".into()),
+        authorized_key_id: None,
+        authentication_key_id: None,
+        assertion_key_id: None,
+        display_name: Some("Legacy".into()),
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    };
+    insert_issuer(&pool, &issuer).await;
 
     let app = router(build_state(pool).await);
     let response = app
         .oneshot(get_request(
-            &format!("/api/v1/issuers/{}", seeded_issuer.bare()),
+            &format!("/api/v1/issuers/{}", issuer.id.bare()),
             Some(&secret.as_wire()),
         ))
         .await

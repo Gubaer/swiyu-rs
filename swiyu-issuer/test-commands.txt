@@ -1,7 +1,7 @@
 # Test commands for swiyu-issuer (HTTPie / `http` CLI).
 #
 # Prereqs:
-#   docker compose up -d                # Postgres on host port 5433
+#   docker compose up -d                  # Postgres on host port 5433
 #   cargo run --bin swiyu-issuer-mgmtapi  # listens on 0.0.0.0:8080
 #   cargo run --bin swiyu-issuer-oidcapi  # listens on 0.0.0.0:8081
 #
@@ -9,11 +9,17 @@
 #      or `pip install httpie`. Pipe through `| jq .` for extra polish.
 #
 # Authentication: every /api/v1/... request needs an
-# Authorization: Bearer tok_<...> header. The migration seeds a
-# documented dev token bound to the seeded tenant; use it inline
-# below or export it as a shell variable to avoid repetition:
+# Authorization: Bearer tok_<...> header. The contributor mints their
+# own dev token after bootstrapping their dev tenant:
 #
-#   TOK="tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+#   swiyu-issuer-cli tenant bootstrap-dev-from-env   # creates tenant, prints id
+#   swiyu-issuer-cli tenant api-token mint \
+#     --tenant <bare-tenant-id> --name local-dev    # prints tok_... once
+#
+# Export the token + your issuer id for the snippets below:
+#
+#   TOK="tok_..."
+#   ISSUER="<bare-issuer-id>"
 #
 # /healthz and /readyz are operational probes and are NOT
 # authenticated.
@@ -32,8 +38,8 @@ http :8080/readyz
 # -----------------------------------------------------------------------------
 # Expected: 201 Created with { id, pre_auth_code, offer_deeplink, expires_at }.
 
-http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+http POST :8080/api/v1/issuers/$ISSUER/credential-offers \
+  "Authorization:Bearer $TOK" \
   vct=urn:communal:local-residence-id \
   claims:='{
     "family_name": "Müller",
@@ -54,8 +60,8 @@ http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
 # picks it up, "expired" once `expires_at` has passed, "cancelled"
 # after a cancel, "issued" after wallet redemption.
 
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id> \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+http :8080/api/v1/issuers/$ISSUER/credential-offers/<bare-offer-id> \
+  "Authorization:Bearer $TOK"
 
 
 # -----------------------------------------------------------------------------
@@ -65,8 +71,8 @@ http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id> \
 # Idempotent: re-running on a cancelled offer returns the same body.
 # A 409 is returned if the offer is already issued.
 
-http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id>/cancel \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+http POST :8080/api/v1/issuers/$ISSUER/credential-offers/<bare-offer-id>/cancel \
+  "Authorization:Bearer $TOK"
 
 
 # -----------------------------------------------------------------------------
@@ -75,8 +81,8 @@ http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id>/
 # Expected: 200 with { id, state, expires_at, issued_at, cancelled_at }.
 # No claims, no PII; suitable for polling.
 
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id>/status \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+http :8080/api/v1/issuers/$ISSUER/credential-offers/<bare-offer-id>/status \
+  "Authorization:Bearer $TOK"
 
 
 # -----------------------------------------------------------------------------
@@ -84,13 +90,13 @@ http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/<bare-offer-id>/statu
 # -----------------------------------------------------------------------------
 # Expected: 200 with { items: [...], next_cursor: "..." | null }.
 
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+http :8080/api/v1/issuers/$ISSUER/credential-offers \
+  "Authorization:Bearer $TOK" \
   limit==10
 
 # Filter by observed state (pending | issued | cancelled | expired):
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+http :8080/api/v1/issuers/$ISSUER/credential-offers \
+  "Authorization:Bearer $TOK" \
   state==pending
 
 
@@ -99,14 +105,14 @@ http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
 # -----------------------------------------------------------------------------
 
 # Missing Authorization header -> 401 unauthorised
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz
+http :8080/api/v1/issuers/$ISSUER/credential-offers/zzzzzzzzzzzzzz
 
 # Wrong scheme -> 401 unauthorised
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz \
+http :8080/api/v1/issuers/$ISSUER/credential-offers/zzzzzzzzzzzzzz \
   "Authorization:Basic dXNlcjpwYXNz"
 
 # Unknown token (right shape, wrong secret) -> 401 unauthorised
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz \
+http :8080/api/v1/issuers/$ISSUER/credential-offers/zzzzzzzzzzzzzz \
   "Authorization:Bearer tok_NotARealTokenAtAll1NotARealTokenAtAll1"
 
 
@@ -115,8 +121,8 @@ http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz \
 # -----------------------------------------------------------------------------
 
 # Unknown vct -> 400 unknown_vct
-http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+http POST :8080/api/v1/issuers/$ISSUER/credential-offers \
+  "Authorization:Bearer $TOK" \
   vct=urn:bogus \
   claims:='{}'
 
@@ -125,33 +131,33 @@ http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
 # returns "not found" because no such issuer is registered for the
 # seeded tenant.)
 http POST :8080/api/v1/issuers/zzzzzzzzzzzzzz/credential-offers \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  "Authorization:Bearer $TOK" \
   vct=urn:communal:local-residence-id \
   claims:='{}'
 
 # Malformed issuer id (non-base58 character) -> 400 invalid_input
 http POST :8080/api/v1/issuers/notValid0/credential-offers \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+  "Authorization:Bearer $TOK" \
   vct=urn:communal:local-residence-id \
   claims:='{}'
 
 # Schema mismatch (missing required fields) -> 400 claims_validation_failed
-http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+http POST :8080/api/v1/issuers/$ISSUER/credential-offers \
+  "Authorization:Bearer $TOK" \
   vct=urn:communal:local-residence-id \
   claims:='{"family_name": "Test"}'
 
 # Get with unknown offer id (valid base58 but no such row) -> 404 not_found
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/zzzzzzzzzzzzzz \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+http :8080/api/v1/issuers/$ISSUER/credential-offers/zzzzzzzzzzzzzz \
+  "Authorization:Bearer $TOK"
 
 # Get with malformed offer id (non-base58 character) -> 400 invalid_input
-http :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers/notValid0 \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe"
+http :8080/api/v1/issuers/$ISSUER/credential-offers/notValid0 \
+  "Authorization:Bearer $TOK"
 
 # expires_in_seconds out of range -> 400 invalid_input
-http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
-  "Authorization:Bearer tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe" \
+http POST :8080/api/v1/issuers/$ISSUER/credential-offers \
+  "Authorization:Bearer $TOK" \
   vct=urn:communal:local-residence-id \
   expires_in_seconds:=10 \
   claims:='{
@@ -169,32 +175,32 @@ http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
 # -----------------------------------------------------------------------------
 
 # Issuer metadata
-http :8081/i/9hXq2vRtL8pK7f/.well-known/openid-credential-issuer
+http :8081/i/$ISSUER/.well-known/openid-credential-issuer
 
 # OAuth authorization-server metadata
-http :8081/i/9hXq2vRtL8pK7f/.well-known/oauth-authorization-server
+http :8081/i/$ISSUER/.well-known/oauth-authorization-server
 
 # Fetch the credential offer body (requires the offer to be pending and
 # unexpired). Replace <bare-offer-id> with the bare part of the `id`
 # returned by create above.
-http :8081/i/9hXq2vRtL8pK7f/credential-offer/<bare-offer-id>
+http :8081/i/$ISSUER/credential-offer/<bare-offer-id>
 
 # Exchange a pre-authorised code for an access token + c_nonce. The
 # bare pre-auth code is what the management API returned in the
 # `pre_auth_code` field at offer creation. Form-encoded body; note the
 # hyphen in `pre-authorized_code`.
-http --form POST :8081/i/9hXq2vRtL8pK7f/token \
+http --form POST :8081/i/$ISSUER/token \
   grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code \
   pre-authorized_code=<bare-pre-auth-code>
 
 # Replaying the same pre-auth code -> 400 invalid_grant (the unique
 # constraint on oidc_access_tokens.offer_id rejects the second insert).
-http --form POST :8081/i/9hXq2vRtL8pK7f/token \
+http --form POST :8081/i/$ISSUER/token \
   grant_type=urn:ietf:params:oauth:grant-type:pre-authorized_code \
   pre-authorized_code=<bare-pre-auth-code>
 
 # Wrong grant type -> 400 unsupported_grant_type
-http --form POST :8081/i/9hXq2vRtL8pK7f/token \
+http --form POST :8081/i/$ISSUER/token \
   grant_type=client_credentials \
   pre-authorized_code=anything
 
@@ -207,7 +213,7 @@ http --form POST :8081/i/9hXq2vRtL8pK7f/token \
 # v0.1.x does NOT verify the JWT signature — claims are checked but the
 # signature is ignored. The issued credential is signed with an EPHEMERAL
 # fixture key generated at swiyu-issuer-oidcapi startup.
-http POST :8081/i/9hXq2vRtL8pK7f/credential \
+http POST :8081/i/$ISSUER/credential \
   "Authorization:Bearer <access-token>" \
   format=vc+sd-jwt \
   vct=urn:communal:local-residence-id \
@@ -219,6 +225,6 @@ http POST :8081/i/9hXq2vRtL8pK7f/credential \
 # -----------------------------------------------------------------------------
 # Prints a tok_... wire form once on stdout; only the hash is persisted.
 #   cargo run --bin swiyu-issuer-cli -- tenant api-token mint \
-#     --tenant 4Mk7yK5pQR7sN3 --name local-dev
+#     --tenant <bare-tenant-id> --name local-dev
 #   cargo run --bin swiyu-issuer-cli -- tenant api-token mint \
-#     --tenant 4Mk7yK5pQR7sN3 --name short-lived --expires-in 1h
+#     --tenant <bare-tenant-id> --name short-lived --expires-in 1h

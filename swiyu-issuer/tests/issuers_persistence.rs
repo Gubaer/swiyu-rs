@@ -101,18 +101,33 @@ async fn signing_engine_shaped_row_round_trips(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn seeded_dev_row_reads_with_no_signing_keys(pool: PgPool) {
-    // The seeded fixture issuer (`9hXq2vRtL8pK7f`) has no
-    // SigningEngine keys configured: state is NULL and the three
-    // *_key_id columns are NULL. The OIDC binary refuses to issue
-    // credentials for it; create a real issuer through the management
-    // API's create_issuer flow before exercising the credential path.
-    let id = IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap();
+async fn legacy_row_reads_with_no_signing_keys(pool: PgPool) {
+    // A "legacy"-shaped row carries state = NULL and NULL across the
+    // three `*_key_id` columns. `find_by_id` must surface it as
+    // `Some(Issuer)` with `Option` fields set to `None`.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let legacy = Issuer {
+        id: IssuerId::generate(),
+        tenant_id: tenant_id.clone(),
+        did: "did:tdw:example.com:legacy".into(),
+        state: None,
+        description: None,
+        authorized_key_id: None,
+        authentication_key_id: None,
+        assertion_key_id: None,
+        display_name: None,
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    };
+
     let mut conn = pool.acquire().await.unwrap();
-    let loaded = issuers::find_by_id(&mut conn, &id)
+    issuers::insert(&mut conn, &legacy).await.unwrap();
+    let loaded = issuers::find_by_id(&mut conn, &legacy.id)
         .await
         .unwrap()
-        .expect("seeded dev issuer should be present");
+        .expect("legacy issuer should be present");
 
     assert_eq!(loaded.state, None);
     assert!(loaded.authorized_key_id.is_none());
@@ -336,18 +351,32 @@ async fn swap_key_triple_rejects_deactivated_issuer(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn swap_key_triple_rejects_legacy_state_null_row(pool: PgPool) {
-    // The seeded dev row from migration 0004 has state = NULL. The
-    // rotate-keys saga must refuse to swap that row's keys, since it
-    // never started in `Active` and has no Authorized key for the
-    // signing step that precedes this UPDATE.
-    let tenant_id = TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap();
-    let legacy_id = IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap();
+    // A row with state = NULL never started in `Active` and has no
+    // Authorized key for the signing step that precedes this UPDATE;
+    // the rotate-keys saga must refuse to swap its keys.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let legacy = Issuer {
+        id: IssuerId::generate(),
+        tenant_id: tenant_id.clone(),
+        did: "did:tdw:example.com:legacy".into(),
+        state: None,
+        description: None,
+        authorized_key_id: None,
+        authentication_key_id: None,
+        assertion_key_id: None,
+        display_name: None,
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    };
 
     let mut conn = pool.acquire().await.unwrap();
+    issuers::insert(&mut conn, &legacy).await.unwrap();
     let result = issuers::swap_key_triple(
         &mut conn,
         &tenant_id,
-        &legacy_id,
+        &legacy.id,
         &KeyPairId::generate(),
         &KeyPairId::generate(),
         &KeyPairId::generate(),
@@ -426,20 +455,6 @@ async fn fresh_issuer_has_null_current_status_list_id(pool: PgPool) {
     let current: Option<String> =
         sqlx::query_scalar("SELECT current_status_list_id FROM issuers WHERE id = $1")
             .bind(issuer.id.bare())
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-    assert!(current.is_none());
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn seeded_issuer_has_null_current_status_list_id(pool: PgPool) {
-    // The seeded dev issuer predates the credential-management slice
-    // and carries NULL through this migration.
-    let mut conn = pool.acquire().await.unwrap();
-    let current: Option<String> =
-        sqlx::query_scalar("SELECT current_status_list_id FROM issuers WHERE id = $1")
-            .bind("9hXq2vRtL8pK7f")
             .fetch_one(&mut *conn)
             .await
             .unwrap();

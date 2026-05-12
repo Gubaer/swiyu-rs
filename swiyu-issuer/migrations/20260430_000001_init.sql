@@ -381,49 +381,8 @@ CREATE INDEX issued_credentials_tenant_issuer
 CREATE INDEX issued_credentials_holder
     ON issued_credentials (tenant_id, issuer_id, holder_key_jkt);
 
--- ============================================================================
--- Seed data
--- ----------------------------------------------------------------------------
--- Walking-skeleton dev fixtures: one tenant, one issuer, one API
--- token. IDs are valid 14-character base58 strings, mirroring what
--- the application's `generate()` will produce, so they look like
--- real generated IDs to dev tooling.
---
--- The tenant's partner_id is the kacon gmbh business entity. Use
--- during development only.
---
--- The seeded API token is alpha/beta-only by policy. The transition
--- to production maturity (prod-1) revokes it explicitly via a
--- follow-up migration; see specs/aspect-persistence.md for maturity
--- rules.
---
---   Wire form:    tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe
---   Bare body:    DevDevDevDevDevDevDevDevDevDevDevDevDevDe
---   token_hash:   base58(SHA-256(bare body))
---                 = eNmyzEH7r3JEawZtuEkdePoqyEoNSoKG7FJVZPwXHbh
---
--- A unit test in domain::api_token recomputes this hash and asserts
--- it matches the literal below; if the seed body is ever changed the
--- test breaks loudly.
--- ============================================================================
-
-INSERT INTO tenants (id, partner_id) VALUES
-    ('4Mk7yK5pQR7sN3', '7355b9bb-d45a-4d42-82ea-0c30b3f2fa25');
-
--- The seeded issuer carries no SigningEngine key triple (state,
--- authorized_key_id, assertion_key_id, ...). Use it to exercise the
--- list/fetch endpoints; create a real issuer through the management
--- API's create_issuer task flow before issuing credentials.
-INSERT INTO issuers (id, tenant_id, did, display_name, locale) VALUES
-    ('9hXq2vRtL8pK7f',
-     '4Mk7yK5pQR7sN3',
-     'did:tdw:dev.example.com:9hXq2vRtL8pK7f',
-     'Dev Issuer (seeded)',
-     'en');
-
-INSERT INTO api_tokens (id, tenant_id, name, token_hash) VALUES (
-    '9DevDevDevDev1',
-    '4Mk7yK5pQR7sN3',
-    'seeded-dev-token',
-    'eNmyzEH7r3JEawZtuEkdePoqyEoNSoKG7FJVZPwXHbh'
-);
+-- No seed data. Contributors create their own dev tenant via
+-- `swiyu-issuer-cli tenant bootstrap-dev-from-env`, sourcing their
+-- own SWIYU Business Partner UUID and OAuth2 credentials from `.env`.
+-- API tokens are minted on demand (`swiyu-issuer-cli tenant
+-- api-token mint`).

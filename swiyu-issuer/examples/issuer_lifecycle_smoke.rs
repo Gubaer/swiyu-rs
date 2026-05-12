@@ -9,18 +9,14 @@ use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use swiyu_core::did::DID;
-use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, TenantId};
+use swiyu_issuer::domain::{ApiToken, ApiTokenSecret};
 use swiyu_issuer::persistence;
 use thiserror::Error;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_POLL_MS: u64 = 1000;
-
-// Bare tenant id of the development tenant seeded by migration
-// `20260430_000001_init.sql`. Every issuer the smoke creates is owned
-// by this tenant.
-const SEEDED_DEV_TENANT: &str = "4Mk7yK5pQR7sN3";
 
 // Lifetime of the token the smoke mints at startup. Long enough for a
 // slow or interactive run, short enough that orphaned rows expire on
@@ -559,8 +555,20 @@ async fn mint_smoke_token(database_url: &str) -> Result<String, PhaseError> {
         .await
         .map_err(|e| PhaseError::Setup(format!("acquire connection: {e}")))?;
 
-    let tenant_id = TenantId::from_bare(SEEDED_DEV_TENANT)
-        .map_err(|e| PhaseError::Setup(format!("invalid SEEDED_DEV_TENANT: {e}")))?;
+    let partner_id_str = env::var("DEV_TENANT_PARTNER_ID")
+        .map_err(|_| PhaseError::Setup("DEV_TENANT_PARTNER_ID must be set".into()))?;
+    let partner_id: Uuid = partner_id_str
+        .parse()
+        .map_err(|e| PhaseError::Setup(format!("invalid DEV_TENANT_PARTNER_ID: {e}")))?;
+    let tenant = persistence::tenants::find_by_partner_id(&mut conn, partner_id)
+        .await
+        .map_err(|e| PhaseError::Setup(format!("find tenant by partner_id: {e}")))?
+        .ok_or_else(|| {
+            PhaseError::Setup(format!(
+                "no tenant with partner_id {partner_id}; run `swiyu-issuer-cli tenant bootstrap-dev-from-env` first"
+            ))
+        })?;
+    let tenant_bare = tenant.id.bare().to_string();
     let secret = ApiTokenSecret::generate();
     let expires_at = Some(
         Utc::now()
@@ -568,7 +576,7 @@ async fn mint_smoke_token(database_url: &str) -> Result<String, PhaseError> {
                 .expect("SMOKE_TOKEN_TTL fits in chrono::Duration"),
     );
     let token = ApiToken::new(
-        tenant_id,
+        tenant.id,
         format!(
             "issuer-lifecycle-smoke {}",
             Utc::now().format("%Y-%m-%dT%H:%M:%SZ")
@@ -583,7 +591,7 @@ async fn mint_smoke_token(database_url: &str) -> Result<String, PhaseError> {
 
     tracing::info!(
         token_id = %token.id,
-        tenant = SEEDED_DEV_TENANT,
+        tenant = %tenant_bare,
         ttl_secs = SMOKE_TOKEN_TTL.as_secs(),
         "✓ smoke API token minted",
     );

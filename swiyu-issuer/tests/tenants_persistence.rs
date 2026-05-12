@@ -12,10 +12,6 @@ use swiyu_issuer::domain::TenantId;
 use swiyu_issuer::persistence::PersistenceError;
 use swiyu_issuer::persistence::tenants::{self, UpdateOutcome};
 
-#[path = "common/mod.rs"]
-mod common;
-use common::seeded::SEEDED_DEV_TENANT_PARTNER_ID;
-
 const TEST_PARTNER: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const ALT_PARTNER: &str = "11111111-2222-3333-4444-555555555555";
 
@@ -52,23 +48,6 @@ async fn find_by_id_returns_none_for_unknown_tenant(pool: PgPool) {
     let result = tenants::find_by_id(&mut conn, &tenant_id).await.unwrap();
 
     assert!(result.is_none());
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn seeded_dev_tenant_carries_kacon_partner_id(pool: PgPool) {
-    // The seeded dev tenant carries the kacon gmbh business partner
-    // id — the consolidated baseline migration (swiyu-issuer/migrations/
-    // 20260430_000001_init.sql) writes it.
-    let tenant_id = TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap();
-    let expected: Uuid = SEEDED_DEV_TENANT_PARTNER_ID.parse().unwrap();
-
-    let mut conn = pool.acquire().await.unwrap();
-    let tenant = tenants::find_by_id(&mut conn, &tenant_id)
-        .await
-        .unwrap()
-        .expect("seeded dev tenant exists");
-
-    assert_eq!(tenant.partner_id, expected);
 }
 
 #[sqlx::test(migrations = "./migrations")]

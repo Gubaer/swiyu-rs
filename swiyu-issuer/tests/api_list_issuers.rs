@@ -19,11 +19,6 @@ use swiyu_issuer::persistence;
 
 const TEST_BASE_URL: &str = "http://localhost:8080";
 
-// IDs hard-coded by migration 0001 / 0004. Reproduced here so the
-// tests covering the seeded-legacy filter do not need to query the
-// DB to learn what they are.
-const SEEDED_TENANT_BARE: &str = "4Mk7yK5pQR7sN3";
-
 async fn build_state(pool: PgPool) -> AppState {
     AppState::new(
         pool,
@@ -223,13 +218,32 @@ async fn cross_tenant_issuers_are_excluded(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn seeded_legacy_issuer_is_filtered_out(pool: PgPool) {
-    // The seeded dev tenant has exactly one row in `issuers` (the
-    // legacy-shaped row from migration 0004) which carries
-    // `state IS NULL`. The list endpoint must hide it the same way
-    // the single-fetch endpoint 404s it.
-    let seeded_tenant = TenantId::from_bare(SEEDED_TENANT_BARE).unwrap();
-    let secret = mint_test_token(&pool, &seeded_tenant).await;
+async fn legacy_issuer_is_filtered_out(pool: PgPool) {
+    // A row that carries `state IS NULL` and no key triple is
+    // half-provisioned legacy data; the list endpoint must hide it
+    // the same way the single-fetch endpoint 404s it.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let legacy = Issuer {
+        id: IssuerId::generate(),
+        tenant_id: tenant_id.clone(),
+        did: "did:tdw:example.com:legacy".into(),
+        state: None,
+        description: Some("Legacy fixture (no state, no key triple)".into()),
+        authorized_key_id: None,
+        authentication_key_id: None,
+        assertion_key_id: None,
+        display_name: Some("Legacy".into()),
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    };
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::issuers::insert(&mut conn, &legacy)
+        .await
+        .unwrap();
+    drop(conn);
 
     let app = router(build_state(pool).await);
     let response = app
