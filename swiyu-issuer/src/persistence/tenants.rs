@@ -9,6 +9,7 @@ use crate::domain::secret_encryption_engine::{
 use crate::domain::{Tenant, TenantId};
 
 use super::PersistenceError;
+use super::helpers::map_database_error;
 use super::tenant_secret_keys::{oauth2_client_secret_key_name, oauth2_refresh_token_key_name};
 
 pub async fn find_by_id(
@@ -69,7 +70,8 @@ pub async fn insert(
     .bind(display_name)
     .bind(description)
     .execute(conn)
-    .await?;
+    .await
+    .map_err(map_database_error)?;
 
     Ok(())
 }

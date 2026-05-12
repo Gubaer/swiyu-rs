@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use swiyu_issuer::cli;
 use swiyu_issuer::domain::{TenantId, build_secret_encryption_engine_from_env};
 use swiyu_issuer::persistence;
+use uuid::Uuid;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -30,6 +31,12 @@ enum TopCommand {
 
 #[derive(Subcommand, Debug)]
 enum TenantCommand {
+    /// Create a new tenant. The bare base58 tenant id is generated
+    /// server-side and printed on stdout exactly once.
+    Create(CreateArgs),
+    /// Update a tenant's mutable metadata (partner_id, display_name,
+    /// description). Omitted flags leave the column untouched.
+    Update(UpdateArgs),
     /// API tokens scoped to a tenant.
     ApiToken {
         #[command(subcommand)]
@@ -43,6 +50,37 @@ enum TenantCommand {
     /// row. Both columns are written atomically; partial updates
     /// would leave the row unable to mint tokens.
     SetOauthCredentials(SetOauthCredentialsArgs),
+}
+
+#[derive(Args, Debug)]
+struct CreateArgs {
+    /// SWIYU Business Partner UUID. Must be a valid UUID.
+    #[arg(long, value_parser = clap::value_parser!(Uuid))]
+    partner_id: Uuid,
+    /// Optional human-readable tenant name.
+    #[arg(long)]
+    display_name: Option<String>,
+    /// Optional freeform description.
+    #[arg(long)]
+    description: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct UpdateArgs {
+    /// Bare base58 tenant id (no `tenant_` prefix).
+    #[arg(long)]
+    tenant: String,
+    /// Replacement SWIYU Business Partner UUID. Use only to correct
+    /// a typo or copy-paste error from the ePortal; partner records
+    /// are not expected to rotate in normal operation.
+    #[arg(long, value_parser = clap::value_parser!(Uuid))]
+    partner_id: Option<Uuid>,
+    /// Replacement human-readable tenant name.
+    #[arg(long)]
+    display_name: Option<String>,
+    /// Replacement freeform description.
+    #[arg(long)]
+    description: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -130,6 +168,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         TopCommand::Tenant { command } => match command {
+            TenantCommand::Create(args) => create_tenant(args).await,
+            TenantCommand::Update(args) => update_tenant(args).await,
             TenantCommand::ApiToken { command } => match command {
                 ApiTokenCommand::Mint {
                     tenant,
@@ -141,6 +181,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             TenantCommand::SetOauthCredentials(args) => set_oauth_credentials(args).await,
         },
     }
+}
+
+async fn create_tenant(args: CreateArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let tenant_id = TenantId::generate();
+
+    let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
+    let pool: PgPool = persistence::connect(&database_url).await?;
+    persistence::run_migrations(&pool).await?;
+
+    cli::tenant::create(
+        &pool,
+        &tenant_id,
+        args.partner_id,
+        args.display_name,
+        args.description,
+    )
+    .await?;
+
+    // Stdout carries the bare id so a pipeline can capture it; the
+    // confirmation banner lands on stderr.
+    println!("{}", tenant_id.bare());
+    eprintln!("created tenant {}", tenant_id.bare());
+
+    Ok(())
+}
+
+async fn update_tenant(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let tenant_id = TenantId::from_bare(&args.tenant)
+        .map_err(|err| format!("--tenant is not a valid bare tenant id: {err}"))?;
+
+    let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
+    let pool: PgPool = persistence::connect(&database_url).await?;
+    persistence::run_migrations(&pool).await?;
+
+    cli::tenant::update(
+        &pool,
+        &tenant_id,
+        args.partner_id,
+        args.display_name,
+        args.description,
+    )
+    .await?;
+
+    eprintln!("updated tenant {}", tenant_id.bare());
+    Ok(())
 }
 
 async fn mint_token(

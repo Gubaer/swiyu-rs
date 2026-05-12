@@ -2,10 +2,91 @@ pub mod api_token;
 
 use secrecy::SecretString;
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::domain::TenantId;
 use crate::domain::secret_encryption_engine::AnySecretEncryptionEngine;
+use crate::persistence::tenants::UpdateOutcome;
 use crate::persistence::{self, PersistenceError};
+
+#[derive(Debug, thiserror::Error)]
+pub enum CreateTenantError {
+    #[error("tenant {0} already exists")]
+    AlreadyExists(String),
+    #[error(transparent)]
+    Persistence(#[from] PersistenceError),
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+}
+
+/// `tenant_id` is minted by the caller via [`generate`][TenantId::generate].
+/// The OAuth2 columns and API tokens are not touched here; they land
+/// via their own subcommands.
+pub async fn create(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    partner_id: Uuid,
+    display_name: Option<String>,
+    description: Option<String>,
+) -> Result<(), CreateTenantError> {
+    let mut tx = pool.begin().await?;
+    match persistence::tenants::insert(
+        &mut tx,
+        tenant_id,
+        partner_id,
+        display_name.as_deref(),
+        description.as_deref(),
+    )
+    .await
+    {
+        Ok(()) => {
+            tx.commit().await?;
+            Ok(())
+        }
+        Err(PersistenceError::UniqueViolation { .. }) => {
+            Err(CreateTenantError::AlreadyExists(tenant_id.bare().into()))
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateTenantError {
+    #[error("tenant {0} not found")]
+    TenantNotFound(String),
+    #[error(transparent)]
+    Persistence(#[from] PersistenceError),
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+}
+
+/// A `None` field is left unchanged in the row, not set to NULL.
+/// There is intentionally no way to NULL `display_name` or
+/// `description` through this path until a real use case appears.
+pub async fn update(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    partner_id: Option<Uuid>,
+    display_name: Option<String>,
+    description: Option<String>,
+) -> Result<(), UpdateTenantError> {
+    let mut tx = pool.begin().await?;
+    let outcome = persistence::tenants::update_metadata(
+        &mut tx,
+        tenant_id,
+        partner_id,
+        display_name.as_deref(),
+        description.as_deref(),
+    )
+    .await?;
+    match outcome {
+        UpdateOutcome::Updated => {
+            tx.commit().await?;
+            Ok(())
+        }
+        UpdateOutcome::NotFound => Err(UpdateTenantError::TenantNotFound(tenant_id.bare().into())),
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImportOauthRefreshTokenError {
@@ -17,30 +98,20 @@ pub enum ImportOauthRefreshTokenError {
     Sqlx(#[from] sqlx::Error),
 }
 
-/// Outcome of an `import_oauth_refresh_token` call. Distinguishes
-/// "wrote a new value" from "the column was already populated and
-/// `only_if_empty` skipped the write" so the caller can log the two
-/// cases differently.
+/// Reported by the seeding operations so callers can log the
+/// `--only-if-empty` skip path differently from a real write.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SeedOutcome {
     Wrote,
     Skipped,
 }
 
-/// Writes a fresh refresh token into `tenants.oauth_refresh_token` for
-/// the named tenant. Used by the `swiyu-issuer-cli tenant
-/// import-oauth-refresh-token` operator command after the operator
-/// pastes a new renewal token from the ePortal, and by the
-/// `bootstrap-dev-tenant` compose service to seed a freshly migrated
-/// dev database.
+/// When `only_if_empty` is true and `oauth_refresh_token` is already
+/// non-NULL, the call returns [`Skipped`][SeedOutcome::Skipped] and
+/// performs no write. The operator path omits the flag and overwrites
+/// unconditionally.
 ///
-/// When `only_if_empty` is true and the tenant's existing
-/// `oauth_refresh_token` is non-NULL, the call returns
-/// `SeedOutcome::Skipped` and does not write — used by the dev-loop
-/// auto-seed so a token the runtime has rotated never gets clobbered
-/// by the bootstrap pass.
-///
-/// The check-then-write runs inside one transaction so a tenant
+/// The check-and-write runs inside one transaction so a tenant
 /// deletion or a competing rotation between the SELECT and the UPDATE
 /// cannot leave the row in an unexpected state.
 pub async fn import_oauth_refresh_token(
@@ -77,20 +148,13 @@ pub enum SetOauthCredentialsError {
     Sqlx(#[from] sqlx::Error),
 }
 
-/// Writes `oauth_client_id` and `oauth_client_secret` for the named
-/// tenant. Used by the `swiyu-issuer-cli tenant set-oauth-credentials`
-/// operator command at onboarding (or on credential rotation at the
-/// ePortal), and by the `bootstrap-dev-tenant` compose service to
-/// seed the dev tenant from `.env`.
+/// When `only_if_empty` is true and **both** columns are already
+/// non-NULL, the call returns [`Skipped`][SeedOutcome::Skipped] and
+/// performs no write. If either column is NULL, the pair is treated
+/// as empty and both columns are written: the all-or-none rule keeps
+/// the row from ending up in a partial state.
 ///
-/// When `only_if_empty` is true and **both** existing columns are
-/// non-NULL, the call returns `SeedOutcome::Skipped` and does not
-/// write — used by the dev-loop auto-seed so a previously rotated
-/// credential pair is never clobbered. If either column is NULL, the
-/// pair is treated as empty and both are written: the all-or-none
-/// rule avoids leaving the row in a partial state.
-///
-/// The check-then-write runs inside one transaction.
+/// The check-and-write runs inside one transaction.
 pub async fn set_oauth_credentials(
     pool: &PgPool,
     tenant_id: &TenantId,
