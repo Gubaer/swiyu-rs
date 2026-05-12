@@ -64,9 +64,9 @@ All subsequent schema changes go in their own numbered migration on top of the b
 
 ### `tenants`
 
-`id` (TEXT, PK), `partner_id` (UUID, NOT NULL), `display_name` (TEXT, nullable), `description` (TEXT, nullable), `oauth_client_id` (TEXT, nullable), `oauth_client_secret` (BYTEA, nullable), `oauth_refresh_token` (BYTEA, nullable).
+`id` (TEXT, PK), `partner_id` (UUID, NOT NULL, UNIQUE), `display_name` (TEXT, nullable), `description` (TEXT, nullable), `oauth_client_id` (TEXT, nullable), `oauth_client_secret` (BYTEA, nullable), `oauth_refresh_token` (BYTEA, nullable).
 
-`partner_id` is the SWIYU Business Partner UUID. Required at tenant creation (`tenant create --partner-id`) and corrigible via `tenant update --partner-id` for typo correction; SWIYU Business Partner registration is a precondition for tenant creation (see [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md) Lifecycle). The column is `UUID` rather than `TEXT` so format validation lives in the database, matching the other `UUID` columns in the schema.
+`partner_id` is the SWIYU Business Partner UUID. Required at tenant creation (`tenant create --partner-id`) and corrigible via `tenant update --partner-id` for typo correction; SWIYU Business Partner registration is a precondition for tenant creation (see [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md) Lifecycle). The column is `UUID` rather than `TEXT` so format validation lives in the database, matching the other `UUID` columns in the schema. The UNIQUE constraint enforces the `tenant 1:1 SWIYU Business Partner` invariant declared in [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md) at the database boundary.
 
 `display_name` and `description` are operator-supplied tenant metadata, both nullable. The UI layer derives a fallback display name (typically from the bare id) when `display_name` is NULL. Both are managed via `swiyu-issuer-cli tenant create` and `tenant update`.
 

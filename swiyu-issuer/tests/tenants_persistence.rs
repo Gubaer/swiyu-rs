@@ -137,6 +137,26 @@ async fn insert_with_colliding_id_returns_unique_violation(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn insert_with_duplicate_partner_id_returns_unique_violation(pool: PgPool) {
+    let partner_id: Uuid = TEST_PARTNER.parse().unwrap();
+    let first_id = TenantId::generate();
+    let second_id = TenantId::generate();
+
+    let mut conn = pool.acquire().await.unwrap();
+    tenants::insert(&mut conn, &first_id, partner_id, None, None)
+        .await
+        .unwrap();
+
+    let result = tenants::insert(&mut conn, &second_id, partner_id, None, None).await;
+    match result {
+        Err(PersistenceError::UniqueViolation { what }) => {
+            assert_eq!(what, "tenants_partner_id_key");
+        }
+        other => panic!("expected UniqueViolation, got {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn update_metadata_partial_display_name_only(pool: PgPool) {
     let tenant_id = TenantId::generate();
     let partner_id: Uuid = TEST_PARTNER.parse().unwrap();

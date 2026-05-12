@@ -1,25 +1,20 @@
-//! Shared tenant fixtures for integration tests.
-//!
-//! `insert_test_tenant` is the shortcut for tests that need a tenant
-//! row to exist but do not care which `partner_id` value it carries —
-//! the helper fills in a fixed UUID so the NOT-NULL constraint is
-//! satisfied without each test having to choose one. Tests that need
-//! the OAuth2 columns populated use
-//! `oauth::insert_tenant_with_oauth_secrets` instead.
+//! Shared tenant fixtures for integration tests. Use
+//! `insert_test_tenant` when a test needs a tenant row but does not
+//! care about its `partner_id`; use
+//! `oauth::insert_tenant_with_oauth_secrets` when it also needs the
+//! OAuth2 columns populated.
 
 #![allow(dead_code)] // not every test module pulls in this helper
 
 use sqlx::PgPool;
+use uuid::Uuid;
+
 use swiyu_issuer::domain::TenantId;
 
-// Distinct from the seeded dev tenant's partner_id so a test using
-// this helper never collides with the seeded row on a fresh DB.
-pub const TEST_PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
-
 pub async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, $2::uuid)")
+    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, $2)")
         .bind(tenant_id.bare())
-        .bind(TEST_PARTNER_ID)
+        .bind(Uuid::new_v4())
         .execute(pool)
         .await
         .unwrap();
