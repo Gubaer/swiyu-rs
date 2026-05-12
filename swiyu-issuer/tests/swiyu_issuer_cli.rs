@@ -8,15 +8,18 @@ mod common;
 
 use secrecy::SecretString;
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use swiyu_issuer::cli::tenant::{
-    ImportOauthRefreshTokenError, SeedOutcome, SetOauthCredentialsError,
-    import_oauth_refresh_token, set_oauth_credentials,
+    CreateTenantError, ImportOauthRefreshTokenError, SeedOutcome, SetOauthCredentialsError,
+    UpdateTenantError, create as create_tenant, import_oauth_refresh_token, set_oauth_credentials,
+    update as update_tenant,
 };
 use swiyu_issuer::domain::{
     AnySecretEncryptionEngine, Ciphertext, SecretEncryptionEngine, TenantId,
 };
 use swiyu_issuer::persistence::tenant_secret_keys::oauth2_client_secret_key_name;
+use swiyu_issuer::persistence::tenants;
 
 use common::tenants::insert_test_tenant;
 
@@ -381,6 +384,97 @@ async fn set_oauth_credentials_returns_tenant_not_found_for_unknown_tenant(pool:
         SetOauthCredentialsError::TenantNotFound(id) => {
             assert_eq!(id, tenant_id.bare());
         }
+        other => panic!("expected TenantNotFound, got {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn create_inserts_new_tenant_row(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+
+    create_tenant(
+        &pool,
+        &tenant_id,
+        partner_id,
+        Some("Canton".to_string()),
+        Some("description".to_string()),
+    )
+    .await
+    .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let tenant = tenants::find_by_id(&mut conn, &tenant_id)
+        .await
+        .unwrap()
+        .expect("tenant exists");
+    assert_eq!(tenant.partner_id, partner_id);
+    assert_eq!(tenant.display_name.as_deref(), Some("Canton"));
+    assert_eq!(tenant.description.as_deref(), Some("description"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn create_returns_already_exists_for_colliding_tenant_id(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+
+    create_tenant(&pool, &tenant_id, partner_id, None, None)
+        .await
+        .unwrap();
+
+    let err = create_tenant(&pool, &tenant_id, partner_id, None, None)
+        .await
+        .unwrap_err();
+    match err {
+        CreateTenantError::AlreadyExists(id) => assert_eq!(id, tenant_id.bare()),
+        other => panic!("expected AlreadyExists, got {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_partial_writes_only_specified_fields(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+
+    create_tenant(
+        &pool,
+        &tenant_id,
+        partner_id,
+        Some("original-name".to_string()),
+        Some("original-desc".to_string()),
+    )
+    .await
+    .unwrap();
+
+    update_tenant(
+        &pool,
+        &tenant_id,
+        None,
+        Some("updated-name".to_string()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let tenant = tenants::find_by_id(&mut conn, &tenant_id)
+        .await
+        .unwrap()
+        .expect("tenant exists");
+    assert_eq!(tenant.partner_id, partner_id);
+    assert_eq!(tenant.display_name.as_deref(), Some("updated-name"));
+    assert_eq!(tenant.description.as_deref(), Some("original-desc"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn update_returns_tenant_not_found_for_unknown_tenant(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+
+    let err = update_tenant(&pool, &tenant_id, None, Some("ignored".to_string()), None)
+        .await
+        .unwrap_err();
+    match err {
+        UpdateTenantError::TenantNotFound(id) => assert_eq!(id, tenant_id.bare()),
         other => panic!("expected TenantNotFound, got {other:?}"),
     }
 }
