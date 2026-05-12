@@ -1,5 +1,5 @@
-# Local PostgreSQL, HashiCorp Vault, issuer-mgmt, and issuer-oidc for
-# swiyu-issuer development.
+# Local PostgreSQL, HashiCorp Vault, swiyu-issuer-mgmtapi, and
+# swiyu-issuer-oidcapi for swiyu-issuer development.
 #
 # Usage (run from this directory, swiyu-issuer/):
 #   docker compose up -d            # builds + starts everything
@@ -10,7 +10,7 @@
 # `docker compose build <service>` rebuilds a single binary image.
 # `docker compose up -d --build <service>` rebuilds and restarts it.
 # Each service builds its own runtime stage from the same Dockerfile
-# (`runtime-mgmt`, `runtime-oidc`); the cargo-chef cook layer is
+# (`runtime-mgmtapi`, `runtime-oidcapi`); the cargo-chef cook layer is
 # shared between the two so the second build is incremental.
 #
 # Compose auto-loads .env from this directory. The defaults below
@@ -28,9 +28,8 @@
 # single fixed root token. State is wiped on every container
 # restart. This is for local development and integration tests
 # only — production must use a real Vault deployment with sealed
-# storage and proper auth (see specs/impl-key-management.md,
-# VaultSigningEngine subsection). The vault-init service enables
-# the Transit secrets engine once Vault is healthy so callers can
+# storage and proper auth. The vault-init service enables the
+# Transit secrets engine once Vault is healthy so callers can
 # create keys and sign immediately.
 #
 # Migrations are NOT applied by this compose file. The swiyu-issuer
@@ -111,7 +110,7 @@ services:
   # when the column is non-NULL (e.g. because the runtime rotated it).
   # Empty env vars silently skip the corresponding step; the first
   # worker call then fails with MissingCredentials, same as without
-  # this service. issuer-mgmt's start is gated on
+  # this service. swiyu-issuer-mgmtapi's start is gated on
   # service_completed_successfully so the seed lands before any
   # OAuth2 grant is attempted.
   bootstrap-dev-tenant:
@@ -131,9 +130,9 @@ services:
       SWIYU_CLIENT_ID: ${SWIYU_CLIENT_ID}
       SWIYU_CLIENT_SECRET: ${SWIYU_CLIENT_SECRET}
       SWIYU_REFRESH_TOKEN: ${SWIYU_REFRESH_TOKEN}
-      # Must match the values handed to issuer-mgmt / issuer-oidc:
-      # the secrets the CLI writes here are decrypted by those
-      # services at runtime under the same engine.
+      # Must match the values handed to swiyu-issuer-mgmtapi /
+      # swiyu-issuer-oidcapi: the secrets the CLI writes here are
+      # decrypted by those services at runtime under the same engine.
       SECRET_ENCRYPTION_ENGINE: ${SECRET_ENCRYPTION_ENGINE:-dev}
       SECRET_ENCRYPTION_DEV_MASTER_KEY: ${SECRET_ENCRYPTION_DEV_MASTER_KEY:-ZGV2LXNlY3JldC1tYW5hZ2VtZW50LW1hc3Rlci1rZXk=}
       VAULT_ADDR: http://vault:8200
@@ -174,17 +173,17 @@ services:
         fi
     restart: "no"
 
-  # The issuer-mgmt management API. SWIYU_IDENTIFIER_REGISTRY_URL,
+  # The swiyu-issuer-mgmtapi management API. SWIYU_IDENTIFIER_REGISTRY_URL,
   # SWIYU_STATUS_REGISTRY_URL, and SWIYU_TOKEN_URL come from .env; the
   # in-container hostnames for Postgres and Vault are forced here
   # because the host-side values in .env (localhost:5433,
   # localhost:8200) do not resolve inside the compose network.
-  issuer-mgmt:
+  swiyu-issuer-mgmtapi:
     build:
       context: ..
       dockerfile: swiyu-issuer/Dockerfile
-      target: runtime-mgmt
-    container_name: swiyu-issuer-mgmt
+      target: runtime-mgmtapi
+    container_name: swiyu-issuer-mgmtapi
     depends_on:
       postgres:
         condition: service_healthy
@@ -227,17 +226,18 @@ services:
       retries: 12
     restart: unless-stopped
 
-  # The issuer-oidc OID4VCI endpoint. Shares the database with
-  # issuer-mgmt (offers, OIDC tokens, nonces, signing-engine keypairs
-  # all live in the same Postgres). Independent of issuer-mgmt at
-  # runtime — both are reachable directly during dev; in production a
-  # reverse proxy in front of the two presents a single ISSUER_BASE_URL.
-  issuer-oidc:
+  # The swiyu-issuer-oidcapi OID4VCI endpoint. Shares the database with
+  # swiyu-issuer-mgmtapi (offers, OIDC tokens, nonces, signing-engine
+  # keypairs all live in the same Postgres). Independent of
+  # swiyu-issuer-mgmtapi at runtime — both are reachable directly during
+  # dev; in production a reverse proxy in front of the two presents a
+  # single ISSUER_BASE_URL.
+  swiyu-issuer-oidcapi:
     build:
       context: ..
       dockerfile: swiyu-issuer/Dockerfile
-      target: runtime-oidc
-    container_name: swiyu-issuer-oidc
+      target: runtime-oidcapi
+    container_name: swiyu-issuer-oidcapi
     depends_on:
       postgres:
         condition: service_healthy

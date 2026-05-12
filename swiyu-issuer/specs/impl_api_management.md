@@ -1,6 +1,6 @@
 # Implementation: management API (v0.1.1)
 
-This document captures concrete implementation decisions for the management API layer (`issuer-mgmt` binary) as of release v0.1.1. For the multi-tenancy concepts the layer enforces see [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md). For the identifier strategy reflected on the wire see [`impl_persistence.md`](impl_persistence.md). For the framework lean see [`aspect-technology.md`](aspect-technology.md).
+This document captures concrete implementation decisions for the management API layer (`swiyu-issuer-mgmtapi` binary) as of release v0.1.1. For the multi-tenancy concepts the layer enforces see [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md). For the identifier strategy reflected on the wire see [`impl_persistence.md`](impl_persistence.md). For the framework lean see [`aspect-technology.md`](aspect-technology.md).
 
 Status: preliminary; living document. v0.1.0 shipped the walking skeleton — POST and GET on credential offers, plus liveness and readiness probes. v0.1.1 extends the surface with cancel, list, and status endpoints; everything else from v0.1.0 carries forward unchanged.
 
@@ -21,7 +21,7 @@ The v0.1.0 durchstich was "a business application submits a request to create a 
 - `credential_offers.rs` — handlers for the credential-offer endpoints (create, fetch, cancel, list, status).
 - `issued_credentials.rs` — lifecycle handlers for issued credentials (suspend, unsuspend, revoke). Added by the credential-management slice; see [`impl-credential-management.md`](impl-credential-management.md).
 
-`swiyu-issuer/src/bin/issuer-mgmt.rs` stays thin: load config → connect pool → run migrations → build `Router` → bind and serve with graceful shutdown.
+`swiyu-issuer/src/bin/swiyu-issuer-mgmtapi.rs` stays thin: load config → connect pool → run migrations → build `Router` → bind and serve with graceful shutdown.
 
 ## Public surface
 
@@ -82,7 +82,7 @@ Response (200):
 }
 ```
 
-`issued_at` and `cancelled_at` are added in v0.1.1 alongside the [schema additions](#schema-additions-for-v011); both are `null` until the offer transitions into the corresponding state. The hand-written [`openapi.yml`](../openapi.yml) needs a matching update when this slice lands.
+`issued_at` and `cancelled_at` are added in v0.1.1 alongside the [schema additions](#schema-additions-for-v011); both are `null` until the offer transitions into the corresponding state. The hand-written [`openapi-mgmt.yml`](../openapi-mgmt.yml) needs a matching update when this slice lands.
 
 ### POST .../credential-offers/{offer_id}/cancel — cancel (v0.1.1)
 
@@ -273,7 +273,7 @@ Response body uses a small fixed shape:
 
 ## Configuration
 
-Environment variables consumed by `issuer-mgmt`:
+Environment variables consumed by `swiyu-issuer-mgmtapi`:
 
 - `DATABASE_URL` — Postgres connection string.
 - `BIND_ADDR` — listen address, e.g. `0.0.0.0:8080`.
@@ -296,7 +296,7 @@ jsonschema = "0.30"
 
 `jsonschema` is used for claims validation; rationale in [`impl_credential_schema.md`](impl_credential_schema.md). `axum` is the HTTP framework in use across both binaries.
 
-`utoipa` (OpenAPI generation) deliberately absent. The hand-written [`swiyu-issuer/openapi.yml`](../openapi.yml) is the contract for now; generation can be retrofitted later if drift between the spec and the handlers becomes a real problem.
+`utoipa` (OpenAPI generation) deliberately absent. The hand-written [`swiyu-issuer/openapi-mgmt.yml`](../openapi-mgmt.yml) is the contract for now; generation can be retrofitted later if drift between the spec and the handlers becomes a real problem.
 
 ## Conventions established
 
@@ -330,8 +330,8 @@ Steps 1–3 may land together or in separate commits. Step 4 must come last.
 ## What is deliberately not in v0.1.1
 
 - API-token authentication. `TenantContext` is still a stub reading from env.
-- OpenAPI generation (`utoipa` or equivalent). The hand-written `swiyu-issuer/openapi.yml` is the contract for now.
-- OIDC-side endpoints (`/.well-known/openid-credential-issuer`, token, credential). Those belong to the `issuer-oidc` binary and ship in a separate slice.
+- OpenAPI generation (`utoipa` or equivalent). The hand-written `swiyu-issuer/openapi-mgmt.yml` is the contract for now.
+- OIDC-side endpoints (`/.well-known/openid-credential-issuer`, token, credential). Those belong to the `swiyu-issuer-oidcapi` binary and ship in a separate slice.
 - Rate limiting, CORS policy, cross-service request-id propagation. Wait until there is a real client.
 - Filtering offers by `vct`, by date range, or by free-text claim search. Only `state` filtering at v0.1.1.
 - Webhook notifications when an offer transitions state. Polling via the status endpoint is the v0.1.1 contract.

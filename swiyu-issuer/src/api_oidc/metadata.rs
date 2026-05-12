@@ -9,10 +9,10 @@ use crate::persistence;
 use super::AppState;
 use super::error::OidcError;
 
-/// Hardcoded signing algorithm. `impl_api_oidc.md` notes that real
-/// per-issuer algorithm advertising lands when a second algorithm
-/// appears (key rotation, dual-signing). Until then `ES256` is what
-/// `swiyu-didtool`'s assertion key emits.
+/// Hardcoded signing algorithm. Per-issuer algorithm advertising
+/// lands when a second algorithm appears (key rotation, dual-
+/// signing). Until then `ES256` is what `swiyu-didtool`'s assertion
+/// key emits.
 const SIGNING_ALG: &str = "ES256";
 
 /// Wallet-facing OID4VCI credential-issuer metadata document.

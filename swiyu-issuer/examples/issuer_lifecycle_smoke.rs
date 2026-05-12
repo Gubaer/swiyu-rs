@@ -39,7 +39,7 @@ async fn main() -> ExitCode {
         }
     };
 
-    // SIGNING_ENGINE is the issuer-mgmt's choice, not the smoke's.
+    // SIGNING_ENGINE is the swiyu-issuer-mgmtapi's choice, not the smoke's.
     // We read it from our own env (typically the same .env via
     // direnv) for visibility — the smoke has no API to ask the
     // running container which backend it's using.

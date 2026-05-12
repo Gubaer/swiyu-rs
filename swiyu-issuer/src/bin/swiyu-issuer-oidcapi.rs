@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    tracing::info!("issuer-oidc starting");
+    tracing::info!("swiyu-issuer-oidcapi starting");
 
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
     let bind_addr: SocketAddr = env::var("BIND_ADDR_OIDC")
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(state);
 
     let listener = TcpListener::bind(bind_addr).await?;
-    tracing::info!(%bind_addr, "issuer-oidc listening");
+    tracing::info!(%bind_addr, "swiyu-issuer-oidcapi listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;

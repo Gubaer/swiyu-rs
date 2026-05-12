@@ -175,7 +175,7 @@ The `dispatch` partial index keeps the worker's "find next runnable task" query 
 
 ## Worker
 
-A single `tokio::spawn`-ed task launched by `issuer-mgmt` at startup. The worker code lives in `swiyu-issuer/src/worker/` so it is reachable from the binary's `main` and from integration tests.
+A single `tokio::spawn`-ed task launched by `swiyu-issuer-mgmtapi` at startup. The worker code lives in `swiyu-issuer/src/worker/` so it is reachable from the binary's `main` and from integration tests.
 
 ### Dispatch loop (sketch)
 
@@ -261,7 +261,7 @@ A `fetch_log` operation will be added when read-side flows (verifier, rotation, 
 
 ### Configuration
 
-The client is constructed in the `issuer-mgmt` startup path from environment variables:
+The client is constructed in the `swiyu-issuer-mgmtapi` startup path from environment variables:
 
 - `SWIYU_IDENTIFIER_REGISTRY_URL` — base URL of the SWIYU Identifier Registry.
 - `SWIYU_ACCESS_TOKEN` — bearer token for the registry API.

@@ -126,7 +126,7 @@ fn build_offer_deeplink(
     issuer_id: &IssuerId,
     offer_id: &CredentialOfferId,
 ) -> String {
-    // issuer-oidc serves the wallet endpoint at
+    // swiyu-issuer-oidcapi serves the wallet endpoint at
     // /i/{issuer_id}/credential-offer/{offer_id}, so the
     // credential_offer_uri must resolve there. Both binaries share
     // the same external ISSUER_BASE_URL via reverse proxy.

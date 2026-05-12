@@ -12,7 +12,7 @@ The first real durchstich for auth is "an API token issued for a tenant authoris
 
 - replace the body of the `TenantContext` extractor with a token-driven lookup;
 - introduce an `api_tokens` table;
-- supply two ways to mint tokens — a fixed dev token planted by migration (alpha/beta convenience) and an `issuer-mgmt mint-token` CLI subcommand (the path real operators use);
+- supply two ways to mint tokens — a fixed dev token planted by migration (alpha/beta convenience) and an `swiyu-issuer-mgmtapi mint-token` CLI subcommand (the path real operators use);
 - preserve the existing handler signatures so the management API surface is untouched.
 
 Per-issuer scope, token rotation flows, an admin web UI, and any list/revoke endpoints are explicitly **out of scope** for v0.1.2.
@@ -74,7 +74,7 @@ Choices worth flagging:
 
 - The existing `TenantContext` extractor body is replaced. It reads `Authorization: Bearer …`, strips the `tok_` prefix, hashes, looks up via `api_tokens::find_valid_by_hash`, bumps `last_used_at`, and returns `TenantContext { tenant_id }`. On any failure it returns `ApiError::Unauthorised` (401).
 
-`swiyu-issuer/src/bin/issuer-mgmt.rs`:
+`swiyu-issuer/src/bin/swiyu-issuer-mgmtapi.rs`:
 
 - Becomes a small dispatcher. With no positional argument, runs the server (current behaviour). With `mint-token`, runs the CLI flow.
 
@@ -89,7 +89,7 @@ Choices worth flagging:
 ## CLI subcommand
 
 ```
-issuer-mgmt mint-token --tenant <bare-tenant-id> --name <label> \
+swiyu-issuer-mgmtapi mint-token --tenant <bare-tenant-id> --name <label> \
     [--expires-in <duration>]
 ```
 
@@ -99,7 +99,7 @@ issuer-mgmt mint-token --tenant <bare-tenant-id> --name <label> \
 - Output: the bare wire form (`tok_…`) printed to stdout exactly once, followed by a one-line "save this now; the hash is what we keep" reminder on stderr. Exit status 0 on success.
 - Implementation flow: load config → connect pool → run pending migrations → generate `ApiTokenSecret` → insert via `persistence::api_tokens::insert` → print → exit.
 
-The dispatcher in `bin/issuer-mgmt.rs` uses `clap` (added by this slice). Subcommand parsing is simple enough that hand-rolled arg matching would also work; `clap` earns its keep when the next admin subcommand lands (revoke-token, list-tokens, …).
+The dispatcher in `bin/swiyu-issuer-mgmtapi.rs` uses `clap` (added by this slice). Subcommand parsing is simple enough that hand-rolled arg matching would also work; `clap` earns its keep when the next admin subcommand lands (revoke-token, list-tokens, …).
 
 ## Dev token seeding
 
@@ -131,7 +131,7 @@ The auth extractor never returns 403 in v0.1.2; per-issuer scope is the slice th
 
 ## Configuration
 
-Environment variables consumed by `issuer-mgmt`:
+Environment variables consumed by `swiyu-issuer-mgmtapi`:
 
 - `DATABASE_URL` — unchanged.
 - `BIND_ADDR` — unchanged.
@@ -157,7 +157,7 @@ No new env vars in v0.1.2.
 - Valid token populates `TenantContext.tenant_id`.
 - Cross-tenant: a token for tenant A on a request to a tenant B issuer's path returns 404 from the existing ownership check (regression test that asymmetry is unchanged).
 - CLI smoke test:
-- `issuer-mgmt mint-token --tenant <id> --name foo` prints a `tok_…` to stdout, the row is in `api_tokens`, the printed token's hash matches `token_hash`.
+- `swiyu-issuer-mgmtapi mint-token --tenant <id> --name foo` prints a `tok_…` to stdout, the row is in `api_tokens`, the printed token's hash matches `token_hash`.
 
 ## Suggested slice ordering
 
@@ -165,7 +165,7 @@ No new env vars in v0.1.2.
 2. Domain: `ApiTokenSecret`, `ApiTokenHash`, `ApiToken`.
 3. Persistence: `insert`, `find_valid_by_hash`, `mark_used`.
 4. `auth.rs` extractor body swap. Handlers untouched.
-5. `bin/issuer-mgmt.rs` dispatcher + `mint-token` subcommand.
+5. `bin/swiyu-issuer-mgmtapi.rs` dispatcher + `mint-token` subcommand.
 6. Update `docker-compose.yml`, `test-commands.txt`, and any developer onboarding to use the dev token. Remove `DEFAULT_TENANT_ID` references.
 7. Tests per the section above.
 

@@ -268,7 +268,6 @@ where
     //   issuer_id    = credential.issuer_id
     //   target       = credential.id
     //   details      = JSONB { "to": credential.state.as_str() }
-    // See `aspect-credential-management.md` § "Audit trail".
     let _ = audit_action;
 
     tx.commit()

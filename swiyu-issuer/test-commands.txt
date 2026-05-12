@@ -2,8 +2,8 @@
 #
 # Prereqs:
 #   docker compose up -d                # Postgres on host port 5433
-#   cargo run --bin issuer-mgmt         # listens on 0.0.0.0:8080
-#   cargo run --bin issuer-oidc         # listens on 0.0.0.0:8081
+#   cargo run --bin swiyu-issuer-mgmtapi  # listens on 0.0.0.0:8080
+#   cargo run --bin swiyu-issuer-oidcapi  # listens on 0.0.0.0:8081
 #
 # Tip: install HTTPie via your package manager (apt, brew, pacman, ...)
 #      or `pip install httpie`. Pipe through `| jq .` for extra polish.
@@ -165,7 +165,7 @@ http POST :8080/api/v1/issuers/9hXq2vRtL8pK7f/credential-offers \
 
 
 # -----------------------------------------------------------------------------
-# Wallet flow (issuer-oidc on :8081, no Authorization header)
+# Wallet flow (swiyu-issuer-oidcapi on :8081, no Authorization header)
 # -----------------------------------------------------------------------------
 
 # Issuer metadata
@@ -206,7 +206,7 @@ http --form POST :8081/i/9hXq2vRtL8pK7f/token \
 #                       the c_nonce returned by /token.
 # v0.1.x does NOT verify the JWT signature — claims are checked but the
 # signature is ignored. The issued credential is signed with an EPHEMERAL
-# fixture key generated at issuer-oidc startup.
+# fixture key generated at swiyu-issuer-oidcapi startup.
 http POST :8081/i/9hXq2vRtL8pK7f/credential \
   "Authorization:Bearer <access-token>" \
   format=vc+sd-jwt \

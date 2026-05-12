@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn serve() -> Result<(), Box<dyn std::error::Error>> {
-    tracing::info!("issuer-mgmt starting");
+    tracing::info!("swiyu-issuer-mgmtapi starting");
 
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
     let bind_addr: SocketAddr = env::var("BIND_ADDR")
@@ -120,7 +120,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let publisher_handle = tokio::spawn(publisher.run(publisher_token));
 
     let listener = TcpListener::bind(bind_addr).await?;
-    tracing::info!(%bind_addr, "issuer-mgmt listening");
+    tracing::info!(%bind_addr, "swiyu-issuer-mgmtapi listening");
     let axum_token = token.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { axum_token.cancelled().await })

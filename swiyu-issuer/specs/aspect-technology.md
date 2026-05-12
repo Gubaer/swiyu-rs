@@ -75,7 +75,7 @@ If SPA is picked, three sub-choices follow:
 
 - **Framework**: React (largest ecosystem), Vue (opinionated and simpler), or Svelte (smallest bundle, simpler mental model).
 - **Location**: same Cargo workspace under e.g. `swiyu-issuer-admin-ui/`, or a separate repository. Same workspace keeps versions in lockstep with the backend; separate repo lets the frontend evolve independently.
-- **Serving**: bundled into the `issuer-mgmt` binary via `rust-embed` (single-binary deployment), or served by a separate web server / CDN.
+- **Serving**: bundled into the `swiyu-issuer-mgmtapi` binary via `rust-embed` (single-binary deployment), or served by a separate web server / CDN.
 
 ## Open
 

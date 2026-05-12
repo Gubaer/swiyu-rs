@@ -650,8 +650,7 @@ async fn build_sd_jwt_vc<S: SigningEngine>(
     payload.insert("cnf".to_string(), json!({ "jwk": cnf_jwk.clone() }));
     payload.insert("status".to_string(), status_claim.clone());
     // All claims are plaintext in the payload (degenerate SD-JWT —
-    // no `_sd` array, no salted disclosures). Document this trade-
-    // off in `impl_api_oidc.md`.
+    // no `_sd` array, no salted disclosures).
     if let Value::Object(claims) = &offer.claims {
         for (k, v) in claims {
             payload.insert(k.clone(), v.clone());

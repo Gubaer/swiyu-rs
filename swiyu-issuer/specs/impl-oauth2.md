@@ -321,7 +321,7 @@ oauth_refresh_token BYTEA
 
 ### Operator subcommand
 
-Operator commands live in a new `swiyu-issuer-cli` binary, separate from the long-running `issuer-mgmt` daemon. Tenant is the primary resource; everything operators do is either a verb on a tenant or on a sub-resource owned by a tenant. The CLI mirrors that hierarchy:
+Operator commands live in a new `swiyu-issuer-cli` binary, separate from the long-running `swiyu-issuer-mgmtapi` daemon. Tenant is the primary resource; everything operators do is either a verb on a tenant or on a sub-resource owned by a tenant. The CLI mirrors that hierarchy:
 
 ```
 swiyu-issuer-cli tenant <verb-or-subresource> [args]
@@ -336,11 +336,11 @@ swiyu-issuer-cli tenant api-token mint              --tenant <bare-tenant-id> --
 
 `tenant import-oauth-refresh-token` connects to the database via `DATABASE_URL`, validates that the tenant exists, and writes `<refresh-token>` to `tenants.oauth_refresh_token`. Idempotent: re-running with the same token is a no-op as far as the runtime is concerned (the runtime would have rotated it on the next grant anyway). The `--token` value is read from a hidden CLI argument; for shell-history-safety, operators may prefer to pipe via env var or a heredoc — the implementation accepts both `--token <value>` and `--token-stdin` for the prompted form.
 
-`tenant api-token mint` migrates verbatim from `issuer-mgmt`'s pre-existing top-level `mint-token` subcommand (same DB connection logic, same secret-printing semantics, same exit codes), now nested under `tenant api-token` because API tokens are tenant-scoped. After the migration, `issuer-mgmt` is server-only — it stops mixing the long-running daemon with one-shot operator commands.
+`tenant api-token mint` migrates verbatim from `swiyu-issuer-mgmtapi`'s pre-existing top-level `mint-token` subcommand (same DB connection logic, same secret-printing semantics, same exit codes), now nested under `tenant api-token` because API tokens are tenant-scoped. After the migration, `swiyu-issuer-mgmtapi` is server-only — it stops mixing the long-running daemon with one-shot operator commands.
 
 The CLI is the future home for additional tenant- and tenant-sub-resource operations (`tenant create`, `tenant list`, `tenant deactivate`, `tenant api-token list`, `tenant api-token revoke`, rotate `client_id` / `client_secret`, …); v1 ships only the two commands above because they are the only ones currently load-bearing. The nested subcommand structure lets future commands land without restructuring.
 
-The token endpoint URL is *not* per-tenant — every tenant's credentials authenticate against the same SWIYU realm. It comes from the `SWIYU_TOKEN_URL` env var read by the `issuer-mgmt` daemon at startup and threaded into `ProviderRegistry::new`. `swiyu-issuer-cli` does not need this env var: its commands write directly to the DB and do not perform OAuth2 grants themselves.
+The token endpoint URL is *not* per-tenant — every tenant's credentials authenticate against the same SWIYU realm. It comes from the `SWIYU_TOKEN_URL` env var read by the `swiyu-issuer-mgmtapi` daemon at startup and threaded into `ProviderRegistry::new`. `swiyu-issuer-cli` does not need this env var: its commands write directly to the DB and do not perform OAuth2 grants themselves.
 
 ### Encryption at rest
 
@@ -414,11 +414,11 @@ The operator path (re-pasting a rotated token after a >7-day cliff) omits the fl
 
 ### Compose service
 
-A new one-shot `bootstrap-dev-tenant` compose service runs once after Postgres is healthy, and gates the long-running `issuer-mgmt` service on its successful completion. It uses the same image as `issuer-mgmt` (which now ships `swiyu-issuer-cli` alongside) and exits cleanly after the seed.
+A new one-shot `bootstrap-dev-tenant` compose service runs once after Postgres is healthy, and gates the long-running `swiyu-issuer-mgmtapi` service on its successful completion. It uses the same image as `swiyu-issuer-mgmtapi` (which now ships `swiyu-issuer-cli` alongside) and exits cleanly after the seed.
 
 ```yaml
 bootstrap-dev-tenant:
-  image: swiyu-issuer-issuer-mgmt
+  image: swiyu-issuer-swiyu-issuer-mgmtapi
   depends_on:
     postgres:
       condition: service_healthy
@@ -435,7 +435,7 @@ bootstrap-dev-tenant:
     fi
   restart: "no"
 
-issuer-mgmt:
+swiyu-issuer-mgmtapi:
   depends_on:
     bootstrap-dev-tenant:
       condition: service_completed_successfully
@@ -448,9 +448,9 @@ The CLI runs migrations itself, so no separate migrate step is needed. The same 
 The image now builds and ships both binaries:
 
 ```dockerfile
-RUN cargo build --release --bin issuer-mgmt --bin swiyu-issuer-cli
+RUN cargo build --release --bin swiyu-issuer-mgmtapi --bin swiyu-issuer-cli
 ...
-COPY --from=builder /app/target/release/issuer-mgmt      /usr/local/bin/
+COPY --from=builder /app/target/release/swiyu-issuer-mgmtapi      /usr/local/bin/
 COPY --from=builder /app/target/release/swiyu-issuer-cli /usr/local/bin/
 ```
 

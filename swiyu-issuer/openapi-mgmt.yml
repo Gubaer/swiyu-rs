@@ -17,9 +17,7 @@ info:
     `Authorization: Bearer tok_<base58>`. Tokens are tenant-scoped
     and minted via the `swiyu-issuer-cli tenant api-token mint` CLI; alpha/beta
     deployments ship with a documented dev token for the seeded
-    tenant. See `specs/impl_auth.md` for the full design.
-
-    See `specs/impl_api_management.md` for design rationale.
+    tenant.
   license:
     name: MIT
 
@@ -1158,8 +1156,7 @@ components:
             current clock has passed `expires_at`. Verifiers enforce
             expiry against the credential's signed `exp` claim, not
             this column; this field is a convenience for management
-            UIs (per `aspect-credential-management.md` § "Expiry is a
-            view, not a state").
+            UIs.
         issued_at:
           type: string
           format: date-time

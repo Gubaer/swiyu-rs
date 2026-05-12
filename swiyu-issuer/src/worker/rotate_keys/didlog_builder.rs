@@ -167,8 +167,7 @@ pub(crate) async fn build_rotation_entry<S: SigningEngine>(
 
     // Sign with the OUTGOING Authorized key. Even when Authorized
     // is itself among the rotated roles, the old key signs this
-    // entry — see module-level doc and aspect-issuer.md §"Rotate
-    // keys" step 4.
+    // entry — see module-level doc.
     let outgoing_pk = engine.get_public_key(&outgoing_authorized_id).await?;
     let outgoing_bytes = ed25519_bytes("outgoing-authorized", &outgoing_pk)?;
     let outgoing_multikey = ed25519_verifying_key_to_multikey(&outgoing_bytes);

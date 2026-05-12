@@ -245,7 +245,7 @@ pub async fn revoke(
 
 ## Publish worker
 
-A second dispatch loop in `swiyu-issuer/src/worker/`, alongside the existing `operation_task` loop. Both run inside the same `tokio::spawn`-ed worker process launched by `issuer-mgmt` at startup.
+A second dispatch loop in `swiyu-issuer/src/worker/`, alongside the existing `operation_task` loop. Both run inside the same `tokio::spawn`-ed worker process launched by `swiyu-issuer-mgmtapi` at startup.
 
 ### Dispatch loop
 
@@ -324,7 +324,7 @@ A worker restart picks up dirty lists on the next dispatch tick. The bitstring r
 
 ### Configuration
 
-The client is constructed in the `issuer-mgmt` startup path from environment variables:
+The client is constructed in the `swiyu-issuer-mgmtapi` startup path from environment variables:
 
 - `SWIYU_STATUS_REGISTRY_URL` — base URL of the SWIYU Status Registry.
 - `SWIYU_ACCESS_TOKEN` — bearer token (shared with the Identifier Registry; same SWIYU credential).

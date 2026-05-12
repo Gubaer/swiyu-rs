@@ -49,7 +49,7 @@ pub enum WorkerError {
 
 /// Default sleep between dispatch-loop polls when no task is runnable.
 /// Tests override this via [`Worker::with_poll_interval`]; the
-/// `issuer-mgmt` binary may also override from an env var at startup.
+/// `swiyu-issuer-mgmtapi` binary may also override from an env var at startup.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct WorkerConfig {

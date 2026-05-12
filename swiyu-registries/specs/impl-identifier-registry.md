@@ -28,7 +28,7 @@ Code added by this slice:
 - `swiyu-registries/src/common/error.rs` — already contains `RegistryError`; extended with one variant if a registry-specific failure mode emerges (none required by the v1 endpoints).
 - `swiyu-registries/src/common/auth.rs` — `AccessToken` newtype that wraps the bearer token in `zeroize::Zeroizing` so it does not leak into logs or panics. Constructed from a `String` by the caller and supplied per call to the protected operations (see *Authentication* below).
 
-The crate stays env-agnostic: no `std::env::var` calls inside `swiyu-registries`. Consumers (e.g. the `issuer-mgmt` binary) read `SWIYU_IDENTIFIER_REGISTRY_URL` and `SWIYU_PARTNER_ID` themselves and pass them as constructor arguments. The bearer token is loaded by the consumer (today from `SWIYU_ACCESS_TOKEN`; in future from a `TokenProvider` in `swiyu-issuer`) and threaded into the per-call argument. This matches the contract already documented in [`../../swiyu-issuer/specs/impl-issuer.md`](../../swiyu-issuer/specs/impl-issuer.md#configuration).
+The crate stays env-agnostic: no `std::env::var` calls inside `swiyu-registries`. Consumers (e.g. the `swiyu-issuer-mgmtapi` binary) read `SWIYU_IDENTIFIER_REGISTRY_URL` and `SWIYU_PARTNER_ID` themselves and pass them as constructor arguments. The bearer token is loaded by the consumer (today from `SWIYU_ACCESS_TOKEN`; in future from a `TokenProvider` in `swiyu-issuer`) and threaded into the per-call argument. This matches the contract already documented in [`../../swiyu-issuer/specs/impl-issuer.md`](../../swiyu-issuer/specs/impl-issuer.md#configuration).
 
 ## Client surface
 

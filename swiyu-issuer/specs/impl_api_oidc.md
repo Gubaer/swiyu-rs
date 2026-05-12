@@ -1,6 +1,6 @@
 # Implementation: OIDC API (v0.1.3)
 
-This document captures concrete implementation decisions for the wallet-facing OIDC API layer (`issuer-oidc` binary). For the multi-tenancy model that governs URL shape see [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md). For the identifier strategy reflected on the wire see [`impl_persistence.md`](impl_persistence.md). For the management-side counterpart see [`impl_api_management.md`](impl_api_management.md). For the ephemeral-state model see [`aspect-persistence.md`](aspect-persistence.md).
+This document captures concrete implementation decisions for the wallet-facing OIDC API layer (`swiyu-issuer-oidcapi` binary). For the multi-tenancy model that governs URL shape see [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md). For the identifier strategy reflected on the wire see [`impl_persistence.md`](impl_persistence.md). For the management-side counterpart see [`impl_api_management.md`](impl_api_management.md). For the ephemeral-state model see [`aspect-persistence.md`](aspect-persistence.md).
 
 Status: preliminary; living document. Earlier slices stood up the management API, persistence, and API-token auth. This slice adds the wallet-facing surface that turns a `pending` credential offer into an `issued` SD-JWT VC.
 
@@ -52,7 +52,7 @@ This slice provides those wallet-facing endpoints and is the first writer of the
 
 The bare OID4VCI pre-auth code lives in a nullable `pre_auth_code` column on `credential_offers` directly — see *GET /credential-offer/{offer_id}* and `aspect-persistence.md` for the "pending-window plaintext" rationale. An earlier design used a separate `oidc_offer_bridge` table; that table added complexity without isolating a leak surface from its parent row, and the column on `credential_offers` is the simpler design that covers the same durability and lifecycle requirements.
 
-`swiyu-issuer/src/bin/issuer-oidc.rs` stays thin: load config → connect pool → run migrations → load issuer signing keys → build `Router` → bind and serve with graceful shutdown.
+`swiyu-issuer/src/bin/swiyu-issuer-oidcapi.rs` stays thin: load config → connect pool → run migrations → load issuer signing keys → build `Router` → bind and serve with graceful shutdown.
 
 ## Public surface
 
@@ -63,7 +63,7 @@ The bare OID4VCI pre-auth code lives in a nullable `pre_auth_code` column on `cr
 
 ## URL and routing model
 
-Wallet-facing OIDC is **issuer-scoped** per [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md). The `issuer-oidc` binary mounts every wallet route under `/i/{issuer_id}/…`. The `{issuer_id}` segment is the **bare** base58 form (no `issuer_` prefix) — same convention the management API uses for path segments, kept here so QR-encoded URLs stay short.
+Wallet-facing OIDC is **issuer-scoped** per [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md). The `swiyu-issuer-oidcapi` binary mounts every wallet route under `/i/{issuer_id}/…`. The `{issuer_id}` segment is the **bare** base58 form (no `issuer_` prefix) — same convention the management API uses for path segments, kept here so QR-encoded URLs stay short.
 
 The management API's `offer_deeplink` is built as
 
@@ -217,7 +217,7 @@ These columns ship as a single migration. Existing seed rows are backfilled with
 
 ## Configuration
 
-Environment variables consumed by `issuer-oidc`:
+Environment variables consumed by `swiyu-issuer-oidcapi`:
 
 - `DATABASE_URL` — Postgres connection string.
 - `BIND_ADDR` — listen address, e.g. `0.0.0.0:8081`.
@@ -230,28 +230,28 @@ No config file at v0.1.3.
 
 ## Deployment topology
 
-`issuer-mgmt` and `issuer-oidc` are separate binaries, but they must be reachable to external clients at the same external base URL — `ISSUER_BASE_URL`. The management binary publishes deeplinks that resolve into the OIDC binary's `/i/{issuer_id}/credential- offer/{offer_id}` path; if the two binaries answered on different hosts the wallet would chase a URL that does not exist on the issuer it was directed to.
+`swiyu-issuer-mgmtapi` and `swiyu-issuer-oidcapi` are separate binaries, but they must be reachable to external clients at the same external base URL — `ISSUER_BASE_URL`. The management binary publishes deeplinks that resolve into the OIDC binary's `/i/{issuer_id}/credential- offer/{offer_id}` path; if the two binaries answered on different hosts the wallet would chase a URL that does not exist on the issuer it was directed to.
 
 A reverse proxy in front of both binaries is the canonical layout:
 
 ```
                     ┌────────────────────────────┐
-client / wallet ──▶ │  reverse proxy (nginx,    │
-                    │  Caddy, k8s ingress, …)   │
+client / wallet ──▶ │  reverse proxy (nginx,     │
+                    │  Caddy, k8s ingress, …)    │
                     └────────────────────────────┘
-                          │           │
-                          │           │
-   /api/v1/…              │           │   /i/…
-   /healthz              ▼           ▼   /.well-known/…
-              ┌────────────┐   ┌────────────┐
-              │ issuer-mgmt│   │ issuer-oidc│
-              └────────────┘   └────────────┘
+                          │                   │
+                          │                   │
+   /api/v1/…              │                   │   /i/…
+   /healthz               ▼                   ▼   /.well-known/…
+              ┌──────────────────────┐  ┌──────────────────────┐
+              │ swiyu-issuer-mgmtapi │  │ swiyu-issuer-oidcapi │
+              └──────────────────────┘  └──────────────────────┘
 ```
 
 Routing rules:
 
-- `/api/v1/…` and `/healthz`, `/readyz` → `issuer-mgmt`.
-- `/i/…` and `/.well-known/…` → `issuer-oidc`.
+- `/api/v1/…` and `/healthz`, `/readyz` → `swiyu-issuer-mgmtapi`.
+- `/i/…` and `/.well-known/…` → `swiyu-issuer-oidcapi`.
 - Both binaries set `ISSUER_BASE_URL` to the **external** base URL (the proxy's host), not their own listen address. The deeplink the management binary emits and the issuer metadata the OIDC binary advertises must agree on this value.
 
 Single-host development is fine without a proxy: run the two binaries on different ports and point business-app smoke tests at each port directly. Wallet flows still need a reachable URL that resolves both path prefixes, so a local proxy (or `ISSUER_BASE_URL` pointing at the OIDC binary alone, with `/api/v1/…` traffic going elsewhere) is needed for end-to-end wallet testing.
@@ -313,7 +313,7 @@ Steps 1–4 may land together or in separate commits. Step 5 must come last.
 - **Rate limiting on the offer-uri endpoint, single-fetch semantics.** A wallet that loses the body can refetch it. Tighten this once a real rate-limiting layer lands.
 - **Status-list integration.** Issued credentials carry no `status` claim. The status-list slice adds it.
 - **`did:webvh` end-to-end coverage.** Per `CLAUDE.md`, only `did:tdw` 0.3 is testable end-to-end against the SWIYU integration registry. `did:webvh` paths exist but are not validated against any registry in this slice.
-- **OpenAPI generation.** `swiyu-issuer/openapi.yml` is hand-written; the OIDC routes are added there manually.
+- **OpenAPI generation.** `swiyu-issuer/openapi-mgmt.yml` is hand-written; the OIDC routes are added there manually.
 - **`application/problem+json` error bodies.** Not introduced here either.
 
 ## Open

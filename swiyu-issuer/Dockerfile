@@ -1,6 +1,6 @@
-# Build the swiyu-issuer binaries (`issuer-mgmt`, `issuer-oidc`, and
-# `swiyu-issuer-cli`) as release images, using cargo-chef to keep
-# dependency compilation in a cached layer.
+# Build the swiyu-issuer binaries (`swiyu-issuer-mgmtapi`,
+# `swiyu-issuer-oidcapi`, and `swiyu-issuer-cli`) as release images,
+# using cargo-chef to keep dependency compilation in a cached layer.
 #
 # The build context must be the *workspace root* (one directory up
 # from this file) because swiyu-issuer depends on the sibling crates
@@ -10,10 +10,10 @@
 # The Dockerfile produces three runtime images via separate `runtime-*`
 # stages, selected with Docker's `--target` flag:
 #
-#   docker build -f swiyu-issuer/Dockerfile --target runtime-mgmt \
-#       -t swiyu-issuer-mgmt:dev .
-#   docker build -f swiyu-issuer/Dockerfile --target runtime-oidc \
-#       -t swiyu-issuer-oidc:dev .
+#   docker build -f swiyu-issuer/Dockerfile --target runtime-mgmtapi \
+#       -t swiyu-issuer-mgmtapi:dev .
+#   docker build -f swiyu-issuer/Dockerfile --target runtime-oidcapi \
+#       -t swiyu-issuer-oidcapi:dev .
 #   docker build -f swiyu-issuer/Dockerfile --target runtime-cli \
 #       -t swiyu-issuer-cli:dev .
 #
@@ -45,7 +45,7 @@ COPY --from=planner /app/recipe.json recipe.json
 # Cargo.lock or any crate's Cargo.toml changes.
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --bin issuer-mgmt --bin issuer-oidc --bin swiyu-issuer-cli -p swiyu-issuer
+RUN cargo build --release --bin swiyu-issuer-mgmtapi --bin swiyu-issuer-oidcapi --bin swiyu-issuer-cli -p swiyu-issuer
 
 FROM debian:bookworm-slim AS runtime-base
 RUN apt-get update \
@@ -53,17 +53,17 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --no-create-home --uid 10001 issuer
 
-FROM runtime-base AS runtime-mgmt
-COPY --from=builder /app/target/release/issuer-mgmt /usr/local/bin/issuer-mgmt
+FROM runtime-base AS runtime-mgmtapi
+COPY --from=builder /app/target/release/swiyu-issuer-mgmtapi /usr/local/bin/swiyu-issuer-mgmtapi
 USER issuer
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/issuer-mgmt"]
+ENTRYPOINT ["/usr/local/bin/swiyu-issuer-mgmtapi"]
 
-FROM runtime-base AS runtime-oidc
-COPY --from=builder /app/target/release/issuer-oidc /usr/local/bin/issuer-oidc
+FROM runtime-base AS runtime-oidcapi
+COPY --from=builder /app/target/release/swiyu-issuer-oidcapi /usr/local/bin/swiyu-issuer-oidcapi
 USER issuer
 EXPOSE 8081
-ENTRYPOINT ["/usr/local/bin/issuer-oidc"]
+ENTRYPOINT ["/usr/local/bin/swiyu-issuer-oidcapi"]
 
 # Operator/dev-loop CLI. Used by the bootstrap-dev-tenant compose
 # service to seed the dev tenant's oauth_refresh_token from .env on

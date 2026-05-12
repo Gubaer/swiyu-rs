@@ -11,10 +11,9 @@ use crate::persistence::PersistenceError;
 /// The token and credential endpoints emit OAuth-shaped error
 /// bodies (`{ error, error_description }`); the metadata and offer-
 /// uri endpoints emit the management API's `{ error, details }`
-/// shape (per `impl_api_oidc.md` Error mapping). The `IntoResponse`
-/// impl below renders the management shape — token and credential
-/// endpoints will reach for an OAuth-shaped sibling once those
-/// handlers land.
+/// shape. The `IntoResponse` impl below renders the management
+/// shape — token and credential endpoints will reach for an
+/// OAuth-shaped sibling once those handlers land.
 #[derive(Debug, Error)]
 pub enum OidcError {
     #[error("not found")]

@@ -7,8 +7,7 @@ use super::signing_engine::{KeyPairId, KeyRole};
 /// Lifecycle state of an issuer.
 ///
 /// New issuers start in `Active`. The transition to `Deactivated` is
-/// one-way — there is no reactivation. See `aspect-issuer.md`
-/// (Lifecycle states).
+/// one-way — there is no reactivation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IssuerState {
     Active,

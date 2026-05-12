@@ -1,6 +1,6 @@
 //! Construct an [`AnySigningEngine`] from process environment.
 //!
-//! Both binaries (`issuer-mgmt` and `issuer-oidc`) need the same
+//! Both binaries (`swiyu-issuer-mgmtapi` and `swiyu-issuer-oidcapi`) need the same
 //! selection at startup; this module is the single source for the
 //! env contract. Reads:
 //!

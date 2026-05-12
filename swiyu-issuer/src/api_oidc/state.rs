@@ -8,9 +8,9 @@ pub struct Config {
     /// Public base URL the wallet sees. The metadata document
     /// substitutes this into `credential_issuer`,
     /// `credential_endpoint`, and the like. Both binaries
-    /// (`issuer-mgmt` and `issuer-oidc`) must agree on it; a
-    /// reverse proxy in front of the two is the canonical layout
-    /// (see `impl_api_oidc.md` Deployment topology).
+    /// (`swiyu-issuer-mgmtapi` and `swiyu-issuer-oidcapi`) must
+    /// agree on it; a reverse proxy in front of the two is the
+    /// canonical layout.
     pub issuer_base_url: String,
 
     /// Lifetime of an access token minted at `POST /token`. Mirrors

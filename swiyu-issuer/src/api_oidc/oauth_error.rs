@@ -4,8 +4,7 @@
 //! Distinct from [`super::error::OidcError`] because the OAuth surface
 //! emits `{ error, error_description }` per RFC 6749 / OID4VCI, not
 //! the management API's `{ error, details }` shape. The metadata and
-//! offer-uri endpoints continue to use `OidcError` per the spec
-//! (`impl_api_oidc.md` Error mapping).
+//! offer-uri endpoints continue to use `OidcError`.
 
 use axum::Json;
 use axum::http::StatusCode;
