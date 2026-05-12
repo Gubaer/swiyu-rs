@@ -317,30 +317,24 @@ oauth_client_secret BYTEA,
 oauth_refresh_token BYTEA
 ```
 
-`oauth_client_id` is not a secret and stays TEXT. The two secret columns are BYTEA because they hold self-describing ciphertext blobs produced by the `SecretEncryptionEngine`; see [`impl-secret-management.md`](impl-secret-management.md) for the envelope format. All three are `NULL`-able because tenants that do not call SWIYU registries (today: none, but the option is preserved) do not need OAuth2 credentials. Workers requesting a token for such a tenant fail Terminal with `MissingCredentials`. Operators populate `oauth_client_id` and `oauth_client_secret` via direct SQL at onboarding (a one-off operation); the recurring operation — pasting a fresh renewal token from the ePortal after a >7-day cliff or credential rotation — is supported by the `tenant import-oauth-refresh-token` subcommand below. The runtime updates `oauth_refresh_token` on every successful grant.
+`oauth_client_id` is not a secret and stays TEXT. The two secret columns are BYTEA because they hold self-describing ciphertext blobs produced by the `SecretEncryptionEngine`; see [`impl-secret-management.md`](impl-secret-management.md) for the envelope format. All three are `NULL`-able because tenants that do not call SWIYU registries (today: none, but the option is preserved) do not need OAuth2 credentials. Workers requesting a token for such a tenant fail Terminal with `MissingCredentials`. `tenant create` does **not** write the OAuth2 columns; operators populate `oauth_client_id` and `oauth_client_secret` via the `tenant set-oauth-credentials` subcommand at onboarding (a one-off operation); the recurring operation — pasting a fresh renewal token from the ePortal after a >7-day cliff or credential rotation — is supported by the `tenant import-oauth-refresh-token` subcommand. The runtime updates `oauth_refresh_token` on every successful grant.
 
-### Operator subcommand
+### OAuth2 operator subcommands
 
-Operator commands live in a new `swiyu-issuer-cli` binary, separate from the long-running `swiyu-issuer-mgmtapi` daemon. Tenant is the primary resource; everything operators do is either a verb on a tenant or on a sub-resource owned by a tenant. The CLI mirrors that hierarchy:
-
-```
-swiyu-issuer-cli tenant <verb-or-subresource> [args]
-```
-
-v1 ships:
+OAuth2 credentials land in tenant rows via two `swiyu-issuer-cli` subcommands. The CLI binary, the `tenant` subcommand namespace, and the general tenant-lifecycle commands (`create`, `update`) are described in [`impl-tenant-management.md`](impl-tenant-management.md); this section covers only the OAuth2-credential paths.
 
 ```
-swiyu-issuer-cli tenant import-oauth-refresh-token --tenant <bare-tenant-id> --token <refresh-token>
-swiyu-issuer-cli tenant api-token mint              --tenant <bare-tenant-id> --name <label> [--expires-in 30d]
+swiyu-issuer-cli tenant set-oauth-credentials       --tenant <bare-tenant-id> --client-id <id> --client-secret-stdin
+swiyu-issuer-cli tenant import-oauth-refresh-token  --tenant <bare-tenant-id> --token <refresh-token>
 ```
+
+`tenant set-oauth-credentials` writes `oauth_client_id` and `oauth_client_secret` for the named tenant. The two columns are written atomically; partial updates would leave the row unable to mint tokens. The client secret is read from stdin so it never lands in shell history.
 
 `tenant import-oauth-refresh-token` connects to the database via `DATABASE_URL`, validates that the tenant exists, and writes `<refresh-token>` to `tenants.oauth_refresh_token`. Idempotent: re-running with the same token is a no-op as far as the runtime is concerned (the runtime would have rotated it on the next grant anyway). The `--token` value is read from a hidden CLI argument; for shell-history-safety, operators may prefer to pipe via env var or a heredoc — the implementation accepts both `--token <value>` and `--token-stdin` for the prompted form.
 
-`tenant api-token mint` migrates verbatim from `swiyu-issuer-mgmtapi`'s pre-existing top-level `mint-token` subcommand (same DB connection logic, same secret-printing semantics, same exit codes), now nested under `tenant api-token` because API tokens are tenant-scoped. After the migration, `swiyu-issuer-mgmtapi` is server-only — it stops mixing the long-running daemon with one-shot operator commands.
+Both subcommands write directly to the database and perform no OAuth2 grant themselves. The token endpoint URL is *not* per-tenant — every tenant's credentials authenticate against the same SWIYU realm. It comes from the `SWIYU_TOKEN_URL` env var read by the `swiyu-issuer-mgmtapi` daemon at startup and threaded into `ProviderRegistry::new`; `swiyu-issuer-cli` does not consume it.
 
-The CLI is the future home for additional tenant- and tenant-sub-resource operations (`tenant create`, `tenant list`, `tenant deactivate`, `tenant api-token list`, `tenant api-token revoke`, rotate `client_id` / `client_secret`, …); v1 ships only the two commands above because they are the only ones currently load-bearing. The nested subcommand structure lets future commands land without restructuring.
-
-The token endpoint URL is *not* per-tenant — every tenant's credentials authenticate against the same SWIYU realm. It comes from the `SWIYU_TOKEN_URL` env var read by the `swiyu-issuer-mgmtapi` daemon at startup and threaded into `ProviderRegistry::new`. `swiyu-issuer-cli` does not need this env var: its commands write directly to the DB and do not perform OAuth2 grants themselves.
+As part of this slice the pre-existing top-level `mint-token` subcommand on `swiyu-issuer-mgmtapi` is migrated verbatim (same DB connection logic, same secret-printing semantics, same exit codes) to `swiyu-issuer-cli tenant api-token mint` — API tokens are tenant-scoped, so the verb belongs under `tenant`. See [`impl_auth.md`](impl_auth.md) for the API-token side. After the migration, `swiyu-issuer-mgmtapi` is server-only and stops mixing the long-running daemon with one-shot operator commands.
 
 ### Encryption at rest
 
@@ -527,7 +521,7 @@ Test approach mirrors the existing pattern (mock the wire boundary, exercise eve
 ## Out of scope (this implementation)
 
 - Encryption at rest of `oauth_client_secret` and `oauth_refresh_token` — handled in a separate spec.
-- Additional `swiyu-issuer-cli` subcommands beyond `tenant import-oauth-refresh-token`, `tenant set-oauth-credentials`, and the migrated `tenant api-token mint` (`tenant create` / `list` / `deactivate`, `tenant api-token list` / `revoke`, …). The binary's nested subcommand structure accommodates them as they land; this implementation ships only the OAuth2-related set plus the verbatim mint-token migration.
+- Tenant-lifecycle subcommands (`tenant create`, `tenant update`) are introduced in their own slice; see [`impl-tenant-management.md`](impl-tenant-management.md). Other tenant- and sub-resource verbs (`tenant list` / `deactivate`, `tenant api-token list` / `revoke`, …) remain future work. This implementation ships only the OAuth2-related subcommands plus the verbatim `mint-token` migration.
 - Token introspection / revocation endpoints. Not part of the SWIYU partner surface.
 - Per-tenant token-endpoint URLs. v1 deployments use one URL per process.
 - Cross-replica refresh skipping (the optimisation where the just-locked-and-read refresh token's TTL is comfortable enough that the local replica skips its own grant). Initial release always grants under the lock; the optimisation is an easy follow-up if the per-tenant grant rate becomes a bottleneck.

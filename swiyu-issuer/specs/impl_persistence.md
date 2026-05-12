@@ -64,9 +64,11 @@ All subsequent schema changes go in their own numbered migration on top of the b
 
 ### `tenants`
 
-`id` (TEXT, PK), `partner_id` (TEXT, nullable), `oauth_client_id` (TEXT, nullable), `oauth_client_secret` (BYTEA, nullable), `oauth_refresh_token` (BYTEA, nullable).
+`id` (TEXT, PK), `partner_id` (UUID, NOT NULL), `display_name` (TEXT, nullable), `description` (TEXT, nullable), `oauth_client_id` (TEXT, nullable), `oauth_client_secret` (BYTEA, nullable), `oauth_refresh_token` (BYTEA, nullable).
 
-`partner_id` is the SWIYU business-partner UUID. Nullable so non-registry-touching tenants stay possible; the worker's `allocate_did` step fails Terminal with `tenant_missing_partner_id` when it is `NULL` and a registry call is required.
+`partner_id` is the SWIYU Business Partner UUID. Required at tenant creation (`tenant create --partner-id`) and corrigible via `tenant update --partner-id` for typo correction; SWIYU Business Partner registration is a precondition for tenant creation (see [`aspect-multi-tenancy.md`](aspect-multi-tenancy.md) Lifecycle). The column is `UUID` rather than `TEXT` so format validation lives in the database, matching the other `UUID` columns in the schema.
+
+`display_name` and `description` are operator-supplied tenant metadata, both nullable. The UI layer derives a fallback display name (typically from the bare id) when `display_name` is NULL. Both are managed via `swiyu-issuer-cli tenant create` and `tenant update`.
 
 The two BYTEA columns hold self-describing ciphertext blobs produced by the `SecretEncryptionEngine` (format version, `key_name`, and `key_version` travel inside the blob, so no companion columns are needed to identify the key under which a value was encrypted). The domain `Tenant` carries them as `Option<Ciphertext>`; decryption happens at the OAuth2 provider boundary, not on every load of the tenant row. Plaintext secrets remain wrapped in `secrecy::SecretString` while they cross the application layer (zeroize-on-drop, redacted `Debug`). Operators populate `oauth_client_id` / `oauth_client_secret` via the `swiyu-issuer-cli tenant set-oauth-credentials` subcommand; the refresh token's recurring import path is `swiyu-issuer-cli tenant import-oauth-refresh-token`. `oauth_client_id` itself is not a secret and stays TEXT. See [`aspect-oauth2.md`](aspect-oauth2.md), [`impl-oauth2.md`](impl-oauth2.md), and [`aspect-secret-management.md`](aspect-secret-management.md).
 

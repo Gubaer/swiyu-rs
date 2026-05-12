@@ -8,12 +8,13 @@ Status: preliminary. Direction agreed; details still open.
 
 Two distinct concepts that the rest of this document depends on.
 
-**Tenant** — an organisational entity in the deployment environment. Examples: the canton as a whole, an individual commune, an administrative unit within the cantonal or communal administration, or another public- sector entity. "Tenant" is purely an internal concept of `swiyu-issuer`; wallets and SWIYU infrastructure never see it.
+**Tenant** — an organisational entity in the deployment environment. Examples: the canton as a whole, an individual commune, an administrative unit within the cantonal or communal administration, or another public-sector entity. Each tenant corresponds to exactly one SWIYU Business Partner in the SWIYU Base Registry; the Business Partner UUID is recorded as `partner_id` on the tenant row, and SWIYU Business Partner registration is a precondition for tenant creation. "Tenant" remains an internal concept of `swiyu-issuer` — wallets never see it, and the SWIYU registries see the Business Partner UUID rather than the internal tenant id.
 
-**Issuer** — a SWIYU protocol concept. An issuer is always a SWIYU Business Partner with an entry in the SWIYU Base Registry, and is identified by exactly one DID linked to that Business Partner record by a SWIYU Trust Statement. The issuer is what the wallet sees as the credential's authority.
+**Issuer** — a SWIYU protocol concept. An issuer is owned by exactly one tenant and is identified by exactly one DID. A Trust Statement may link an issuer's DID to its tenant's Business Partner identity, but issuers may also exist without a Trust Statement (e.g. during onboarding, or for self-asserted issuers). The relationship between Trust Statements and issuers is not unique-per-Business-Partner: a tenant may register multiple issuers under the same Business Partner, each potentially covered by its own Trust Statement. The rules for minting Trust Statements in the productive SWIYU ecosystem are not yet settled. The issuer is what the wallet sees as the credential's authority.
 
-**Relationship** — `tenant 1:{0..n} issuer 1:1 did`.
+**Relationship** — `tenant 1:1 SWIYU Business Partner`; `tenant 1:{0..n} issuer 1:1 did`.
 
+- A tenant maps to exactly one SWIYU Business Partner (carried as `partner_id`).
 - A tenant has zero or more issuers. The zero case is real and supported (see Lifecycle).
 - An issuer belongs to exactly one tenant.
 - An issuer has exactly one DID for its entire lifetime. The DID is set at issuer creation and never changes. Key rotation happens *inside* the DID log (a new generation of the key triple), not by minting a new DID. A tenant that needs both a `did:tdw` and a `did:webvh` presence creates two issuers.
@@ -65,8 +66,8 @@ Per-tenant or per-issuer containers are explicitly not a goal at any scale below
 
 ### Issuer-level (SWIYU protocol)
 
-- The SWIYU Business Partner record this issuer corresponds to.
-- The issuer's DID and its associated Trust Statement.
+- The issuer's DID. (The SWIYU Business Partner identity belongs to the owning tenant, not to the issuer individually.)
+- The issuer's Trust Statement, when one has been minted. Trust Statements are optional and may be added or replaced over an issuer's lifetime; the rules for minting them in the productive SWIYU ecosystem are not yet settled.
 - Signing keys for that DID. The DID has one or more generations of the key triple recorded in its DID log; key rotation happens inside the log. AEAD-encrypted in the `swiyu_issuer_keystore` schema through pre-production and intermediate maturity, in an HSM (or HSM-backed KMS) operated by the canton from production maturity onwards. See [`aspect-key-management.md`](aspect-key-management.md) for the full model.
 - The set of credential types this issuer is configured to issue, with their schemas and per-type configuration.
 - Status lists for credentials issued by this issuer.
@@ -88,9 +89,13 @@ The wallet- and business-facing surfaces use different scoping.
 
 ## Lifecycle
 
-A tenant with **zero issuers** is valid and supported. It enables staged onboarding: a commune can be admitted to the system (admin users provisioned, contact information recorded) before its SWIYU Business Partner registration and Trust Statement are in place. Issuance is gated until at least one issuer is registered for the tenant.
+SWIYU Business Partner registration is a **precondition for tenant creation**: a tenant row carries the Business Partner UUID as a required, immutable-by-convention column (`partner_id`), so the canton must complete the Business Partner registration with SWIYU before a tenant can be admitted to the system. The CLI's `tenant create` rejects calls without a valid UUID `--partner-id`.
 
-Registering a new issuer for a tenant requires evidence of the SWIYU Business Partner record and the DID covered by a Trust Statement. The exact registration flow is an open question.
+A tenant with **zero issuers** is still valid and supported. Issuance is gated until at least one issuer is registered for the tenant; until then, the tenant exists for the purpose of holding admin users, API tokens, and the Business Partner reference.
+
+Registering a new issuer for a tenant requires the SWIYU Business Partner record (already on the tenant) and a DID. A Trust Statement covering that DID is **not** required at issuer registration: issuers may exist with a DID and no Trust Statement (e.g. during onboarding, before the Statement is issued, or for self-asserted issuers).
+
+Issuer creation is driven by the tenant's business application: the BA calls the management API (`POST /api/v1/issuers`) and `swiyu-issuer` runs the `create_issuer` saga — generating the issuer's keys via the `SigningEngine` and publishing the genesis DID log entry to the SWIYU Identifier Registry. The saga's terminal state (Succeeded / Failed) is observable via the operation-task endpoint.
 
 ## Risks and mitigations
 
@@ -108,5 +113,4 @@ Mitigations to apply consistently:
 
 - **Tenant and issuer identification per request.** Subdomain, URL path prefix, or derivation from the auth token — and the choice may differ between the wallet-facing surface (issuer) and the business-facing surface (tenant).
 - **Isolation strength.** Logical (shared schema with `tenant_id` / `issuer_id` columns) vs. schema-per-tenant vs. database-per-tenant. Default is logical; raise the strength only if a concrete compliance or noisy-neighbour concern appears.
-- **Tenant and issuer onboarding flows.** Self-service via the admin UI? Operator-managed via CLI? Pre-provisioned from the canton's identity directory? Issuer registration in particular needs a defined flow that ties a Business Partner record and a Trust Statement to a tenant.
 - **Cross-tenant roles.** Whether a canton-level "platform admin" role exists with read-only visibility across tenants, and how that surface is exposed.
