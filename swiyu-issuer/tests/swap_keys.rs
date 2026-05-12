@@ -14,13 +14,9 @@ use swiyu_issuer::worker::deactivate_issuer::mark_deactivated::execute_mark_deac
 use swiyu_issuer::worker::rotate_keys::state::RotateKeysStateData;
 use swiyu_issuer::worker::rotate_keys::swap_keys::execute_swap_keys;
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::tenants::insert_test_tenant;
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
     let issuer = Issuer {

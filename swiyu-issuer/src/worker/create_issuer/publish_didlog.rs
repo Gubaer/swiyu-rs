@@ -33,15 +33,7 @@ pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
         return StepOutcome::Done(StepResult::default());
     }
 
-    let partner_id = match tenant.partner_id.as_deref() {
-        Some(p) => p,
-        None => {
-            return StepOutcome::Terminal {
-                error_code: "tenant_missing_partner_id".into(),
-                error_message: format!("tenant {} has no partner_id configured", tenant.id),
-            };
-        }
-    };
+    let partner_id = tenant.partner_id.to_string();
 
     let identifier = match state.assigned_identifier.as_deref() {
         Some(i) => i,
@@ -72,7 +64,7 @@ pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
     let line = serde_json::to_string(&entry).expect("entry value serialises");
 
     let result =
-        publish_log_entry_with_refresh(provider, registry, partner_id, identifier, &line).await;
+        publish_log_entry_with_refresh(provider, registry, &partner_id, identifier, &line).await;
 
     match result {
         Ok(()) => {
@@ -124,10 +116,14 @@ mod tests {
         }
     }
 
-    fn fixture_tenant(partner_id: Option<&str>) -> Tenant {
+    fn fixture_tenant(partner_id: &str) -> Tenant {
         Tenant {
             id: TenantId::generate(),
-            partner_id: partner_id.map(str::to_string),
+            partner_id: partner_id
+                .parse()
+                .expect("test partner_id must be a valid UUID"),
+            display_name: None,
+            description: None,
             oauth_client_id: None,
             oauth_client_secret: None,
             oauth_refresh_token: None,
@@ -177,7 +173,7 @@ mod tests {
 
     #[tokio::test]
     async fn happy_path_publishes_and_marks_didlog_published() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_publish(PublishCall::Ok);
         let engine = engine_for_happy_path();
@@ -209,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_when_log_already_published() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         // Deliberately enqueue nothing — a second call would panic.
         let engine = MockSigningEngine::new();
@@ -233,33 +229,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_partner_id_is_terminal() {
-        let tenant = fixture_tenant(None);
-        let registry = MockRegistry::new();
-        let engine = MockSigningEngine::new();
-
-        let outcome = execute_publish_didlog(
-            &tenant,
-            &fixture_state(false),
-            &registry,
-            &engine,
-            &token_provider(),
-            fixture_now(),
-        )
-        .await;
-
-        match outcome {
-            StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "tenant_missing_partner_id");
-            }
-            other => panic!("expected Terminal, got {other:?}"),
-        }
-        assert!(registry.publish_invocations.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
     async fn missing_assigned_identifier_is_terminal() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         let engine = MockSigningEngine::new();
         let state = CreateIssuerStateData {
@@ -287,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_failure_routes_to_terminal() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         let engine = MockSigningEngine::new();
         // Bad URL → BuildError::InvalidUrl → Terminal "invalid_allocation_url".
@@ -316,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_backend_error_is_retryable() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         let engine = MockSigningEngine::new();
         engine.enqueue_public_key(GetPublicKeyCall::Backend("connection refused".into()));
@@ -342,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn registry_5xx_is_retryable() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_publish(PublishCall::HttpStatus {
             status: 503,
@@ -370,7 +341,7 @@ mod tests {
 
     #[tokio::test]
     async fn registry_4xx_is_terminal() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_publish(PublishCall::HttpStatus {
             status: 400,
@@ -400,7 +371,7 @@ mod tests {
     async fn unused_allocate_queue_is_not_consumed() {
         // Sanity check that the publish path does not accidentally call
         // allocate_did. Enqueue a value the publish path must never read.
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_publish(PublishCall::Ok);
         registry.enqueue_allocate(AllocateCall::HttpStatus {

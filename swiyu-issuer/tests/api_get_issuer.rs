@@ -35,13 +35,9 @@ async fn build_state(pool: PgPool) -> AppState {
     .expect("AppState builds")
 }
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, NULL)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::tenants::insert_test_tenant;
 
 async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
     let secret = ApiTokenSecret::generate();

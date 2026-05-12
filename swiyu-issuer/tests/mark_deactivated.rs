@@ -15,13 +15,9 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence::{credential_offers, issuers};
 use swiyu_issuer::worker::deactivate_issuer::mark_deactivated::execute_mark_deactivated;
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::tenants::insert_test_tenant;
 
 async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = Issuer {

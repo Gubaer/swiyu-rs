@@ -89,7 +89,7 @@ async fn insert_tenant_with_oauth(
     common::oauth::insert_tenant_with_oauth_secrets(
         pool,
         tenant_id,
-        Some(PARTNER_ID),
+        PARTNER_ID.parse().unwrap(),
         engine,
         "test-client",
         "test-secret",

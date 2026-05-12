@@ -1,6 +1,7 @@
 use secrecy::{ExposeSecret, SecretString};
 use sqlx::Row;
 use sqlx::postgres::PgConnection;
+use uuid::Uuid;
 
 use crate::domain::secret_encryption_engine::{
     AnySecretEncryptionEngine, Ciphertext, SecretEncryptionEngine,
@@ -18,6 +19,8 @@ pub async fn find_by_id(
         r#"
         SELECT id,
                partner_id,
+               display_name,
+               description,
                oauth_client_id,
                oauth_client_secret,
                oauth_refresh_token
@@ -30,6 +33,88 @@ pub async fn find_by_id(
     .await?;
 
     Ok(tenant)
+}
+
+/// Outcome of an `update_metadata` call.
+///
+/// `Updated` covers every successful path including a no-op call that
+/// supplies none of the optional fields — the WHERE clause still
+/// confirms the row exists.
+#[derive(Debug, PartialEq, Eq)]
+pub enum UpdateOutcome {
+    Updated,
+    NotFound,
+}
+
+/// Inserts a new tenant row with the four operator-supplied columns.
+///
+/// The OAuth2 columns and API tokens are not touched here; callers
+/// populate them via the dedicated subcommands. The caller controls
+/// the surrounding transaction.
+pub async fn insert(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    partner_id: Uuid,
+    display_name: Option<&str>,
+    description: Option<&str>,
+) -> Result<(), PersistenceError> {
+    sqlx::query(
+        r#"
+        INSERT INTO tenants (id, partner_id, display_name, description)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(partner_id)
+    .bind(display_name)
+    .bind(description)
+    .execute(conn)
+    .await?;
+
+    Ok(())
+}
+
+/// Partially updates `partner_id`, `display_name`, and/or `description`
+/// for the named tenant. A field left `None` is not touched.
+///
+/// Calling with all three fields `None` is valid; the call still
+/// verifies the row exists and returns `Updated` accordingly. The
+/// caller controls the surrounding transaction.
+pub async fn update_metadata(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    partner_id: Option<Uuid>,
+    display_name: Option<&str>,
+    description: Option<&str>,
+) -> Result<UpdateOutcome, PersistenceError> {
+    // Build SET clauses dynamically so omitted fields keep their
+    // current value. The match below assigns each column to its
+    // existing value when the caller didn't ask to change it; this
+    // is simpler than concatenating SQL fragments at runtime and
+    // keeps the query plan stable.
+    let result = sqlx::query(
+        r#"
+        UPDATE tenants
+        SET partner_id   = COALESCE($2, partner_id),
+            display_name = CASE WHEN $3::bool THEN $4 ELSE display_name END,
+            description  = CASE WHEN $5::bool THEN $6 ELSE description  END
+        WHERE id = $1
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(partner_id)
+    .bind(display_name.is_some())
+    .bind(display_name)
+    .bind(description.is_some())
+    .bind(description)
+    .execute(conn)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        Ok(UpdateOutcome::NotFound)
+    } else {
+        Ok(UpdateOutcome::Updated)
+    }
 }
 
 /// OAuth2 credentials read from one tenant row.

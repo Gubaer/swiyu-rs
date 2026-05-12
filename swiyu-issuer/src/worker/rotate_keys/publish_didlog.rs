@@ -59,15 +59,7 @@ pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
         }
     };
 
-    let partner_id = match tenant.partner_id.as_deref() {
-        Some(p) => p,
-        None => {
-            return StepOutcome::Terminal {
-                error_code: "tenant_missing_partner_id".into(),
-                error_message: format!("tenant {} has no partner_id configured", tenant.id),
-            };
-        }
-    };
+    let partner_id = tenant.partner_id.to_string();
 
     let did = match DID::from_str(&issuer.did) {
         Ok(d) => d,
@@ -140,7 +132,7 @@ pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
     let result = publish_log_entry_with_refresh(
         provider,
         registry,
-        partner_id,
+        &partner_id,
         &identifier,
         &updated_didlog,
     )
@@ -232,10 +224,14 @@ mod tests {
         }
     }
 
-    fn fixture_tenant(partner_id: Option<&str>) -> Tenant {
+    fn fixture_tenant(partner_id: &str) -> Tenant {
         Tenant {
             id: TenantId::generate(),
-            partner_id: partner_id.map(str::to_string),
+            partner_id: partner_id
+                .parse()
+                .expect("test partner_id must be a valid UUID"),
+            display_name: None,
+            description: None,
             oauth_client_id: None,
             oauth_client_secret: None,
             oauth_refresh_token: None,
@@ -297,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn happy_path_publishes_and_marks_didlog_published() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
         registry.enqueue_publish(PublishCall::Ok);
@@ -334,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_when_log_already_published() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         // No fetch_log or publish queued — a second call would panic.
         let engine = MockSigningEngine::new();
@@ -365,7 +361,7 @@ mod tests {
         // matches the new authorized's multikey. Re-running the step
         // must observe that and return Done with the patch, *not*
         // republish.
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
 
         let new_authorized_multikey =
@@ -407,34 +403,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_partner_id_is_terminal() {
-        let tenant = fixture_tenant(None);
-        let registry = MockRegistry::new();
-        let engine = MockSigningEngine::new();
-
-        let outcome = execute_publish_didlog(
-            &tenant,
-            &fixture_issuer(),
-            &fixture_state(false, true),
-            &registry,
-            &engine,
-            &token_provider(),
-            fixture_now(),
-        )
-        .await;
-
-        match outcome {
-            StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "tenant_missing_partner_id");
-            }
-            other => panic!("expected Terminal, got {other:?}"),
-        }
-        assert!(registry.fetch_log_invocations.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
     async fn missing_new_key_triple_is_terminal() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         let engine = MockSigningEngine::new();
 
@@ -460,7 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_log_5xx_is_retryable() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::HttpStatus {
             status: 503,
@@ -490,7 +460,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_log_404_is_terminal() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::HttpStatus {
             status: 404,
@@ -519,7 +489,7 @@ mod tests {
 
     #[tokio::test]
     async fn engine_backend_error_is_retryable() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
         let engine = MockSigningEngine::new();
@@ -547,7 +517,7 @@ mod tests {
 
     #[tokio::test]
     async fn publish_5xx_is_retryable() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
         registry.enqueue_publish(PublishCall::HttpStatus {
@@ -577,7 +547,7 @@ mod tests {
 
     #[tokio::test]
     async fn publish_4xx_is_terminal() {
-        let tenant = fixture_tenant(Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"));
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
         registry.enqueue_publish(PublishCall::HttpStatus {

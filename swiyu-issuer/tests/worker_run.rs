@@ -153,13 +153,15 @@ fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
 async fn insert_test_tenant(
     pool: &PgPool,
     tenant_id: &TenantId,
-    partner_id: Option<&str>,
+    partner_id: &str,
     engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
 ) {
     common::oauth::insert_tenant_with_oauth_secrets(
         pool,
         tenant_id,
-        partner_id,
+        partner_id
+            .parse()
+            .expect("test partner_id must be a valid UUID"),
         engine,
         "test-client",
         "test-secret",
@@ -234,7 +236,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     insert_test_tenant(
         &pool,
         &tenant_id,
-        Some("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef"),
+        "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef",
         &secret_engine,
     )
     .await;

@@ -66,7 +66,7 @@ pub fn build_provider_registry(
 pub async fn insert_tenant_with_oauth_secrets(
     pool: &PgPool,
     tenant_id: &TenantId,
-    partner_id: Option<&str>,
+    partner_id: uuid::Uuid,
     engine: &AnySecretEncryptionEngine,
     client_id: &str,
     client_secret: &str,

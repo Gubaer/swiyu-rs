@@ -83,7 +83,9 @@ async fn insert_test_tenant(
     common::oauth::insert_tenant_with_oauth_secrets(
         pool,
         tenant_id,
-        Some(partner_id),
+        partner_id
+            .parse()
+            .expect("test partner_id must be a valid UUID"),
         engine,
         "test-client",
         "test-secret",

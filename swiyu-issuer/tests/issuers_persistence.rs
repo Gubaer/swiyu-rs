@@ -12,13 +12,9 @@ use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
 use swiyu_issuer::persistence::PersistenceError;
 use swiyu_issuer::persistence::issuers::{self, SwapOutcome};
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::tenants::insert_test_tenant;
 
 fn legacy_shaped_issuer(tenant_id: TenantId) -> Issuer {
     Issuer {

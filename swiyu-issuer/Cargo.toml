@@ -45,3 +45,13 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [dev-dependencies]
 serde_urlencoded = "0.7"
 wiremock = "0.6"
+
+# Cargo's integration-test layout puts each `tests/*.rs` in its own
+# binary, so the shared `tests/common/` helper module is loaded once
+# per test crate. Clippy's `duplicate_mod` lint flags that as a
+# repeated module load even though each load is in a different
+# compilation unit — there is no actual duplication. Allow the lint
+# here so the `tests/common/` convention works without per-file
+# `#[allow]` annotations on every `mod common;`.
+[lints.clippy]
+duplicate_mod = "allow"

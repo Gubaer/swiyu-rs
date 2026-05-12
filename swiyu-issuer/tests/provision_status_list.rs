@@ -14,13 +14,9 @@ use swiyu_issuer::worker::create_issuer::{CreateIssuerStateData, execute_provisi
 const ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
 const REGISTRY_URL: &str = "https://status-reg.example.com/lists/abc.jwt";
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, NULL)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::tenants::insert_test_tenant;
 
 async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId, issuer_id: &IssuerId) {
     sqlx::query(

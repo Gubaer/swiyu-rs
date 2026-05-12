@@ -25,17 +25,8 @@ pub async fn execute_allocate_did<R: RegistryFacade>(
         return StepOutcome::Done(StepResult::default());
     }
 
-    let partner_id = match tenant.partner_id.as_deref() {
-        Some(p) => p,
-        None => {
-            return StepOutcome::Terminal {
-                error_code: "tenant_missing_partner_id".into(),
-                error_message: format!("tenant {} has no partner_id configured", tenant.id),
-            };
-        }
-    };
-
-    let result = allocate_did_with_refresh(provider, registry, partner_id).await;
+    let partner_id = tenant.partner_id.to_string();
+    let result = allocate_did_with_refresh(provider, registry, &partner_id).await;
 
     match result {
         Ok(allocation) => {
@@ -64,7 +55,11 @@ mod tests {
     fn tenant_with_partner(partner_id: &str) -> Tenant {
         Tenant {
             id: TenantId::generate(),
-            partner_id: Some(partner_id.into()),
+            partner_id: partner_id
+                .parse()
+                .expect("test partner_id must be a valid UUID"),
+            display_name: None,
+            description: None,
             oauth_client_id: None,
             oauth_client_secret: None,
             oauth_refresh_token: None,
@@ -131,34 +126,6 @@ mod tests {
         match outcome {
             StepOutcome::Done(result) => assert!(result.state_data_patch.is_empty()),
             other => panic!("expected Done, got {other:?}"),
-        }
-        assert!(registry.allocate_invocations.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn missing_partner_id_is_terminal() {
-        let tenant = Tenant {
-            id: TenantId::generate(),
-            partner_id: None,
-            oauth_client_id: None,
-            oauth_client_secret: None,
-            oauth_refresh_token: None,
-        };
-        let registry = MockRegistry::new();
-
-        let outcome = execute_allocate_did(
-            &tenant,
-            &CreateIssuerStateData::default(),
-            &registry,
-            &token_provider(),
-        )
-        .await;
-
-        match outcome {
-            StepOutcome::Terminal { error_code, .. } => {
-                assert_eq!(error_code, "tenant_missing_partner_id");
-            }
-            other => panic!("expected Terminal, got {other:?}"),
         }
         assert!(registry.allocate_invocations.lock().unwrap().is_empty());
     }

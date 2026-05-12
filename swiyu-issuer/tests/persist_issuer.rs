@@ -86,13 +86,9 @@ fn engine_for_happy_path() -> MockSigningEngine {
     engine
 }
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id, partner_id) VALUES ($1, NULL)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::tenants::insert_test_tenant;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_inserts_issuer_row(pool: PgPool) {

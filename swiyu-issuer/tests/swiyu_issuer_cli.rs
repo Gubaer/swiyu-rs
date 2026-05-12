@@ -18,13 +18,7 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence::tenant_secret_keys::oauth2_client_secret_key_name;
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
-}
+use common::tenants::insert_test_tenant;
 
 async fn read_refresh_token(
     pool: &PgPool,

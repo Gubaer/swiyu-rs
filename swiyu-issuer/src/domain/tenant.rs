@@ -1,3 +1,5 @@
+use uuid::Uuid;
+
 use super::ids::TenantId;
 use super::secret_encryption_engine::Ciphertext;
 
@@ -5,10 +7,16 @@ use super::secret_encryption_engine::Ciphertext;
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Tenant {
     pub id: TenantId,
-    /// SWIYU Identifier Registry partner identifier (a UUID). Required by
-    /// the `allocate_did` step; a missing value fails the `CreateIssuer`
-    /// task immediately.
-    pub partner_id: Option<String>,
+    /// SWIYU Business Partner UUID. Required at tenant creation; SWIYU
+    /// Business Partner registration is a precondition for admitting a
+    /// tenant to the system. Corrigible via `tenant update` on the rare
+    /// typo-correction path.
+    pub partner_id: Uuid,
+    /// Operator-supplied human-readable name for this tenant. Optional;
+    /// the UI derives a fallback from the bare id when this is NULL.
+    pub display_name: Option<String>,
+    /// Operator-supplied freeform notes about this tenant. Optional.
+    pub description: Option<String>,
     /// SWIYU OAuth2 client id ("customer key") for this tenant. NULL for
     /// tenants that do not call SWIYU registries.
     pub oauth_client_id: Option<String>,

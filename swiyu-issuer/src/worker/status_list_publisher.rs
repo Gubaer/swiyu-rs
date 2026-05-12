@@ -183,12 +183,7 @@ where
                     issuer.id, issuer.tenant_id
                 ))
             })?;
-        let partner_id = tenant.partner_id.clone().ok_or_else(|| {
-            PublisherError::Inconsistent(format!(
-                "tenant {} has no partner_id; cannot publish",
-                tenant.id
-            ))
-        })?;
+        let partner_id = tenant.partner_id.to_string();
         let registry_entry_id = list.registry_entry_id.clone().ok_or_else(|| {
             PublisherError::Inconsistent(format!(
                 "status_lists row {} has no registry_entry_id; create_status_list_entry must run first",

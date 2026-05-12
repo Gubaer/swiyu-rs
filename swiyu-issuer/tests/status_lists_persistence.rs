@@ -12,7 +12,11 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use chrono::{Duration, Utc};
+use common::tenants::insert_test_tenant as insert_tenant;
 use sqlx::PgPool;
 use swiyu_core::statuslist::{
     SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY, StatusList as CoreStatusList,
@@ -32,14 +36,6 @@ fn read_slot(bitstring: &[u8], idx: StatusListIndex) -> StatusValue {
         .unwrap()
         .value_at(u64::from(idx.value()))
         .unwrap()
-}
-
-async fn insert_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
 }
 
 async fn insert_issuer(pool: &PgPool, tenant_id: &TenantId, issuer_id: &str) {

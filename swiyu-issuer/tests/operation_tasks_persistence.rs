@@ -21,13 +21,9 @@ fn now_micros() -> DateTime<Utc> {
 use swiyu_issuer::domain::{IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence::{PersistenceError, operation_tasks};
 
-async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId) {
-    sqlx::query("INSERT INTO tenants (id) VALUES ($1)")
-        .bind(tenant_id.bare())
-        .execute(pool)
-        .await
-        .unwrap();
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::tenants::insert_test_tenant;
 
 fn fixture_task(tenant_id: TenantId) -> OperationTask {
     let now = now_micros();

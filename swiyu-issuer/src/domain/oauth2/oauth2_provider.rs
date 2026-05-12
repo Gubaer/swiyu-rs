@@ -376,7 +376,7 @@ mod tests {
             "#,
         )
         .bind(tenant_id.bare())
-        .bind("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef")
+        .bind(uuid::Uuid::parse_str("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef").unwrap())
         .bind(client_id)
         .bind(client_secret_blob)
         .bind(refresh_token_blob)
