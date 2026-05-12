@@ -186,3 +186,181 @@ pub async fn set_oauth_credentials(
     tx.commit().await?;
     Ok(SeedOutcome::Wrote)
 }
+
+/// Decoupled from env-var parsing so tests can construct it directly
+/// instead of mutating the process environment.
+#[derive(Debug)]
+pub struct BootstrapDevTenantArgs {
+    pub partner_id: Uuid,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<SecretString>,
+    pub refresh_token: Option<SecretString>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BootstrapDevError {
+    #[error(transparent)]
+    Persistence(#[from] PersistenceError),
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DevTenantEnvError {
+    #[error("required env var {0} is unset or empty")]
+    Missing(&'static str),
+    #[error("env var {0} is not a valid UUID: {1}")]
+    InvalidUuid(&'static str, String),
+}
+
+/// Production passes `|k| std::env::var(k).ok()`; tests pass a
+/// fixture closure so the process environment stays untouched.
+///
+/// Unset and empty are treated identically — both mean "absent".
+/// `DEV_TENANT_PARTNER_ID` is the one required value and must parse
+/// as a UUID; everything else is optional.
+pub fn parse_dev_tenant_args(
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<BootstrapDevTenantArgs, DevTenantEnvError> {
+    fn non_empty(value: Option<String>) -> Option<String> {
+        value.filter(|s| !s.is_empty())
+    }
+
+    let partner_id_str = non_empty(get("DEV_TENANT_PARTNER_ID"))
+        .ok_or(DevTenantEnvError::Missing("DEV_TENANT_PARTNER_ID"))?;
+    let partner_id = partner_id_str
+        .parse::<Uuid>()
+        .map_err(|err| DevTenantEnvError::InvalidUuid("DEV_TENANT_PARTNER_ID", err.to_string()))?;
+
+    Ok(BootstrapDevTenantArgs {
+        partner_id,
+        display_name: non_empty(get("DEV_TENANT_DISPLAY_NAME")),
+        description: non_empty(get("DEV_TENANT_DESCRIPTION")),
+        client_id: non_empty(get("DEV_TENANT_CLIENT_ID")),
+        client_secret: non_empty(get("DEV_TENANT_CLIENT_SECRET")).map(SecretString::from),
+        refresh_token: non_empty(get("DEV_TENANT_REFRESH_TOKEN")).map(SecretString::from),
+    })
+}
+
+/// When the row does not yet exist, every supplied field is written
+/// (oauth columns only for the values that are `Some`). When the row
+/// already exists, `force` decides whether to overwrite:
+///
+/// - `force == true` syncs the whole row from `args`: `display_name`
+///   and `description` are overwritten (always), and each oauth
+///   column is overwritten when its corresponding `args` field is
+///   `Some`.
+/// - `force == false` leaves `display_name` and `description`
+///   untouched and writes each oauth column only when it is currently
+///   `NULL`. Runtime-rotated refresh tokens survive an idempotent
+///   re-run.
+pub async fn bootstrap_dev_from_env(
+    pool: &PgPool,
+    args: BootstrapDevTenantArgs,
+    force: bool,
+    engine: &AnySecretEncryptionEngine,
+) -> Result<TenantId, BootstrapDevError> {
+    let mut tx = pool.begin().await?;
+
+    let tenant_id = match persistence::tenants::find_by_partner_id(&mut tx, args.partner_id).await?
+    {
+        None => {
+            let new_id = TenantId::generate();
+            persistence::tenants::insert(
+                &mut tx,
+                &new_id,
+                args.partner_id,
+                args.display_name.as_deref(),
+                args.description.as_deref(),
+            )
+            .await?;
+            if let (Some(client_id), Some(client_secret)) = (&args.client_id, &args.client_secret) {
+                persistence::tenants::write_oauth_client_credentials(
+                    &mut tx,
+                    &new_id,
+                    client_id,
+                    client_secret,
+                    engine,
+                )
+                .await?;
+            }
+            if let Some(refresh_token) = &args.refresh_token {
+                persistence::tenants::write_oauth_refresh_token(
+                    &mut tx,
+                    &new_id,
+                    refresh_token,
+                    engine,
+                )
+                .await?;
+            }
+            new_id
+        }
+        Some(existing) => {
+            let existing_id = existing.id.clone();
+            if force {
+                persistence::tenants::update_metadata(
+                    &mut tx,
+                    &existing_id,
+                    None,
+                    args.display_name.as_deref(),
+                    args.description.as_deref(),
+                )
+                .await?;
+                if let (Some(client_id), Some(client_secret)) =
+                    (&args.client_id, &args.client_secret)
+                {
+                    persistence::tenants::write_oauth_client_credentials(
+                        &mut tx,
+                        &existing_id,
+                        client_id,
+                        client_secret,
+                        engine,
+                    )
+                    .await?;
+                }
+                if let Some(refresh_token) = &args.refresh_token {
+                    persistence::tenants::write_oauth_refresh_token(
+                        &mut tx,
+                        &existing_id,
+                        refresh_token,
+                        engine,
+                    )
+                    .await?;
+                }
+            } else {
+                let client_columns_empty =
+                    existing.oauth_client_id.is_none() && existing.oauth_client_secret.is_none();
+                if client_columns_empty
+                    && let (Some(client_id), Some(client_secret)) =
+                        (&args.client_id, &args.client_secret)
+                {
+                    persistence::tenants::write_oauth_client_credentials(
+                        &mut tx,
+                        &existing_id,
+                        client_id,
+                        client_secret,
+                        engine,
+                    )
+                    .await?;
+                }
+                if existing.oauth_refresh_token.is_none()
+                    && let Some(refresh_token) = &args.refresh_token
+                {
+                    persistence::tenants::write_oauth_refresh_token(
+                        &mut tx,
+                        &existing_id,
+                        refresh_token,
+                        engine,
+                    )
+                    .await?;
+                }
+            }
+            existing_id
+        }
+    };
+
+    tx.commit().await?;
+    Ok(tenant_id)
+}

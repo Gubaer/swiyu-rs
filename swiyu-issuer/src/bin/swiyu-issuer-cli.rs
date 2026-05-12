@@ -37,6 +37,11 @@ enum TenantCommand {
     /// Update a tenant's mutable metadata (partner_id, display_name,
     /// description). Omitted flags leave the column untouched.
     Update(UpdateArgs),
+    /// Find-or-create the dev tenant identified by
+    /// `DEV_TENANT_PARTNER_ID`, populating columns from `DEV_TENANT_*`
+    /// env vars. `--force` overwrites an existing row from env;
+    /// otherwise oauth columns are filled only where currently NULL.
+    BootstrapDevFromEnv(BootstrapDevFromEnvArgs),
     /// API tokens scoped to a tenant.
     ApiToken {
         #[command(subcommand)]
@@ -81,6 +86,17 @@ struct UpdateArgs {
     /// Replacement freeform description.
     #[arg(long)]
     description: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct BootstrapDevFromEnvArgs {
+    /// Treat the env vars as the source of truth: overwrite an
+    /// existing row's columns from `DEV_TENANT_*`. Without this flag,
+    /// the operation is idempotent — oauth columns are filled only
+    /// where currently NULL, and display_name/description are not
+    /// touched.
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Args, Debug)]
@@ -170,6 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         TopCommand::Tenant { command } => match command {
             TenantCommand::Create(args) => create_tenant(args).await,
             TenantCommand::Update(args) => update_tenant(args).await,
+            TenantCommand::BootstrapDevFromEnv(args) => bootstrap_dev_from_env(args).await,
             TenantCommand::ApiToken { command } => match command {
                 ApiTokenCommand::Mint {
                     tenant,
@@ -225,6 +242,27 @@ async fn update_tenant(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error
     .await?;
 
     eprintln!("updated tenant {}", tenant_id.bare());
+    Ok(())
+}
+
+async fn bootstrap_dev_from_env(
+    args: BootstrapDevFromEnvArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let parsed = cli::tenant::parse_dev_tenant_args(|k| env::var(k).ok())?;
+
+    let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
+    let pool: PgPool = persistence::connect(&database_url).await?;
+    persistence::run_migrations(&pool).await?;
+    let engine = build_secret_encryption_engine_from_env()?;
+
+    let tenant_id = cli::tenant::bootstrap_dev_from_env(&pool, parsed, args.force, &engine).await?;
+
+    // Stdout carries the bare id so a compose entrypoint can capture it
+    // for downstream steps (e.g. Vault key provisioning); the
+    // confirmation banner lands on stderr.
+    println!("{}", tenant_id.bare());
+    eprintln!("bootstrapped dev tenant {}", tenant_id.bare());
+
     Ok(())
 }
 

@@ -36,6 +36,32 @@ pub async fn find_by_id(
     Ok(tenant)
 }
 
+/// At-most-one lookup by `partner_id`. The UNIQUE constraint on the
+/// column guarantees the result is single-row.
+pub async fn find_by_partner_id(
+    conn: &mut PgConnection,
+    partner_id: Uuid,
+) -> Result<Option<Tenant>, PersistenceError> {
+    let tenant = sqlx::query_as::<_, Tenant>(
+        r#"
+        SELECT id,
+               partner_id,
+               display_name,
+               description,
+               oauth_client_id,
+               oauth_client_secret,
+               oauth_refresh_token
+        FROM tenants
+        WHERE partner_id = $1
+        "#,
+    )
+    .bind(partner_id)
+    .fetch_optional(conn)
+    .await?;
+
+    Ok(tenant)
+}
+
 /// Outcome of an `update_metadata` call.
 ///
 /// `Updated` covers every successful path including a no-op call that
