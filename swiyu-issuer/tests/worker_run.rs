@@ -179,27 +179,17 @@ async fn build_provider_setup(
     (server, providers)
 }
 
-fn pending_create_issuer_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
+fn pending_create_issuer_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
     OperationTask {
-        id: TaskId::generate(),
-        tenant_id,
-        task_type: TaskType::CreateIssuer,
-        state: TaskState::Pending,
-        step: None,
-        attempts: 0,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
         input: json!({
             "description": "Cantonal driver-licence issuer",
             "display_name": "Canton Bern Verkehrsamt",
         }),
-        state_data: json!({}),
         result_issuer_id: Some(issuer_id),
         created_at: now,
         updated_at: now,
-        completed_at: None,
+        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
 
@@ -242,13 +232,10 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     .await;
 
     let issuer_id = IssuerId::generate();
-    let task = pending_create_issuer_task(tenant_id.clone(), issuer_id.clone());
+    let task = pending_create_issuer_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
 
-    {
-        let mut conn = pool.acquire().await.unwrap();
-        operation_tasks::insert(&mut conn, &task).await.unwrap();
-    }
+    common::operation_tasks::insert(&pool, &task).await;
 
     let registry = MockRegistry::new();
     let engine = MockSigningEngine::new();

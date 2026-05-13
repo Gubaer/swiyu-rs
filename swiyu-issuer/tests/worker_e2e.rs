@@ -109,27 +109,17 @@ async fn insert_test_tenant(
     .await;
 }
 
-fn pending_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
+fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
     OperationTask {
-        id: TaskId::generate(),
-        tenant_id,
-        task_type: TaskType::CreateIssuer,
-        state: TaskState::Pending,
-        step: None,
-        attempts: 0,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
         input: json!({
             "description": "E2E test issuer",
             "display_name": "E2E",
         }),
-        state_data: json!({}),
         result_issuer_id: Some(issuer_id),
         created_at: now,
         updated_at: now,
-        completed_at: None,
+        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
 
@@ -205,11 +195,9 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &engine).await;
 
     let issuer_id = IssuerId::generate();
-    let task = pending_task(tenant_id.clone(), issuer_id.clone());
+    let task = pending_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
-    drop(conn);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
         build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
@@ -298,11 +286,9 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &engine).await;
 
     let issuer_id = IssuerId::generate();
-    let task = pending_task(tenant_id.clone(), issuer_id.clone());
+    let task = pending_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
-    drop(conn);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
         build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
@@ -370,15 +356,13 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
     // crash that occurred after allocate_did succeeded but before
     // generate_keys.
     let issuer_id = IssuerId::generate();
-    let mut task = pending_task(tenant_id.clone(), issuer_id.clone());
+    let mut task = pending_task(&tenant_id, issuer_id.clone());
     task.state_data = json!({
         "assigned_did_url": registry_url_in_response(),
         "assigned_identifier": REGISTRY_UUID,
     });
     let task_id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
-    drop(conn);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
         build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;

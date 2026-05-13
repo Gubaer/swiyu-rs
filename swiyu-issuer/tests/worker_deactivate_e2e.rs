@@ -191,24 +191,13 @@ async fn insert_issued_offer(
     offer
 }
 
-fn deactivate_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
+fn deactivate_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
     OperationTask {
-        id: TaskId::generate(),
-        tenant_id,
-        task_type: TaskType::DeactivateIssuer,
-        state: TaskState::Pending,
-        step: None,
-        attempts: 0,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
-        input: json!({}),
-        state_data: json!({}),
         result_issuer_id: Some(issuer_id),
         created_at: now,
         updated_at: now,
-        completed_at: None,
+        ..common::operation_tasks::pending(tenant_id, TaskType::DeactivateIssuer)
     }
 }
 
@@ -257,11 +246,9 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     let pending_b = insert_pending_offer(&pool, &tenant_id, &issuer_id).await;
     let issued = insert_issued_offer(&pool, &tenant_id, &issuer_id).await;
 
-    let task = deactivate_task(tenant_id.clone(), issuer_id.clone());
+    let task = deactivate_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
-    drop(conn);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();

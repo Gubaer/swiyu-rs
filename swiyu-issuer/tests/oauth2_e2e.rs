@@ -98,27 +98,17 @@ async fn insert_tenant_with_oauth(
     .await;
 }
 
-fn pending_task(tenant_id: TenantId, issuer_id: IssuerId) -> OperationTask {
+fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
     OperationTask {
-        id: TaskId::generate(),
-        tenant_id,
-        task_type: TaskType::CreateIssuer,
-        state: TaskState::Pending,
-        step: None,
-        attempts: 0,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
         input: json!({
             "description": "OAuth2 e2e test issuer",
             "display_name": "OAuth2-E2E",
         }),
-        state_data: json!({}),
         result_issuer_id: Some(issuer_id),
         created_at: now,
         updated_at: now,
-        completed_at: None,
+        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
 
@@ -208,11 +198,9 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
     insert_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
-    let task = pending_task(tenant_id.clone(), issuer_id.clone());
+    let task = pending_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
-    drop(conn);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let shutdown = CancellationToken::new();
     let worker = build_worker(pool.clone(), &registry_server, providers);
@@ -300,11 +288,9 @@ async fn registry_401_triggers_invalidate_and_retry(pool: PgPool) {
     insert_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
-    let task = pending_task(tenant_id.clone(), issuer_id.clone());
+    let task = pending_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
-    drop(conn);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let shutdown = CancellationToken::new();
     let worker = build_worker(pool.clone(), &registry_server, providers);

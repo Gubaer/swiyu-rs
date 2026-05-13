@@ -11,7 +11,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
-use swiyu_issuer::domain::{IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId};
+use swiyu_issuer::domain::{IssuerId, OperationTask, TaskId, TaskType, TenantId};
 use swiyu_issuer::persistence;
 
 #[path = "common/mod.rs"]
@@ -21,32 +21,12 @@ use common::app_state::build_state;
 use common::http::{get_request, read_body};
 use common::tenants::insert_test_tenant;
 
-fn pending_task(tenant_id: TenantId, result_issuer_id: Option<IssuerId>) -> OperationTask {
-    let now = Utc::now();
+fn pending_task(tenant_id: &TenantId, result_issuer_id: Option<IssuerId>) -> OperationTask {
     OperationTask {
-        id: TaskId::generate(),
-        tenant_id,
-        task_type: TaskType::CreateIssuer,
-        state: TaskState::Pending,
-        step: None,
-        attempts: 0,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
         input: json!({"description": "x", "display_name": "y"}),
-        state_data: json!({}),
         result_issuer_id,
-        created_at: now,
-        updated_at: now,
-        completed_at: None,
+        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
-}
-
-async fn insert_task(pool: &PgPool, task: &OperationTask) {
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::operation_tasks::insert(&mut conn, task)
-        .await
-        .unwrap();
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -55,8 +35,8 @@ async fn happy_path_returns_target_shape(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    let task = pending_task(tenant_id.clone(), Some(issuer_id.clone()));
-    insert_task(&pool, &task).await;
+    let task = pending_task(&tenant_id, Some(issuer_id.clone()));
+    common::operation_tasks::insert(&pool, &task).await;
 
     let app = router(build_state(pool));
     let response = app
@@ -96,8 +76,8 @@ async fn completed_task_surfaces_terminal_state_and_completed_at(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    let mut task = pending_task(tenant_id.clone(), Some(issuer_id.clone()));
-    insert_task(&pool, &task).await;
+    let mut task = pending_task(&tenant_id, Some(issuer_id.clone()));
+    common::operation_tasks::insert(&pool, &task).await;
 
     // Drive the task to Completed by mirroring the in-memory mutation
     // `OperationTask::try_complete` performs in the worker, then
@@ -160,8 +140,8 @@ async fn returns_404_for_cross_tenant_task(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_a).await;
     insert_test_tenant(&pool, &tenant_b).await;
     // Task belongs to tenant_a; the bearer token is tenant_b's.
-    let task = pending_task(tenant_a, Some(IssuerId::generate()));
-    insert_task(&pool, &task).await;
+    let task = pending_task(&tenant_a, Some(IssuerId::generate()));
+    common::operation_tasks::insert(&pool, &task).await;
     let secret = mint_test_token(&pool, &tenant_b).await;
 
     let app = router(build_state(pool));
@@ -201,8 +181,8 @@ async fn returns_400_for_malformed_task_id(pool: PgPool) {
 async fn rejects_request_without_authorization(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let task = pending_task(tenant_id, Some(IssuerId::generate()));
-    insert_task(&pool, &task).await;
+    let task = pending_task(&tenant_id, Some(IssuerId::generate()));
+    common::operation_tasks::insert(&pool, &task).await;
 
     let app = router(build_state(pool));
     let response = app

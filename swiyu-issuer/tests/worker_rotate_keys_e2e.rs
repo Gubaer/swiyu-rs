@@ -159,24 +159,14 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> (Issuer, D
 
 /// `roles` is the wire form: lowercase snake-case role names or
 /// the sentinel `"all"`.
-fn rotate_task(tenant_id: TenantId, issuer_id: IssuerId, roles: Vec<&str>) -> OperationTask {
+fn rotate_task(tenant_id: &TenantId, issuer_id: IssuerId, roles: Vec<&str>) -> OperationTask {
     let now = now_micros();
     OperationTask {
-        id: TaskId::generate(),
-        tenant_id,
-        task_type: TaskType::RotateKeys,
-        state: TaskState::Pending,
-        step: None,
-        attempts: 0,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
         input: json!({"roles": roles}),
-        state_data: json!({}),
         result_issuer_id: Some(issuer_id),
         created_at: now,
         updated_at: now,
-        completed_at: None,
+        ..common::operation_tasks::pending(tenant_id, TaskType::RotateKeys)
     }
 }
 
@@ -219,11 +209,9 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &secret_engine).await;
     let (issuer, engine) = insert_active_issuer(&pool, &tenant_id).await;
 
-    let task = rotate_task(tenant_id.clone(), issuer.id.clone(), vec!["all"]);
+    let task = rotate_task(&tenant_id, issuer.id.clone(), vec!["all"]);
     let task_id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
-    drop(conn);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
@@ -312,11 +300,9 @@ async fn rotates_only_authentication(pool: PgPool) {
     let original_authorized: KeyPairId = issuer.authorized_key_id.unwrap();
     let original_assertion: KeyPairId = issuer.assertion_key_id.unwrap();
 
-    let task = rotate_task(tenant_id.clone(), issuer.id.clone(), vec!["authentication"]);
+    let task = rotate_task(&tenant_id, issuer.id.clone(), vec!["authentication"]);
     let task_id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, &task).await.unwrap();
-    drop(conn);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();

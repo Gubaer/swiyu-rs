@@ -10,9 +10,7 @@ use rand_core::RngCore;
 use serde_json::{Map, json};
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::{
-    OperationTask, StepOutcome, StepResult, TaskId, TaskState, TaskType, TenantId,
-};
+use swiyu_issuer::domain::{OperationTask, StepOutcome, StepResult, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence::operation_tasks;
 use swiyu_issuer::worker::outcome;
 
@@ -50,30 +48,16 @@ impl RngCore for FixedRng {
 mod common;
 use common::tenants::insert_test_tenant;
 
-async fn insert_task(pool: &PgPool, task: &OperationTask) {
-    let mut conn = pool.acquire().await.unwrap();
-    operation_tasks::insert(&mut conn, task).await.unwrap();
-}
-
-fn task_with_age(tenant_id: TenantId, age: Duration, attempts: u32) -> OperationTask {
-    let now = now_micros();
-    let created_at = now - age;
+fn task_with_age(tenant_id: &TenantId, age: Duration, attempts: u32) -> OperationTask {
+    let created_at = now_micros() - age;
     OperationTask {
-        id: TaskId::generate(),
-        tenant_id,
-        task_type: TaskType::CreateIssuer,
         state: TaskState::InProgress,
         step: Some("allocate_did".into()),
         attempts,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
         input: json!({"description": "x", "display_name": "X"}),
-        state_data: json!({}),
-        result_issuer_id: None,
         created_at,
         updated_at: created_at,
-        completed_at: None,
+        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
 
@@ -81,8 +65,8 @@ fn task_with_age(tenant_id: TenantId, age: Duration, attempts: u32) -> Operation
 async fn done_advances_step_and_merges_patch(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let mut task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
-    insert_task(&pool, &task).await;
+    let mut task = task_with_age(&tenant_id, Duration::seconds(10), 0);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let mut patch = Map::new();
     patch.insert(
@@ -125,8 +109,8 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
 async fn retry_within_cap_schedules_next_attempt_without_bumping_attempts(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let mut task = task_with_age(tenant_id.clone(), Duration::hours(1), 2);
-    insert_task(&pool, &task).await;
+    let mut task = task_with_age(&tenant_id, Duration::hours(1), 2);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
@@ -165,8 +149,8 @@ async fn retry_within_cap_schedules_next_attempt_without_bumping_attempts(pool: 
 async fn retry_past_cap_marks_failed(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let mut task = task_with_age(tenant_id.clone(), Duration::hours(25), 17);
-    insert_task(&pool, &task).await;
+    let mut task = task_with_age(&tenant_id, Duration::hours(25), 17);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
@@ -199,8 +183,8 @@ async fn retry_past_cap_marks_failed(pool: PgPool) {
 async fn terminal_marks_failed_immediately(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let mut task = task_with_age(tenant_id.clone(), Duration::seconds(10), 0);
-    insert_task(&pool, &task).await;
+    let mut task = task_with_age(&tenant_id, Duration::seconds(10), 0);
+    common::operation_tasks::insert(&pool, &task).await;
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();

@@ -4,7 +4,6 @@
 //! `tower::ServiceExt::oneshot` against a `sqlx::test`-managed pool.
 
 use axum::http::StatusCode;
-use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -42,29 +41,13 @@ async fn insert_deactivate_task(
     issuer_id: &IssuerId,
     state: TaskState,
 ) -> TaskId {
-    let now = Utc::now();
     let task = OperationTask {
-        id: TaskId::generate(),
-        tenant_id: tenant_id.clone(),
-        task_type: TaskType::DeactivateIssuer,
         state,
-        step: None,
-        attempts: 0,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
-        input: json!({}),
-        state_data: json!({}),
         result_issuer_id: Some(issuer_id.clone()),
-        created_at: now,
-        updated_at: now,
-        completed_at: None,
+        ..common::operation_tasks::pending(tenant_id, TaskType::DeactivateIssuer)
     };
     let id = task.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::operation_tasks::insert(&mut conn, &task)
-        .await
-        .unwrap();
+    common::operation_tasks::insert(pool, &task).await;
     id
 }
 
