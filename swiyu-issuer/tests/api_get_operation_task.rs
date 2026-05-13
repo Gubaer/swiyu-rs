@@ -11,26 +11,15 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use swiyu_issuer::api_management::{AppState, Config, router};
+use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
     ApiToken, ApiTokenSecret, IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence;
 
-const TEST_BASE_URL: &str = "http://localhost:8080";
-
-async fn build_state(pool: PgPool) -> AppState {
-    AppState::new(
-        pool,
-        Config {
-            issuer_base_url: TEST_BASE_URL.into(),
-        },
-    )
-    .expect("AppState builds")
-}
-
 #[path = "common/mod.rs"]
 mod common;
+use common::app_state::build_state;
 use common::tenants::insert_test_tenant;
 
 async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
@@ -95,7 +84,7 @@ async fn happy_path_returns_target_shape(pool: PgPool) {
     let task = pending_task(tenant_id.clone(), Some(issuer_id.clone()));
     insert_task(&pool, &task).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/operation-tasks/{}", task.id.bare()),
@@ -152,7 +141,7 @@ async fn completed_task_surfaces_terminal_state_and_completed_at(pool: PgPool) {
         .unwrap();
     drop(conn);
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/operation-tasks/{}", task.id.bare()),
@@ -176,7 +165,7 @@ async fn returns_404_for_unknown_task(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let unknown = TaskId::generate();
     let response = app
         .oneshot(get_request(
@@ -201,7 +190,7 @@ async fn returns_404_for_cross_tenant_task(pool: PgPool) {
     insert_task(&pool, &task).await;
     let secret = mint_test_token(&pool, &tenant_b).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/operation-tasks/{}", task.id.bare()),
@@ -220,7 +209,7 @@ async fn returns_400_for_malformed_task_id(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     // 'O' (capital o) is outside the bs58 alphabet.
     let response = app
         .oneshot(get_request(
@@ -241,7 +230,7 @@ async fn rejects_request_without_authorization(pool: PgPool) {
     let task = pending_task(tenant_id, Some(IssuerId::generate()));
     insert_task(&pool, &task).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/operation-tasks/{}", task.id.bare()),

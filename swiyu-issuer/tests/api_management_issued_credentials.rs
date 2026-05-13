@@ -16,7 +16,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_core::statuslist::{SWIYU_STATUS_LIST_BITS, StatusList as CoreStatusList};
-use swiyu_issuer::api_management::{AppState, Config, router};
+use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
     ApiToken, ApiTokenSecret, BITSTRING_BYTES, CredentialOffer, INTEGRITY_HASH_LEN,
     IssuedCredential, IssuedCredentialState, Issuer, IssuerId, IssuerState, PreAuthCode,
@@ -24,20 +24,9 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-const TEST_BASE_URL: &str = "http://localhost:8080";
-
-async fn build_state(pool: PgPool) -> AppState {
-    AppState::new(
-        pool,
-        Config {
-            issuer_base_url: TEST_BASE_URL.into(),
-        },
-    )
-    .expect("AppState builds")
-}
-
 #[path = "common/mod.rs"]
 mod common;
+use common::app_state::build_state;
 use common::tenants::insert_test_tenant;
 
 async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
@@ -219,7 +208,7 @@ async fn suspend_active_flips_state_and_status_bit(pool: PgPool) {
     .await;
     let baseline_version = fetch_committed_version(&pool, &list_id).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &lifecycle_uri(&credential, "suspend"),
@@ -261,7 +250,7 @@ async fn unsuspend_restores_active_and_clears_status_bit(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &lifecycle_uri(&credential, "unsuspend"),
@@ -297,7 +286,7 @@ async fn revoke_active_flips_state_and_status_bit(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &lifecycle_uri(&credential, "revoke"),
@@ -333,7 +322,7 @@ async fn revoke_suspended_succeeds(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &lifecycle_uri(&credential, "revoke"),
@@ -362,7 +351,7 @@ async fn suspend_already_suspended_returns_409(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &lifecycle_uri(&credential, "suspend"),
@@ -394,7 +383,7 @@ async fn unsuspend_active_returns_409(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &lifecycle_uri(&credential, "unsuspend"),
@@ -422,7 +411,7 @@ async fn revoke_already_revoked_returns_409(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &lifecycle_uri(&credential, "revoke"),
@@ -455,7 +444,7 @@ async fn lifecycle_op_against_other_tenant_returns_404(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_b).await;
     let secret_b = mint_test_token(&pool, &tenant_b).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &lifecycle_uri(&credential, "suspend"),
@@ -476,7 +465,7 @@ async fn unknown_credential_returns_404(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
         .oneshot(post_request(
@@ -513,7 +502,7 @@ async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &format!(
@@ -533,7 +522,7 @@ async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn missing_bearer_returns_401(pool: PgPool) {
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let issuer_id = swiyu_issuer::domain::IssuerId::generate();
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
@@ -557,7 +546,7 @@ async fn malformed_credential_id_returns_400(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             &format!(
@@ -579,7 +568,7 @@ async fn malformed_issuer_id_returns_400(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(post_request(
             "/api/v1/issuers/notValid0/credentials/9hXq2vRtL8pK7f/suspend",

@@ -11,26 +11,15 @@ use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use swiyu_issuer::api_management::{AppState, Config, router};
+use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
     ApiToken, ApiTokenSecret, Issuer, IssuerId, IssuerState, KeyPairId, TenantId,
 };
 use swiyu_issuer::persistence;
 
-const TEST_BASE_URL: &str = "http://localhost:8080";
-
-async fn build_state(pool: PgPool) -> AppState {
-    AppState::new(
-        pool,
-        Config {
-            issuer_base_url: TEST_BASE_URL.into(),
-        },
-    )
-    .expect("AppState builds")
-}
-
 #[path = "common/mod.rs"]
 mod common;
+use common::app_state::build_state;
 use common::tenants::insert_test_tenant;
 
 async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
@@ -94,7 +83,7 @@ async fn empty_list_returns_no_items_and_no_cursor(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request("/api/v1/issuers", Some(&secret.as_wire())))
         .await
@@ -116,7 +105,7 @@ async fn single_page_returns_target_shape_dtos(pool: PgPool) {
         insert_target_shape_issuer(&pool, &tenant_id, "Older", now - Duration::seconds(10)).await;
     let newer = insert_target_shape_issuer(&pool, &tenant_id, "Newer", now).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request("/api/v1/issuers", Some(&secret.as_wire())))
         .await
@@ -158,7 +147,7 @@ async fn multi_page_advances_via_cursor(pool: PgPool) {
         insert_target_shape_issuer(&pool, &tenant_id, "B", now - Duration::seconds(10)).await;
     let newest = insert_target_shape_issuer(&pool, &tenant_id, "C", now).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
 
     // Page 1: limit=2 → newest + middle, with a forward cursor.
     let page1_response = app
@@ -205,7 +194,7 @@ async fn cross_tenant_issuers_are_excluded(pool: PgPool) {
     insert_target_shape_issuer(&pool, &tenant_b, "B-1", Utc::now()).await;
     insert_target_shape_issuer(&pool, &tenant_b, "B-2", Utc::now()).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request("/api/v1/issuers", Some(&secret_a.as_wire())))
         .await
@@ -245,7 +234,7 @@ async fn legacy_issuer_is_filtered_out(pool: PgPool) {
         .unwrap();
     drop(conn);
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request("/api/v1/issuers", Some(&secret.as_wire())))
         .await
@@ -263,7 +252,7 @@ async fn rejects_out_of_range_limit(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request(
             "/api/v1/issuers?limit=0",
@@ -282,7 +271,7 @@ async fn rejects_malformed_cursor(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     // '0' is outside the bs58 alphabet.
     let response = app
         .oneshot(get_request(
@@ -298,7 +287,7 @@ async fn rejects_malformed_cursor(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_request_without_authorization(pool: PgPool) {
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
     let response = app
         .oneshot(get_request("/api/v1/issuers", None))
         .await

@@ -10,24 +10,13 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use swiyu_issuer::api_management::{AppState, Config, router};
+use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{ApiToken, ApiTokenSecret, IssuerId, TaskId, TaskState, TenantId};
 use swiyu_issuer::persistence;
 
-const TEST_BASE_URL: &str = "http://localhost:8080";
-
-async fn build_state(pool: PgPool) -> AppState {
-    AppState::new(
-        pool,
-        Config {
-            issuer_base_url: TEST_BASE_URL.into(),
-        },
-    )
-    .expect("AppState builds")
-}
-
 #[path = "common/mod.rs"]
 mod common;
+use common::app_state::build_state;
 use common::tenants::insert_test_tenant;
 
 async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
@@ -65,7 +54,7 @@ async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
 
     let body = json!({
         "description": "Cantonal driver-licence issuer",
@@ -106,7 +95,7 @@ async fn trims_whitespace_in_input_fields(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
 
     let body = json!({
         "description": "  Padded description \n",
@@ -137,7 +126,7 @@ async fn missing_fields_apply_defaults(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
 
     // Empty body — both description and display_name omitted.
     let body = json!({});
@@ -172,7 +161,7 @@ async fn blank_fields_apply_defaults(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
 
     // Both fields present but trim to empty — same as omitted.
     let body = json!({ "description": "  ", "display_name": "\t\n" });
@@ -206,7 +195,7 @@ async fn rejects_oversized_display_name(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
 
     let oversized = "a".repeat(256);
     let body = json!({ "description": "ok", "display_name": oversized });
@@ -232,7 +221,7 @@ async fn rejects_unknown_field(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
 
     let body = json!({
         "description": "ok",
@@ -257,7 +246,7 @@ async fn rejects_unknown_field(pool: PgPool) {
 async fn rejects_request_without_authorization(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
 
     let body = json!({ "description": "ok", "display_name": "ok" });
     let response = app
@@ -271,7 +260,7 @@ async fn rejects_request_without_authorization(pool: PgPool) {
 async fn rejects_unknown_bearer_token(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let app = router(build_state(pool).await);
+    let app = router(build_state(pool));
 
     let bogus = ApiTokenSecret::generate();
     let body = json!({ "description": "ok", "display_name": "ok" });

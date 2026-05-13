@@ -16,7 +16,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use swiyu_issuer::api_management::{AppState, Config, router};
+use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
     ApiToken, ApiTokenSecret, CredentialOffer, INTEGRITY_HASH_LEN, IssuedCredential,
     IssuedCredentialState, Issuer, IssuerId, IssuerState, PreAuthCode, StatusListId,
@@ -24,20 +24,9 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-const TEST_BASE_URL: &str = "http://localhost:8080";
-
-async fn build_state(pool: PgPool) -> AppState {
-    AppState::new(
-        pool,
-        Config {
-            issuer_base_url: TEST_BASE_URL.into(),
-        },
-    )
-    .expect("AppState builds")
-}
-
 #[path = "common/mod.rs"]
 mod common;
+use common::app_state::build_state;
 use common::tenants::insert_test_tenant;
 
 async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
@@ -171,7 +160,7 @@ async fn get_returns_credential_with_full_shape(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!(
@@ -225,7 +214,7 @@ async fn get_marks_past_expires_at_as_expired(pool: PgPool) {
         .await
         .unwrap();
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!(
@@ -254,7 +243,7 @@ async fn get_returns_404_for_unknown_id(pool: PgPool) {
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!(
@@ -291,7 +280,7 @@ async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!(
@@ -327,7 +316,7 @@ async fn get_is_tenant_scoped(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_b).await;
     let secret_b = mint_test_token(&pool, &tenant_b).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!(
@@ -344,7 +333,7 @@ async fn get_is_tenant_scoped(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_missing_bearer_returns_401(pool: PgPool) {
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let issuer_id = IssuerId::generate();
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
@@ -385,7 +374,7 @@ async fn list_returns_credentials_newest_first(pool: PgPool) {
         credential_ids.push(credential.id.bare().to_string());
     }
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials", issuer.id.bare()),
@@ -438,7 +427,7 @@ async fn list_returns_only_url_issuers_credentials(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials", issuer_a.id.bare()),
@@ -481,7 +470,7 @@ async fn list_filters_by_state(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!(
@@ -528,7 +517,7 @@ async fn list_filters_by_vct(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!(
@@ -568,7 +557,7 @@ async fn list_paginates_with_cursor(pool: PgPool) {
         .await;
     }
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let first = app
         .clone()
         .oneshot(get_request(
@@ -635,7 +624,7 @@ async fn list_for_other_tenants_issuer_returns_404(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_b).await;
     let secret_b = mint_test_token(&pool, &tenant_b).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials", issuer.id.bare()),
@@ -653,7 +642,7 @@ async fn list_for_unknown_issuer_returns_404(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let unknown_issuer = IssuerId::generate();
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials", unknown_issuer.bare()),
@@ -671,7 +660,7 @@ async fn list_rejects_invalid_state_filter(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!(
@@ -692,7 +681,7 @@ async fn list_rejects_out_of_range_limit(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()).await);
+    let app = router(build_state(pool.clone()));
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials?limit=0", issuer.id.bare()),
