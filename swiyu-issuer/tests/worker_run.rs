@@ -5,6 +5,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::keypairs::fixture_kid;
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -13,28 +14,20 @@ use std::time::Duration;
 use serde_json::json;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 use wiremock::MockServer;
 
 use swiyu_issuer::domain::signing_engine::test_support::{
     GenerateKeypairCall, GetPublicKeyCall, MockSigningEngine, SignCall,
 };
 use swiyu_issuer::domain::{
-    GeneratedKeyPair, IssuerId, KeyAlgorithm, KeyPairId, OperationTask, ProviderRegistry,
-    RawPublicKey, Signature, TaskState, TaskType, TenantId,
+    GeneratedKeyPair, IssuerId, KeyAlgorithm, OperationTask, ProviderRegistry, RawPublicKey,
+    Signature, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     AllocateCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-
-fn fixture_kid(byte: u8) -> KeyPairId {
-    let mut bytes = [byte; 16];
-    bytes[6] = (bytes[6] & 0x0F) | 0x40;
-    bytes[8] = (bytes[8] & 0x3F) | 0x80;
-    KeyPairId::from(Uuid::from_bytes(bytes))
-}
 
 fn fixture_ed25519_pk() -> RawPublicKey {
     RawPublicKey {

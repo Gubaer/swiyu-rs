@@ -6,26 +6,17 @@
 
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use uuid::Uuid;
 
 use swiyu_issuer::domain::signing_engine::test_support::{
     GetPublicKeyCall, MockSigningEngine, SignCall,
 };
 use swiyu_issuer::domain::{
-    Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature, StepOutcome,
-    TenantId,
+    Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, Signature, StepOutcome, TenantId,
 };
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, KeyTriple, execute_persist_issuer,
 };
-
-fn fixture_kid(byte: u8) -> KeyPairId {
-    let mut bytes = [byte; 16];
-    bytes[6] = (bytes[6] & 0x0F) | 0x40;
-    bytes[8] = (bytes[8] & 0x3F) | 0x80;
-    KeyPairId::from(Uuid::from_bytes(bytes))
-}
 
 fn fixture_input() -> CreateIssuerInput {
     CreateIssuerInput {
@@ -88,6 +79,7 @@ fn engine_for_happy_path() -> MockSigningEngine {
 
 #[path = "common/mod.rs"]
 mod common;
+use common::keypairs::fixture_kid;
 use common::tenants::insert_test_tenant;
 
 #[sqlx::test(migrations = "./migrations")]

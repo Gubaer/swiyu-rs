@@ -5,6 +5,7 @@ pub mod fixtures;
 pub mod http;
 pub mod identifier_registry;
 pub mod issuers;
+pub mod keypairs;
 pub mod oauth;
 pub mod operation_tasks;
 pub mod rng;
