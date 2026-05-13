@@ -6,7 +6,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::fixtures::{SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
+use common::fixtures::SAMPLE_STATUS_REGISTRY_URL;
 use common::rng::ConstantRng;
 
 use std::sync::Arc;
@@ -14,65 +14,12 @@ use std::sync::Arc;
 use chrono::Utc;
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::{
-    DevSigningEngine, Issuer, KeyRole, SigningEngine, StatusList, StatusListId, StatusListIndex,
-    StatusValue, TenantId,
-};
-use swiyu_issuer::persistence::{self, status_lists};
+use swiyu_issuer::domain::StatusListId;
 use swiyu_issuer::worker::StatusListPublisher;
 use swiyu_issuer::worker::test_support::{
     CreateStatusListEntryCall, MockStatusRegistry, UpdateStatusListEntryCall,
 };
 use swiyu_registries::status::StatusListEntry;
-
-async fn seeded_environment(
-    pool: &PgPool,
-    secret_engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
-) -> (Issuer, StatusList, DevSigningEngine) {
-    let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(pool, &tenant_id, secret_engine).await;
-
-    let engine = DevSigningEngine::new(pool.clone());
-    let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
-
-    let issuer = Issuer {
-        assertion_key_id: Some(assertion.id),
-        ..common::issuers::active(&tenant_id)
-    };
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::issuers::insert(&mut conn, &issuer)
-        .await
-        .unwrap();
-    let list_id = status_lists::provision_for_issuer(
-        &mut conn,
-        &issuer.id,
-        Some(SAMPLE_STATUS_ENTRY_ID),
-        Some(SAMPLE_STATUS_REGISTRY_URL),
-    )
-    .await
-    .unwrap();
-
-    // Make it dirty: a single bit-flip bumps committed_version.
-    status_lists::write_bit(
-        &mut conn,
-        &list_id,
-        StatusListIndex::try_from(0u32).unwrap(),
-        StatusValue::Revoked,
-    )
-    .await
-    .unwrap();
-    drop(conn);
-
-    let mut conn = pool.acquire().await.unwrap();
-    let acquired =
-        status_lists::acquire_next_dirty(&mut conn, Utc::now(), chrono::Duration::seconds(30))
-            .await
-            .unwrap()
-            .expect("dirty list is acquirable");
-    drop(conn);
-
-    (issuer, acquired, engine)
-}
 
 async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64, i64, i32) {
     sqlx::query_as::<_, (i64, i64, i32)>(
@@ -88,7 +35,12 @@ async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64, i64
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = seeded_environment(&pool, &secret_engine).await;
+    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+        &pool,
+        &secret_engine,
+        SAMPLE_STATUS_REGISTRY_URL,
+    )
+    .await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
@@ -122,7 +74,12 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = seeded_environment(&pool, &secret_engine).await;
+    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+        &pool,
+        &secret_engine,
+        SAMPLE_STATUS_REGISTRY_URL,
+    )
+    .await;
     let list_id = list.id.clone();
 
     let registry = MockStatusRegistry::new();
@@ -169,7 +126,12 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
 #[sqlx::test(migrations = "./migrations")]
 async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = seeded_environment(&pool, &secret_engine).await;
+    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+        &pool,
+        &secret_engine,
+        SAMPLE_STATUS_REGISTRY_URL,
+    )
+    .await;
     let list_id = list.id.clone();
 
     let registry = MockStatusRegistry::new();
@@ -208,7 +170,12 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = seeded_environment(&pool, &secret_engine).await;
+    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+        &pool,
+        &secret_engine,
+        SAMPLE_STATUS_REGISTRY_URL,
+    )
+    .await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 

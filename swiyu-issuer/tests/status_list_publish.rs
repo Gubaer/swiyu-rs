@@ -22,11 +22,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swiyu_core::statuslist::{StatusListJwtPayload, StatusValue};
-use swiyu_issuer::domain::{
-    DevSigningEngine, Issuer, KeyRole, SigningEngine, StatusList, StatusListId, StatusListIndex,
-    StatusValue as IssuerStatusValue, TenantId,
-};
-use swiyu_issuer::persistence::{self, status_lists};
+use swiyu_issuer::domain::StatusListId;
 use swiyu_issuer::worker::StatusListPublisher;
 use swiyu_registries::status::StatusRegistryClient;
 
@@ -45,57 +41,6 @@ fn registry_url_for(server: &MockServer) -> String {
     // every issued credential. Real deployments get this from the
     // `statusRegistryUrl` returned by `create_status_list_entry`.
     format!("{}/lists/{SAMPLE_STATUS_ENTRY_ID}.jwt", server.uri())
-}
-
-async fn seeded_environment(
-    pool: &PgPool,
-    server: &MockServer,
-    secret_engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
-) -> (Issuer, StatusList, DevSigningEngine) {
-    let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(pool, &tenant_id, secret_engine).await;
-
-    let engine = DevSigningEngine::new(pool.clone());
-    let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
-
-    let issuer = Issuer {
-        assertion_key_id: Some(assertion.id),
-        ..common::issuers::active(&tenant_id)
-    };
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::issuers::insert(&mut conn, &issuer)
-        .await
-        .unwrap();
-    let registry_url = registry_url_for(server);
-    let list_id = status_lists::provision_for_issuer(
-        &mut conn,
-        &issuer.id,
-        Some(SAMPLE_STATUS_ENTRY_ID),
-        Some(&registry_url),
-    )
-    .await
-    .unwrap();
-
-    // Make it dirty: a single bit-flip bumps committed_version.
-    status_lists::write_bit(
-        &mut conn,
-        &list_id,
-        StatusListIndex::try_from(0u32).unwrap(),
-        IssuerStatusValue::Revoked,
-    )
-    .await
-    .unwrap();
-    drop(conn);
-
-    let mut conn = pool.acquire().await.unwrap();
-    let acquired =
-        status_lists::acquire_next_dirty(&mut conn, Utc::now(), chrono::Duration::seconds(30))
-            .await
-            .unwrap()
-            .expect("dirty list is acquirable");
-    drop(conn);
-
-    (issuer, acquired, engine)
 }
 
 async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64, i32) {
@@ -120,7 +65,12 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
         .await;
 
     let secret_engine = common::oauth::test_engine();
-    let (issuer, list, engine) = seeded_environment(&pool, &server, &secret_engine).await;
+    let (issuer, list, engine) = common::status_lists::seed_dirty_environment(
+        &pool,
+        &secret_engine,
+        &registry_url_for(&server),
+    )
+    .await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
@@ -190,7 +140,12 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
         .await;
 
     let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = seeded_environment(&pool, &server, &secret_engine).await;
+    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+        &pool,
+        &secret_engine,
+        &registry_url_for(&server),
+    )
+    .await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
@@ -243,7 +198,12 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
         .await;
 
     let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = seeded_environment(&pool, &server, &secret_engine).await;
+    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+        &pool,
+        &secret_engine,
+        &registry_url_for(&server),
+    )
+    .await;
     let list_id = list.id.clone();
     let target = list.committed_version;
 
