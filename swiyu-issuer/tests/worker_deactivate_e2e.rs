@@ -14,7 +14,6 @@
 #[path = "common/mod.rs"]
 mod common;
 use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
-use common::identifier_registry::fixture_did;
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -27,36 +26,14 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
 use swiyu_issuer::domain::{
-    CredentialOffer, CredentialOfferState, DevSigningEngine, Issuer, IssuerId, IssuerState,
-    KeyRole, OperationTask, PreAuthCode, SigningEngine, TaskState, TaskType, TenantId,
+    CredentialOffer, CredentialOfferState, IssuerId, IssuerState, OperationTask, PreAuthCode,
+    TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::{credential_offers, issuers};
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-
-async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> (IssuerId, DevSigningEngine) {
-    let engine = DevSigningEngine::new(pool.clone());
-    let authorized = engine.generate_keypair(KeyRole::Authorized).await.unwrap();
-    let authentication = engine
-        .generate_keypair(KeyRole::Authentication)
-        .await
-        .unwrap();
-    let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
-
-    let issuer = Issuer {
-        did: fixture_did(),
-        authorized_key_id: Some(authorized.id),
-        authentication_key_id: Some(authentication.id),
-        assertion_key_id: Some(assertion.id),
-        created_at: now_micros(),
-        ..common::issuers::active(tenant_id)
-    };
-    let id = issuer.id.clone();
-    common::issuers::insert(pool, &issuer).await;
-    (id, engine)
-}
 
 async fn insert_pending_offer(
     pool: &PgPool,
@@ -115,7 +92,8 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
     common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
-    let (issuer_id, engine) = insert_active_issuer(&pool, &tenant_id).await;
+    let (issuer, engine) = common::issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
+    let issuer_id = issuer.id.clone();
 
     let pending_a = insert_pending_offer(&pool, &tenant_id, &issuer_id).await;
     let pending_b = insert_pending_offer(&pool, &tenant_id, &issuer_id).await;

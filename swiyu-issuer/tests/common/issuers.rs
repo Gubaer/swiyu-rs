@@ -3,7 +3,9 @@
 use chrono::Utc;
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
+use swiyu_issuer::domain::{
+    DevSigningEngine, Issuer, IssuerId, IssuerState, KeyPairId, KeyRole, SigningEngine, TenantId,
+};
 use swiyu_issuer::persistence;
 
 pub const SAMPLE_DID: &str = "did:tdw:example.com:sample-issuer";
@@ -68,6 +70,35 @@ pub async fn insert_active_with_keys(pool: &PgPool, tenant_id: &TenantId) -> Iss
 /// Insert an Active issuer with a caller-supplied `IssuerId` and a
 /// derived `did:tdw:dev.example.com:{id}`. Used by tests that need to
 /// match the issuer id later via a stable handle.
+/// Insert an Active issuer whose key triple is freshly minted by a
+/// fresh `DevSigningEngine`. Returns the issuer and the engine so the
+/// caller can drive the worker with the same engine instance the keys
+/// were generated under. Used by the e2e rotate-keys and deactivate
+/// saga tests.
+pub async fn insert_active_with_engine_keys(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+) -> (Issuer, DevSigningEngine) {
+    let engine = DevSigningEngine::new(pool.clone());
+    let authorized = engine.generate_keypair(KeyRole::Authorized).await.unwrap();
+    let authentication = engine
+        .generate_keypair(KeyRole::Authentication)
+        .await
+        .unwrap();
+    let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
+
+    let issuer = Issuer {
+        did: super::identifier_registry::fixture_did(),
+        authorized_key_id: Some(authorized.id),
+        authentication_key_id: Some(authentication.id),
+        assertion_key_id: Some(assertion.id),
+        created_at: super::time::now_micros(),
+        ..active(tenant_id)
+    };
+    insert(pool, &issuer).await;
+    (issuer, engine)
+}
+
 pub async fn insert_test_with_did(pool: &PgPool, tenant_id: &TenantId, issuer_id: &IssuerId) {
     let issuer = Issuer {
         id: issuer_id.clone(),

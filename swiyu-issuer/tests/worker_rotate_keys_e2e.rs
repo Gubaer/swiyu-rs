@@ -17,7 +17,6 @@
 #[path = "common/mod.rs"]
 mod common;
 use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
-use common::identifier_registry::fixture_did;
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -29,39 +28,13 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
 use swiyu_issuer::domain::{
-    DevSigningEngine, Issuer, IssuerId, IssuerState, KeyPairId, KeyRole, OperationTask,
-    SigningEngine, TaskState, TaskType, TenantId,
+    IssuerId, IssuerState, KeyPairId, OperationTask, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-
-/// Returns the inserted issuer (so callers can compare the post-
-/// saga key columns against the pre-saga ones) and the engine
-/// they were generated through (the same engine instance must run
-/// inside the worker so the saga can sign with those keys).
-async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> (Issuer, DevSigningEngine) {
-    let engine = DevSigningEngine::new(pool.clone());
-    let authorized = engine.generate_keypair(KeyRole::Authorized).await.unwrap();
-    let authentication = engine
-        .generate_keypair(KeyRole::Authentication)
-        .await
-        .unwrap();
-    let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
-
-    let issuer = Issuer {
-        did: fixture_did(),
-        authorized_key_id: Some(authorized.id),
-        authentication_key_id: Some(authentication.id),
-        assertion_key_id: Some(assertion.id),
-        created_at: now_micros(),
-        ..common::issuers::active(tenant_id)
-    };
-    common::issuers::insert(pool, &issuer).await;
-    (issuer, engine)
-}
 
 /// `roles` is the wire form: lowercase snake-case role names or
 /// the sentinel `"all"`.
@@ -91,7 +64,7 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
     common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
-    let (issuer, engine) = insert_active_issuer(&pool, &tenant_id).await;
+    let (issuer, engine) = common::issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
 
     let task = rotate_task(&tenant_id, issuer.id.clone(), vec!["all"]);
     let task_id = task.id.clone();
@@ -185,7 +158,7 @@ async fn rotates_only_authentication(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
     common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
-    let (issuer, engine) = insert_active_issuer(&pool, &tenant_id).await;
+    let (issuer, engine) = common::issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
     let original_authorized: KeyPairId = issuer.authorized_key_id.unwrap();
     let original_assertion: KeyPairId = issuer.assertion_key_id.unwrap();
 
