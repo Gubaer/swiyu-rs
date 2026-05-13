@@ -194,6 +194,7 @@ services:
   # because the host-side values in .env (localhost:5433,
   # localhost:8200) do not resolve inside the compose network.
   swiyu-issuer-mgmtapi:
+    image: swiyu-issuer-mgmtapi
     build:
       context: ..
       dockerfile: swiyu-issuer/Dockerfile
@@ -248,6 +249,7 @@ services:
   # dev; in production a reverse proxy in front of the two presents a
   # single ISSUER_BASE_URL.
   swiyu-issuer-oidcapi:
+    image: swiyu-issuer-oidcapi
     build:
       context: ..
       dockerfile: swiyu-issuer/Dockerfile
