@@ -14,12 +14,12 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::rng::ConstantRng;
 use common::time::now_micros;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use rand_core::RngCore;
 use serde_json::json;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
@@ -51,28 +51,6 @@ fn publish_path() -> String {
 
 fn registry_url_in_response() -> String {
     format!("https://reg.test/api/v1/did/{REGISTRY_UUID}/did.jsonl")
-}
-
-struct ConstantRng(u64);
-
-impl RngCore for ConstantRng {
-    fn next_u32(&mut self) -> u32 {
-        self.0 as u32
-    }
-    fn next_u64(&mut self) -> u64 {
-        self.0
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        for chunk in dest.chunks_mut(8) {
-            let bytes = self.0.to_le_bytes();
-            let take = chunk.len().min(bytes.len());
-            chunk[..take].copy_from_slice(&bytes[..take]);
-        }
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
 }
 
 async fn insert_tenant_with_oauth(

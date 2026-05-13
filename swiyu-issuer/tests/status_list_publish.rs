@@ -10,12 +10,12 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::rng::ConstantRng;
 
 use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use rand_core::RngCore;
 use sqlx::PgPool;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -54,28 +54,6 @@ fn registry_url_for(server: &MockServer) -> String {
     // every issued credential. Real deployments get this from the
     // `statusRegistryUrl` returned by `create_status_list_entry`.
     format!("{}/lists/{STATUS_ENTRY_ID}.jwt", server.uri())
-}
-
-struct ConstantRng(u64);
-
-impl RngCore for ConstantRng {
-    fn next_u32(&mut self) -> u32 {
-        self.0 as u32
-    }
-    fn next_u64(&mut self) -> u64 {
-        self.0
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        for chunk in dest.chunks_mut(8) {
-            let bytes = self.0.to_le_bytes();
-            let take = chunk.len().min(bytes.len());
-            chunk[..take].copy_from_slice(&bytes[..take]);
-        }
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
 }
 
 async fn seeded_environment(

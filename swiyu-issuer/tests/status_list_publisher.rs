@@ -6,11 +6,11 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::rng::ConstantRng;
 
 use std::sync::Arc;
 
 use chrono::Utc;
-use rand_core::RngCore;
 use sqlx::PgPool;
 use wiremock::MockServer;
 
@@ -28,28 +28,6 @@ use swiyu_registries::status::StatusListEntry;
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
 const STATUS_REGISTRY_URL: &str = "https://status-reg.test/lists/abc.jwt";
-
-struct ConstantRng(u64);
-
-impl RngCore for ConstantRng {
-    fn next_u32(&mut self) -> u32 {
-        self.0 as u32
-    }
-    fn next_u64(&mut self) -> u64 {
-        self.0
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        for chunk in dest.chunks_mut(8) {
-            let bytes = self.0.to_le_bytes();
-            let take = chunk.len().min(bytes.len());
-            chunk[..take].copy_from_slice(&bytes[..take]);
-        }
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
 
 async fn build_provider_setup(
     pool: &PgPool,

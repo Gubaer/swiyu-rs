@@ -6,7 +6,6 @@
 //! instance whose user has `CREATEDB` privilege.
 
 use chrono::Duration;
-use rand_core::RngCore;
 use serde_json::{Map, json};
 use sqlx::PgPool;
 
@@ -14,30 +13,9 @@ use swiyu_issuer::domain::{OperationTask, StepOutcome, StepResult, TaskState, Ta
 use swiyu_issuer::persistence::operation_tasks;
 use swiyu_issuer::worker::outcome;
 
-struct FixedRng(u64);
-
-impl RngCore for FixedRng {
-    fn next_u32(&mut self) -> u32 {
-        self.0 as u32
-    }
-    fn next_u64(&mut self) -> u64 {
-        self.0
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        for chunk in dest.chunks_mut(8) {
-            let bytes = self.0.to_le_bytes();
-            let take = chunk.len().min(bytes.len());
-            chunk[..take].copy_from_slice(&bytes[..take]);
-        }
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
-
 #[path = "common/mod.rs"]
 mod common;
+use common::rng::ConstantRng;
 use common::tenants::insert_test_tenant;
 use common::time::now_micros;
 
@@ -69,7 +47,7 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
     patch.insert("assigned_identifier".into(), json!("abc"));
 
     let mut conn = pool.acquire().await.unwrap();
-    let mut rng = FixedRng(0);
+    let mut rng = ConstantRng(0);
     outcome::apply(
         &mut conn,
         &mut task,
@@ -107,7 +85,7 @@ async fn retry_within_cap_schedules_next_attempt_without_bumping_attempts(pool: 
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
-    let mut rng = FixedRng(u64::MAX);
+    let mut rng = ConstantRng(u64::MAX);
     outcome::apply(
         &mut conn,
         &mut task,
@@ -147,7 +125,7 @@ async fn retry_past_cap_marks_failed(pool: PgPool) {
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
-    let mut rng = FixedRng(0);
+    let mut rng = ConstantRng(0);
     outcome::apply(
         &mut conn,
         &mut task,
@@ -181,7 +159,7 @@ async fn terminal_marks_failed_immediately(pool: PgPool) {
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
-    let mut rng = FixedRng(0);
+    let mut rng = ConstantRng(0);
     outcome::apply(
         &mut conn,
         &mut task,
