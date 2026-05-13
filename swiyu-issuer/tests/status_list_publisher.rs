@@ -13,11 +13,10 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use sqlx::PgPool;
-use wiremock::MockServer;
 
 use swiyu_issuer::domain::{
-    DevSigningEngine, Issuer, KeyRole, ProviderRegistry, SigningEngine, StatusList, StatusListId,
-    StatusListIndex, StatusValue, TenantId,
+    DevSigningEngine, Issuer, KeyRole, SigningEngine, StatusList, StatusListId, StatusListIndex,
+    StatusValue, TenantId,
 };
 use swiyu_issuer::persistence::{self, status_lists};
 use swiyu_issuer::worker::StatusListPublisher;
@@ -25,15 +24,6 @@ use swiyu_issuer::worker::test_support::{
     CreateStatusListEntryCall, MockStatusRegistry, UpdateStatusListEntryCall,
 };
 use swiyu_registries::status::StatusListEntry;
-
-async fn build_provider_setup(
-    pool: &PgPool,
-    engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
-) -> (MockServer, Arc<ProviderRegistry>) {
-    let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
-    (server, providers)
-}
 
 async fn seeded_environment(
     pool: &PgPool,
@@ -105,7 +95,8 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
     let registry = MockStatusRegistry::new();
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
-    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -140,7 +131,8 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
         body: "service unavailable".into(),
     });
 
-    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -186,7 +178,8 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
         body: "forbidden".into(),
     });
 
-    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -232,7 +225,8 @@ async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool)
     let registry = MockStatusRegistry::new();
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
-    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,

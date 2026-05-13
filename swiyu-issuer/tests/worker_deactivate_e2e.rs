@@ -25,28 +25,17 @@ use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
-use wiremock::MockServer;
 
 use swiyu_core::didlog::DIDLogEntry;
 use swiyu_issuer::domain::{
     CredentialOffer, CredentialOfferState, DevSigningEngine, Issuer, IssuerId, IssuerState,
-    KeyRole, OperationTask, PreAuthCode, ProviderRegistry, SigningEngine, TaskState, TaskType,
-    TenantId,
+    KeyRole, OperationTask, PreAuthCode, SigningEngine, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::{credential_offers, issuers};
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-
-async fn build_provider_setup(
-    pool: &PgPool,
-    engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
-) -> (MockServer, Arc<ProviderRegistry>) {
-    let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
-    (server, providers)
-}
 
 /// Builds a minimal but parseable did:tdw 0.3 genesis entry for
 /// `fixture_did()`. The `build_deactivation_entry` step only reads
@@ -162,7 +151,8 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     let task_id = task.id.clone();
     common::operation_tasks::insert(&pool, &task).await;
 
-    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),

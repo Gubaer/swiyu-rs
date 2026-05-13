@@ -14,14 +14,12 @@ use std::time::Duration;
 use serde_json::json;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
-use wiremock::MockServer;
 
 use swiyu_issuer::domain::signing_engine::test_support::{
     GenerateKeypairCall, MockSigningEngine, fixture_ed25519_pk, fixture_p256_pk,
 };
 use swiyu_issuer::domain::{
-    GeneratedKeyPair, IssuerId, KeyAlgorithm, OperationTask, ProviderRegistry, TaskState, TaskType,
-    TenantId,
+    GeneratedKeyPair, IssuerId, KeyAlgorithm, OperationTask, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::Worker;
@@ -73,15 +71,6 @@ fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
     }
 }
 
-async fn build_provider_setup(
-    pool: &PgPool,
-    engine: std::sync::Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
-) -> (MockServer, std::sync::Arc<ProviderRegistry>) {
-    let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
-    (server, providers)
-}
-
 fn pending_create_issuer_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
     OperationTask {
@@ -114,7 +103,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let status_registry = common::status_registry::with_one_ok();
 
     let (_token_server, providers) =
-        build_provider_setup(&pool, std::sync::Arc::clone(&secret_engine)).await;
+        common::oauth::build_provider_setup(&pool, std::sync::Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
@@ -162,7 +151,8 @@ async fn shutdown_exits_idle_loop(pool: PgPool) {
     let engine = MockSigningEngine::new();
     let status_registry = MockStatusRegistry::new();
     let secret_engine = common::oauth::test_engine();
-    let (_token_server, providers) = build_provider_setup(&pool, secret_engine).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, secret_engine).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),

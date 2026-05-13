@@ -23,8 +23,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swiyu_core::statuslist::{StatusListJwtPayload, StatusValue};
 use swiyu_issuer::domain::{
-    DevSigningEngine, Issuer, KeyRole, ProviderRegistry, SigningEngine, StatusList, StatusListId,
-    StatusListIndex, StatusValue as IssuerStatusValue, TenantId,
+    DevSigningEngine, Issuer, KeyRole, SigningEngine, StatusList, StatusListId, StatusListIndex,
+    StatusValue as IssuerStatusValue, TenantId,
 };
 use swiyu_issuer::persistence::{self, status_lists};
 use swiyu_issuer::worker::StatusListPublisher;
@@ -38,15 +38,6 @@ fn update_path() -> String {
 
 fn build_status_client(server: &MockServer) -> StatusRegistryClient {
     StatusRegistryClient::with_http(server.uri(), reqwest::Client::new())
-}
-
-async fn build_provider_setup(
-    pool: &PgPool,
-    engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
-) -> (MockServer, Arc<ProviderRegistry>) {
-    let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
-    (server, providers)
 }
 
 fn registry_url_for(server: &MockServer) -> String {
@@ -133,7 +124,8 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
     let list_id = list.id.clone();
     let target = list.committed_version;
 
-    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -202,7 +194,8 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
     let list_id = list.id.clone();
     let target = list.committed_version;
 
-    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -264,7 +257,8 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
         .await
         .unwrap();
 
-    let (_token_server, providers) = build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+    let (_token_server, providers) =
+        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,

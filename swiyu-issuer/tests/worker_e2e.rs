@@ -45,18 +45,6 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
 /// pointed at it. The returned `MockServer` must be kept alive for
 /// the duration of the worker run; once it drops, the bound port
 /// closes and any further `provider.get()` calls would fail.
-async fn build_provider_setup(
-    pool: &PgPool,
-    engine: std::sync::Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
-) -> (
-    MockServer,
-    std::sync::Arc<swiyu_issuer::domain::ProviderRegistry>,
-) {
-    let server = common::oauth::mock_token_endpoint().await;
-    let providers = common::oauth::build_provider_registry(pool.clone(), server.uri(), engine);
-    (server, providers)
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let server = MockServer::start().await;
@@ -88,7 +76,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
+        common::oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
     let worker = common::worker::build_real(pool.clone(), &server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
@@ -171,7 +159,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
     common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
+        common::oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
     // ConstantRng(0) → backoff_delay returns 0ms, so the retry fires on
     // the very next poll without waiting on real exponential backoff.
@@ -237,7 +225,7 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
     common::operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
+        common::oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
     let worker = common::worker::build_real(pool.clone(), &server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));

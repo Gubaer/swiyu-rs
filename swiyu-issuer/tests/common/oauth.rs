@@ -63,6 +63,19 @@ pub fn build_provider_registry(
     ))
 }
 
+/// Spawn a wiremock token endpoint and build a `ProviderRegistry`
+/// pointed at it. The returned `MockServer` must be kept alive for
+/// the duration of any worker run; once it drops, the bound port
+/// closes and further `provider.get()` calls would fail.
+pub async fn build_provider_setup(
+    pool: &PgPool,
+    engine: Arc<AnySecretEncryptionEngine>,
+) -> (MockServer, Arc<ProviderRegistry>) {
+    let server = mock_token_endpoint().await;
+    let providers = build_provider_registry(pool.clone(), server.uri(), engine);
+    (server, providers)
+}
+
 pub async fn insert_tenant_with_oauth_secrets(
     pool: &PgPool,
     tenant_id: &TenantId,
