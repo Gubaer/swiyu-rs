@@ -37,10 +37,6 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     }
 }
 
-/// Spawn a wiremock token endpoint and build a `ProviderRegistry`
-/// pointed at it. The returned `MockServer` must be kept alive for
-/// the duration of the worker run; once it drops, the bound port
-/// closes and any further `provider.get()` calls would fail.
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let server = MockServer::start().await;

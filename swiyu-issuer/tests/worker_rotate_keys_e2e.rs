@@ -35,8 +35,7 @@ use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
 
-/// `roles` is the wire form: lowercase snake-case role names or
-/// the sentinel `"all"`.
+// `roles` is the wire form: lowercase snake-case role names or the sentinel "all".
 fn rotate_task(tenant_id: &TenantId, issuer_id: IssuerId, roles: Vec<&str>) -> OperationTask {
     OperationTask {
         input: json!({"roles": roles}),

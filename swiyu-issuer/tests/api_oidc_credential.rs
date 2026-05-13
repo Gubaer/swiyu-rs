@@ -47,11 +47,8 @@ use common::app_state::SAMPLE_BASE_URL;
 use common::fixtures::SAMPLE_STATUS_ENTRY_ID;
 use common::tenants::insert_test_tenant;
 
-/// Constructs a fully-onboarded issuer: a real assertion key stored
-/// in the DevSigningEngine's table, plus a status_lists row carrying
-/// fixture registry coordinates (entry id + public URL). Mirrors the
-/// shape produced by the create_issuer worker once both
-/// `create_status_list_entry` and `provision_status_list` have run.
+// Mirrors the shape the create_issuer worker leaves behind once both
+// create_status_list_entry and provision_status_list have run.
 async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
     let engine = DevSigningEngine::new(pool.clone());
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
@@ -65,8 +62,6 @@ async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer 
     issuer
 }
 
-/// Inserts a `status_lists` row for `issuer` with fixture registry
-/// coordinates and re-points `issuers.current_status_list_id` at it.
 async fn provision_test_status_list(pool: &PgPool, issuer: &Issuer) {
     let mut conn = pool.acquire().await.unwrap();
     persistence::status_lists::provision_for_issuer(
@@ -128,9 +123,7 @@ async fn mint_nonce(pool: &PgPool, issuer: &Issuer, offer: &CredentialOffer) -> 
     secret
 }
 
-/// Builds a wallet proof JWT signed with a fresh Ed25519 keypair.
-/// The header carries the matching `jwk`; the JWS verifies cleanly
-/// against `verify_wallet_proof_signature` in the credential handler.
+// Ed25519 + jwk header; verifies against verify_wallet_proof_signature in the credential handler.
 fn build_proof_jwt(audience: &str, nonce: &str) -> String {
     use ed25519_dalek::{Signer, SigningKey};
     use rand_core::OsRng;

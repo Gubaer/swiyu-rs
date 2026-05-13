@@ -43,11 +43,8 @@ fn fixture_allocation() -> swiyu_registries::identifier::Allocation {
     }
 }
 
-/// Pre-loads every mock-engine and mock-registry response the
-/// happy-path saga consumes:
-/// - registry: 1 allocate, 1 publish.
-/// - engine: 3 generate, 9 get_public_key (one per role × three
-///   steps that build the entry), 3 sign.
+// Happy-path call counts: 1 allocate + 1 publish on the registry;
+// 3 generate + 9 get_public_key (role × entry-building step) + 3 sign on the engine.
 fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
     registry.enqueue_allocate(AllocateCall::Ok(fixture_allocation()));
     registry.enqueue_publish(PublishCall::Ok);

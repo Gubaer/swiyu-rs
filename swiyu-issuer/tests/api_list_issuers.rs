@@ -19,9 +19,6 @@ use common::app_state::build_state;
 use common::http::{get_request, read_body};
 use common::tenants::insert_test_tenant;
 
-/// Inserts an issuer in the BA-facing target shape (state set,
-/// legacy fields cleared) with an explicit `created_at` so list
-/// ordering is deterministic.
 async fn insert_target_shape_issuer(
     pool: &PgPool,
     tenant_id: &TenantId,
