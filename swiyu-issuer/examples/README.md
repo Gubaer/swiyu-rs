@@ -21,7 +21,7 @@ cargo run --example <name>
 All three:
 
 - mint a fresh `ApiToken` at startup (TTL 1 h) so orphaned rows expire on their own without manual cleanup,
-- own everything they create under the seeded development tenant (`4Mk7yK5pQR7sN3`, inserted by migration `20260430_000001_init.sql`),
+- resolve the dev tenant by looking up `DEV_TENANT_PARTNER_ID` (the contributor's `.env` value, materialised by the compose `bootstrap-dev-tenant` service via `swiyu-issuer-cli tenant bootstrap-dev-from-env`) and fail with a clear error if no such tenant exists,
 - print `=== smoke run PASSED ===` on success and exit non-zero on failure, so they're CI-friendly.
 
 ## Environment
@@ -32,6 +32,7 @@ The examples read configuration from the process environment. The repo's `.env.e
 |---------------------------|-----------|------------------------------------------|----------------------------------------------------------------------------------------|
 | `ISSUER_BASE_URL`         | yes       | all three                                | Management API base, e.g. `http://localhost:8080`. Also used as the OIDC `aud`.        |
 | `DATABASE_URL`            | yes       | all three                                | The smokes mint their own `ApiToken` directly in the DB; they don't go through an API. |
+| `DEV_TENANT_PARTNER_ID`   | yes       | all three                                | UUID of the contributor's SWIYU Business Partner; the smokes resolve the dev tenant by this value. Must match the row materialised by the compose `bootstrap-dev-tenant` service. |
 | `ISSUER_OIDC_HTTP_URL`    | no        | `credential_lifecycle_smoke`, `credential_status_lifecycle_smoke` | URL the OIDC binary listens on. Defaults to `http://localhost:8081`.                   |
 | `LIFECYCLE_TIMEOUT_SECS`  | no        | all three                                | Per-phase timeout. Default: 120.                                                       |
 | `LIFECYCLE_POLL_MS`       | no        | all three                                | Polling interval while waiting on async sagas. Default: 1000.                          |
