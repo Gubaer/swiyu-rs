@@ -18,23 +18,9 @@ use common::tenants::insert_test_tenant;
 use common::time::now_micros;
 
 fn fixture_task(tenant_id: TenantId) -> OperationTask {
-    let now = now_micros();
     OperationTask {
-        id: TaskId::generate(),
-        tenant_id,
-        task_type: TaskType::CreateIssuer,
-        state: TaskState::Pending,
-        step: None,
-        attempts: 0,
-        next_attempt_at: None,
-        error_code: None,
-        error_message: None,
         input: json!({"display_name": "Test Issuer"}),
-        state_data: json!({}),
-        result_issuer_id: None,
-        created_at: now,
-        updated_at: now,
-        completed_at: None,
+        ..common::operation_tasks::pending(&tenant_id, TaskType::CreateIssuer)
     }
 }
 

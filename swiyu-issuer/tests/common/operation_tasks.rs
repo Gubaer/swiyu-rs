@@ -1,19 +1,22 @@
 #![allow(dead_code)] // not every test module pulls in every helper
 
-use chrono::Utc;
 use serde_json::json;
 use sqlx::PgPool;
 
 use swiyu_issuer::domain::{OperationTask, TaskId, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence;
 
+use super::time::now_micros;
+
 /// Baseline `OperationTask` fixture for tests. Returns a Pending task
 /// with no `step`, no `attempts`, no `result_issuer_id`, and empty
-/// `input` / `state_data`. Callers override the fields they actually
-/// care about via struct-update syntax:
+/// `input` / `state_data`. Timestamps are truncated to Postgres
+/// microsecond precision so a roundtrip through the DB compares equal
+/// to what the caller passed in. Callers override the fields they
+/// actually care about via struct-update syntax:
 /// `OperationTask { state, input, ..common::operation_tasks::pending(t, ty) }`.
 pub fn pending(tenant_id: &TenantId, task_type: TaskType) -> OperationTask {
-    let now = Utc::now();
+    let now = now_micros();
     OperationTask {
         id: TaskId::generate(),
         tenant_id: tenant_id.clone(),
