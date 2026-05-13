@@ -22,7 +22,6 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swiyu_core::statuslist::{StatusListJwtPayload, StatusValue};
-use swiyu_issuer::domain::StatusListId;
 use swiyu_issuer::worker::StatusListPublisher;
 use swiyu_registries::status::StatusRegistryClient;
 
@@ -41,16 +40,6 @@ fn registry_url_for(server: &MockServer) -> String {
     // every issued credential. Real deployments get this from the
     // `statusRegistryUrl` returned by `create_status_list_entry`.
     format!("{}/lists/{SAMPLE_STATUS_ENTRY_ID}.jwt", server.uri())
-}
-
-async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64, i32) {
-    sqlx::query_as::<_, (i64, i32)>(
-        "SELECT published_version, publish_attempts FROM status_lists WHERE id = $1",
-    )
-    .bind(list_id.bare())
-    .fetch_one(pool)
-    .await
-    .unwrap()
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -85,7 +74,8 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
     );
     publisher.run_round(list).await.unwrap();
 
-    let (published, attempts) = fetch_publish_state(&pool, &list_id).await;
+    let (published, _committed, attempts) =
+        common::status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published as u64, target);
     assert_eq!(attempts, 0);
 
@@ -162,14 +152,16 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
     // Round 1 — 503, retry recorded.
     let err = publisher.run_round(list.clone()).await.unwrap_err();
     assert!(format!("{err}").contains("503"));
-    let (published, attempts) = fetch_publish_state(&pool, &list_id).await;
+    let (published, _committed, attempts) =
+        common::status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published, 0);
     assert_eq!(attempts, 1);
 
     // Round 2 — 204, success bumps published_version and resets
     // publish_attempts.
     publisher.run_round(list).await.unwrap();
-    let (published, attempts) = fetch_publish_state(&pool, &list_id).await;
+    let (published, _committed, attempts) =
+        common::status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published as u64, target);
     assert_eq!(attempts, 0);
 
@@ -228,7 +220,8 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
     );
     publisher.run_round(list).await.unwrap();
 
-    let (published, _attempts) = fetch_publish_state(&pool, &list_id).await;
+    let (published, _committed, _attempts) =
+        common::status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(
         published,
         (target as i64) + 5,

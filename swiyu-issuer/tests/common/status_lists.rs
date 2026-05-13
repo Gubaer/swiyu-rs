@@ -9,6 +9,20 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
+/// `(published_version, committed_version, publish_attempts)` for the
+/// given list id. Used by status-list publisher tests to assert on
+/// row state after a `run_round` call.
+pub async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64, i64, i32) {
+    sqlx::query_as::<_, (i64, i64, i32)>(
+        "SELECT published_version, committed_version, publish_attempts \
+         FROM status_lists WHERE id = $1",
+    )
+    .bind(list_id.bare())
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 pub async fn provision(pool: &PgPool, issuer_id: &IssuerId) -> StatusListId {
     let mut conn = pool.acquire().await.unwrap();
     persistence::status_lists::provision_for_issuer(&mut conn, issuer_id, None, None)

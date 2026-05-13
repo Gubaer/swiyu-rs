@@ -14,23 +14,11 @@ use std::sync::Arc;
 use chrono::Utc;
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::StatusListId;
 use swiyu_issuer::worker::StatusListPublisher;
 use swiyu_issuer::worker::test_support::{
     CreateStatusListEntryCall, MockStatusRegistry, UpdateStatusListEntryCall,
 };
 use swiyu_registries::status::StatusListEntry;
-
-async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64, i64, i32) {
-    sqlx::query_as::<_, (i64, i64, i32)>(
-        "SELECT published_version, committed_version, publish_attempts \
-         FROM status_lists WHERE id = $1",
-    )
-    .bind(list_id.bare())
-    .fetch_one(pool)
-    .await
-    .unwrap()
-}
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
@@ -58,7 +46,8 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
     );
     publisher.run_round(list).await.unwrap();
 
-    let (published, committed, attempts) = fetch_publish_state(&pool, &list_id).await;
+    let (published, committed, attempts) =
+        common::status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published as u64, target);
     assert_eq!(committed as u64, target);
     assert_eq!(attempts, 0);
@@ -100,7 +89,8 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
     let err = publisher.run_round(list).await.unwrap_err();
     assert!(format!("{err}").contains("503"));
 
-    let (published, _committed, attempts) = fetch_publish_state(&pool, &list_id).await;
+    let (published, _committed, attempts) =
+        common::status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published, 0, "published_version stays put on failure");
     assert_eq!(attempts, 1);
     let last_error: Option<String> =
@@ -152,7 +142,8 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
     let err = publisher.run_round(list).await.unwrap_err();
     assert!(format!("{err}").contains("403"));
 
-    let (published, _committed, attempts) = fetch_publish_state(&pool, &list_id).await;
+    let (published, _committed, attempts) =
+        common::status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published, 0);
     assert_eq!(attempts, 1);
     let next: Option<chrono::DateTime<Utc>> =
@@ -205,7 +196,8 @@ async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool)
     // no-op rather than an error.
     publisher.run_round(list).await.unwrap();
 
-    let (published, _committed, _attempts) = fetch_publish_state(&pool, &list_id).await;
+    let (published, _committed, _attempts) =
+        common::status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(
         published,
         (target as i64) + 5,
