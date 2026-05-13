@@ -84,11 +84,11 @@ mod tests {
 
     use swiyu_registries::common::AccessToken;
 
+    use crate::domain::StaticTokenProvider;
     use crate::domain::signing_engine::test_support::{GetPublicKeyCall, MockSigningEngine};
-    use crate::domain::{StaticTokenProvider, TenantId};
     use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{
-        AllocateCall, MockRegistry, PublishCall, fixture_kid, fixture_now,
+        AllocateCall, MockRegistry, PublishCall, fixture_kid, fixture_now, fixture_tenant,
     };
 
     fn fixture_state(didlog_published: bool) -> CreateIssuerStateData {
@@ -103,20 +103,6 @@ mod tests {
             didlog_published,
             status_list_registry_entry_id: None,
             status_list_registry_url: None,
-        }
-    }
-
-    fn fixture_tenant(partner_id: &str) -> Tenant {
-        Tenant {
-            id: TenantId::generate(),
-            partner_id: partner_id
-                .parse()
-                .expect("test partner_id must be a valid UUID"),
-            display_name: None,
-            description: None,
-            oauth_client_id: None,
-            oauth_client_secret: None,
-            oauth_refresh_token: None,
         }
     }
 

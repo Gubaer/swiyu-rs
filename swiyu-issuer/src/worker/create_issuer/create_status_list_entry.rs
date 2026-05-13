@@ -55,22 +55,10 @@ mod tests {
     use swiyu_registries::common::AccessToken;
     use swiyu_registries::status::StatusListEntry;
 
-    use crate::domain::{StaticTokenProvider, TenantId};
-    use crate::worker::test_support::{CreateStatusListEntryCall, MockStatusRegistry};
-
-    fn tenant_with_partner(partner_id: &str) -> Tenant {
-        Tenant {
-            id: TenantId::generate(),
-            partner_id: partner_id
-                .parse()
-                .expect("test partner_id must be a valid UUID"),
-            display_name: None,
-            description: None,
-            oauth_client_id: None,
-            oauth_client_secret: None,
-            oauth_refresh_token: None,
-        }
-    }
+    use crate::domain::StaticTokenProvider;
+    use crate::worker::test_support::{
+        CreateStatusListEntryCall, MockStatusRegistry, fixture_tenant,
+    };
 
     fn token_provider() -> StaticTokenProvider {
         StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
@@ -85,7 +73,7 @@ mod tests {
 
     #[tokio::test]
     async fn happy_path_records_entry_id_and_url() {
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockStatusRegistry::new();
         registry.enqueue_create(CreateStatusListEntryCall::Ok(fixture_entry()));
 
@@ -117,7 +105,7 @@ mod tests {
 
     #[tokio::test]
     async fn idempotent_on_resume_skips_registry_call() {
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockStatusRegistry::new();
         // No queued response; if the executor calls the registry the
         // mock will panic on the missing queue entry.
@@ -141,7 +129,7 @@ mod tests {
 
     #[tokio::test]
     async fn retryable_status_yields_retry() {
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockStatusRegistry::new();
         registry.enqueue_create(CreateStatusListEntryCall::HttpStatus {
             status: 503,
@@ -166,7 +154,7 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_status_yields_terminal() {
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockStatusRegistry::new();
         registry.enqueue_create(CreateStatusListEntryCall::HttpStatus {
             status: 403,

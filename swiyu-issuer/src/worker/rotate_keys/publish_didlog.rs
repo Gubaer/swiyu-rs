@@ -169,7 +169,7 @@ mod tests {
     use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{
         FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
-        fixture_kid, fixture_now, fixture_p256,
+        fixture_kid, fixture_now, fixture_p256, fixture_tenant,
     };
 
     fn fixture_issuer() -> Issuer {
@@ -201,20 +201,6 @@ mod tests {
             authorized: fixture_kid(0xAA),
             authentication: fixture_kid(0xBB),
             assertion: fixture_kid(0xCC),
-        }
-    }
-
-    fn fixture_tenant(partner_id: &str) -> Tenant {
-        Tenant {
-            id: TenantId::generate(),
-            partner_id: partner_id
-                .parse()
-                .expect("test partner_id must be a valid UUID"),
-            display_name: None,
-            description: None,
-            oauth_client_id: None,
-            oauth_client_secret: None,
-            oauth_refresh_token: None,
         }
     }
 

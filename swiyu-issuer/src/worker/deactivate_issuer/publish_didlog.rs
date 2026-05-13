@@ -158,7 +158,7 @@ mod tests {
     use crate::domain::{Issuer, IssuerId, IssuerState, StaticTokenProvider, TenantId};
     use crate::worker::test_support::{
         FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
-        fixture_kid, fixture_now, fixture_p256,
+        fixture_kid, fixture_now, fixture_p256, fixture_tenant,
     };
 
     fn fixture_issuer() -> Issuer {
@@ -180,20 +180,6 @@ mod tests {
 
     fn fixture_state(didlog_published: bool) -> DeactivateIssuerStateData {
         DeactivateIssuerStateData { didlog_published }
-    }
-
-    fn fixture_tenant(partner_id: &str) -> Tenant {
-        Tenant {
-            id: TenantId::generate(),
-            partner_id: partner_id
-                .parse()
-                .expect("test partner_id must be a valid UUID"),
-            display_name: None,
-            description: None,
-            oauth_client_id: None,
-            oauth_client_secret: None,
-            oauth_refresh_token: None,
-        }
     }
 
     fn token_provider() -> StaticTokenProvider {

@@ -49,22 +49,8 @@ mod tests {
     use swiyu_registries::common::AccessToken;
     use swiyu_registries::identifier::Allocation;
 
-    use crate::domain::{StaticTokenProvider, TenantId};
-    use crate::worker::test_support::{AllocateCall, MockRegistry};
-
-    fn tenant_with_partner(partner_id: &str) -> Tenant {
-        Tenant {
-            id: TenantId::generate(),
-            partner_id: partner_id
-                .parse()
-                .expect("test partner_id must be a valid UUID"),
-            display_name: None,
-            description: None,
-            oauth_client_id: None,
-            oauth_client_secret: None,
-            oauth_refresh_token: None,
-        }
-    }
+    use crate::domain::StaticTokenProvider;
+    use crate::worker::test_support::{AllocateCall, MockRegistry, fixture_tenant};
 
     fn token_provider() -> StaticTokenProvider {
         StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
@@ -79,7 +65,7 @@ mod tests {
 
     #[tokio::test]
     async fn happy_path_records_url_and_identifier() {
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_allocate(AllocateCall::Ok(fixture_allocation()));
 
@@ -112,7 +98,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_when_assigned_did_url_already_set() {
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         // Deliberately enqueue nothing — a second call would panic.
         let state = CreateIssuerStateData {
@@ -132,7 +118,7 @@ mod tests {
 
     #[tokio::test]
     async fn registry_5xx_is_retryable() {
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_allocate(AllocateCall::HttpStatus {
             status: 503,
@@ -161,7 +147,7 @@ mod tests {
         // refresh-and-retry through `with_refreshed_token`, so it is
         // no longer a single-call terminal failure. Any other 4xx
         // still maps straight to Terminal.
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_allocate(AllocateCall::HttpStatus {
             status: 400,
@@ -186,7 +172,7 @@ mod tests {
 
     #[tokio::test]
     async fn decode_error_is_terminal() {
-        let tenant = tenant_with_partner("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
+        let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_allocate(AllocateCall::Decode("malformed json".into()));
 
