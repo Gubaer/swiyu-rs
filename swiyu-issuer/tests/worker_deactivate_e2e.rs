@@ -14,7 +14,7 @@
 #[path = "common/mod.rs"]
 mod common;
 use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
-use common::identifier_registry::{SAMPLE_SCID, fixture_did};
+use common::identifier_registry::fixture_did;
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -26,7 +26,6 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
-use swiyu_core::didlog::DIDLogEntry;
 use swiyu_issuer::domain::{
     CredentialOffer, CredentialOfferState, DevSigningEngine, Issuer, IssuerId, IssuerState,
     KeyRole, OperationTask, PreAuthCode, SigningEngine, TaskState, TaskType, TenantId,
@@ -36,35 +35,6 @@ use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-
-/// Builds a minimal but parseable did:tdw 0.3 genesis entry for
-/// `fixture_did()`. The `build_deactivation_entry` step only reads
-/// `version_id`, `parameters.deactivated` (must not be true), and
-/// the embedded DID document (which must parse via
-/// `DIDDoc::try_from_jsonld`), so signature bytes and parameter
-/// fields beyond those are not required.
-fn fixture_genesis_entry() -> DIDLogEntry {
-    let value: Value = json!([
-        "1-Qmfixture-genesis-version-id",
-        "2026-04-01T00:00:00Z",
-        {
-            "method": "did:tdw:0.3",
-            "scid": SAMPLE_SCID,
-            "updateKeys": ["z6Mk-fixture-authorized"],
-            "portable": false,
-        },
-        {
-            "value": {
-                "@context": [
-                    "https://www.w3.org/ns/did/v1",
-                ],
-                "id": fixture_did(),
-            }
-        },
-        [],
-    ]);
-    DIDLogEntry::try_from(&value).expect("fixture genesis parses")
-}
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> (IssuerId, DevSigningEngine) {
     let engine = DevSigningEngine::new(pool.clone());
@@ -133,8 +103,12 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     let registry = Arc::new(MockRegistry::new());
     // Two fetch_log calls: one in build_deactivation_didlog, one in
     // publish_didlog.
-    registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
-    registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
+    registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
+        common::identifier_registry::fixture_genesis_entry(&["z6Mk-fixture-authorized"]),
+    ]));
+    registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
+        common::identifier_registry::fixture_genesis_entry(&["z6Mk-fixture-authorized"]),
+    ]));
     // One publish_log_entry call from publish_didlog.
     registry.enqueue_publish(PublishCall::Ok);
 
