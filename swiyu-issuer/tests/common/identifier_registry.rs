@@ -1,8 +1,15 @@
 #![allow(dead_code)] // not every test module pulls in this helper
 
+use swiyu_registries::identifier::IdentifierRegistryClient;
+use wiremock::MockServer;
+
 use super::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
 
 pub const SAMPLE_SCID: &str = "Qm-fixture-scid";
+
+pub fn build_client(server: &MockServer) -> IdentifierRegistryClient {
+    IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new())
+}
 
 pub fn allocate_path() -> String {
     format!("/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries")

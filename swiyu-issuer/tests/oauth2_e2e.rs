@@ -50,10 +50,6 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     }
 }
 
-fn build_registry_client(server: &MockServer) -> IdentifierRegistryClient {
-    IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new())
-}
-
 async fn wait_for_task_state(
     pool: &PgPool,
     tenant_id: &TenantId,
@@ -87,7 +83,7 @@ fn build_worker(
 ) -> Worker<IdentifierRegistryClient, DevSigningEngine, MockStatusRegistry> {
     Worker::new(
         pool.clone(),
-        build_registry_client(registry_server),
+        common::identifier_registry::build_client(registry_server),
         DevSigningEngine::new(pool),
         common::status_registry::with_one_ok(),
         providers,

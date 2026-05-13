@@ -30,7 +30,6 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence::{issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
-use swiyu_registries::identifier::IdentifierRegistryClient;
 
 fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
@@ -44,10 +43,6 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
         updated_at: now,
         ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
-}
-
-fn build_registry_client(server: &MockServer) -> IdentifierRegistryClient {
-    IdentifierRegistryClient::with_http(server.uri(), reqwest::Client::new())
 }
 
 /// Spawn a wiremock token endpoint and build a `ProviderRegistry`
@@ -127,7 +122,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
-        build_registry_client(&server),
+        common::identifier_registry::build_client(&server),
         DevSigningEngine::new(pool.clone()),
         common::status_registry::with_one_ok(),
         providers,
@@ -220,7 +215,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
     // the very next poll without waiting on real exponential backoff.
     let worker = Worker::new(
         pool.clone(),
-        build_registry_client(&server),
+        common::identifier_registry::build_client(&server),
         DevSigningEngine::new(pool.clone()),
         common::status_registry::with_one_ok(),
         providers,
@@ -292,7 +287,7 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
-        build_registry_client(&server),
+        common::identifier_registry::build_client(&server),
         DevSigningEngine::new(pool.clone()),
         common::status_registry::with_one_ok(),
         providers,
