@@ -13,6 +13,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::issued_credentials::SAMPLE_HOLDER_KEY_JKT;
 
 use chrono::{Duration, Utc};
 use sqlx::PgPool;
@@ -25,7 +26,6 @@ use swiyu_issuer::persistence::{PersistenceError, issued_credentials};
 
 const TEST_TENANT: &str = "4Mk7yK5pQR7sN3";
 const TEST_ISSUER: &str = "9hXq2vRtL8pK7f";
-const HOLDER_KEY_JKT_SAMPLE: &str = "abcDEF0123456789abcDEF0123456789abcDEF01234";
 const VCT_SAMPLE: &str = "urn:communal:local-residence-id";
 
 // Idempotent so `insert_status_list` and `insert_credential_offer`
@@ -108,7 +108,7 @@ async fn insert_issued_credential(
     .bind(issuer_id)
     .bind(offer_id.bare())
     .bind(VCT_SAMPLE)
-    .bind(HOLDER_KEY_JKT_SAMPLE)
+    .bind(SAMPLE_HOLDER_KEY_JKT)
     .bind(list_id.bare())
     .bind(list_index)
     .bind(vec![0u8; 32])
@@ -382,7 +382,7 @@ fn make_credential(
         issuer_id,
         offer_id,
         VCT_SAMPLE.to_string(),
-        HOLDER_KEY_JKT_SAMPLE.to_string(),
+        SAMPLE_HOLDER_KEY_JKT.to_string(),
         list_id,
         StatusListIndex::try_from(list_index).unwrap(),
         [0u8; INTEGRITY_HASH_LEN],

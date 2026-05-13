@@ -26,6 +26,7 @@ mod common;
 use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
 use common::http::{post_request_empty, read_body};
+use common::issued_credentials::SAMPLE_HOLDER_KEY_JKT;
 use common::tenants::insert_test_tenant;
 
 async fn seed_offer(pool: &PgPool, issuer: &Issuer) -> CredentialOffer {
@@ -57,7 +58,7 @@ async fn seed_credential(
         issuer.id.clone(),
         offer.id,
         "vc-test".into(),
-        "abcDEF0123456789abcDEF0123456789abcDEF01234".into(),
+        SAMPLE_HOLDER_KEY_JKT.into(),
         list_id.clone(),
         StatusListIndex::try_from(list_index).unwrap(),
         [0u8; INTEGRITY_HASH_LEN],
