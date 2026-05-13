@@ -108,8 +108,8 @@ mod tests {
     #[test]
     fn create_issuer_input_round_trips_through_json() {
         let input = CreateIssuerInput {
-            description: "Cantonal driver-licence issuer".into(),
-            display_name: "Canton Bern Verkehrsamt".into(),
+            description: "x".into(),
+            display_name: "X".into(),
         };
         let value = serde_json::to_value(&input).unwrap();
         let parsed: CreateIssuerInput = serde_json::from_value(value).unwrap();
