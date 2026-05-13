@@ -8,13 +8,8 @@ use swiyu_issuer::persistence;
 
 use super::time::now_micros;
 
-/// Baseline `OperationTask` fixture for tests. Returns a Pending task
-/// with no `step`, no `attempts`, no `result_issuer_id`, and empty
-/// `input` / `state_data`. Timestamps are truncated to Postgres
-/// microsecond precision so a roundtrip through the DB compares equal
-/// to what the caller passed in. Callers override the fields they
-/// actually care about via struct-update syntax:
-/// `OperationTask { state, input, ..common::operation_tasks::pending(t, ty) }`.
+// Timestamps come from now_micros so a Postgres roundtrip compares equal to the
+// caller-supplied value.
 pub fn pending(tenant_id: &TenantId, task_type: TaskType) -> OperationTask {
     let now = now_micros();
     OperationTask {

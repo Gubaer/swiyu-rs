@@ -2,8 +2,6 @@
 
 use rand_core::{Error, RngCore};
 
-/// Deterministic `RngCore` that yields the same `u64` for every call.
-/// Used in tests that need a predictable backoff or token sequence.
 pub struct ConstantRng(pub u64);
 
 impl RngCore for ConstantRng {

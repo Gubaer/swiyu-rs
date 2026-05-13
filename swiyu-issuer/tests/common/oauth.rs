@@ -63,10 +63,8 @@ pub fn build_provider_registry(
     ))
 }
 
-/// Spawn a wiremock token endpoint and build a `ProviderRegistry`
-/// pointed at it. The returned `MockServer` must be kept alive for
-/// the duration of any worker run; once it drops, the bound port
-/// closes and further `provider.get()` calls would fail.
+// Caller must keep the returned MockServer alive for the duration of any worker
+// run; dropping it closes the bound port and breaks subsequent provider.get() calls.
 pub async fn build_provider_setup(
     pool: &PgPool,
     engine: Arc<AnySecretEncryptionEngine>,

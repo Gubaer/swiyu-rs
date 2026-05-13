@@ -10,10 +10,6 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-/// Decode the slot at `idx` from a raw SWIYU-shaped status-list
-/// bitstring. Mirrors `persistence::status_lists::write_bit`'s
-/// in-place core call; used by tests that round-trip `write_bit`
-/// or assert on the bit a credential was assigned.
 pub fn read_slot(bitstring: &[u8], idx: StatusListIndex) -> StatusValue {
     CoreStatusList::from_raw(SWIYU_STATUS_LIST_BITS, bitstring.to_vec())
         .unwrap()
@@ -21,9 +17,6 @@ pub fn read_slot(bitstring: &[u8], idx: StatusListIndex) -> StatusValue {
         .unwrap()
 }
 
-/// `(published_version, committed_version, publish_attempts)` for the
-/// given list id. Used by status-list publisher tests to assert on
-/// row state after a `run_round` call.
 pub async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64, i64, i32) {
     sqlx::query_as::<_, (i64, i64, i32)>(
         "SELECT published_version, committed_version, publish_attempts \
@@ -42,11 +35,6 @@ pub async fn provision(pool: &PgPool, issuer_id: &IssuerId) -> StatusListId {
         .unwrap()
 }
 
-/// Insert a tenant with OAuth secrets, build an Active issuer with one
-/// assertion key, provision its first status list at the given
-/// `registry_url`, flip a single bit to mark the list dirty, then
-/// acquire the list. Returns the seeded issuer, the acquired list,
-/// and the signing engine used to mint the assertion key.
 pub async fn seed_dirty_environment(
     pool: &PgPool,
     secret_engine: &AnySecretEncryptionEngine,

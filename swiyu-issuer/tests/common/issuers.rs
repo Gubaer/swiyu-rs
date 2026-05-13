@@ -19,11 +19,6 @@ pub async fn insert(pool: &PgPool, issuer: &Issuer) {
         .unwrap();
 }
 
-/// Baseline `Issuer` fixture for tests. Returns an Active issuer with
-/// no SigningEngine keys, a generic DID, and the [`SAMPLE_DISPLAY_NAME`]
-/// / [`SAMPLE_DESCRIPTION`] strings. Callers override the fields they
-/// actually care about via struct-update syntax:
-/// `Issuer { did: "…".into(), ..common::issuers::active(t) }`.
 pub fn active(tenant_id: &TenantId) -> Issuer {
     Issuer {
         id: IssuerId::generate(),
@@ -41,11 +36,6 @@ pub fn active(tenant_id: &TenantId) -> Issuer {
     }
 }
 
-/// Like [`active`], but with the SigningEngine key triple populated by
-/// freshly generated [`KeyPairId`]s. Use when a test wants a fully-
-/// populated active issuer but does not care about the specific key
-/// identifiers (worker tests that need real engine-minted keys build
-/// their own literal instead).
 pub fn active_with_keys(tenant_id: &TenantId) -> Issuer {
     Issuer {
         authorized_key_id: Some(KeyPairId::generate()),
@@ -67,14 +57,6 @@ pub async fn insert_active_with_keys(pool: &PgPool, tenant_id: &TenantId) -> Iss
     issuer
 }
 
-/// Insert an Active issuer with a caller-supplied `IssuerId` and a
-/// derived `did:tdw:dev.example.com:{id}`. Used by tests that need to
-/// match the issuer id later via a stable handle.
-/// Insert an Active issuer whose key triple is freshly minted by a
-/// fresh `DevSigningEngine`. Returns the issuer and the engine so the
-/// caller can drive the worker with the same engine instance the keys
-/// were generated under. Used by the e2e rotate-keys and deactivate
-/// saga tests.
 pub async fn insert_active_with_engine_keys(
     pool: &PgPool,
     tenant_id: &TenantId,

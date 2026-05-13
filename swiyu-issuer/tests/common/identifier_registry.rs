@@ -31,14 +31,8 @@ pub fn fixture_did() -> String {
     format!("did:tdw:{SAMPLE_SCID}:reg.test:{SAMPLE_REGISTRY_UUID}")
 }
 
-/// A minimal but parseable did:tdw 0.3 genesis entry for
-/// [`fixture_did`]. `update_keys` is the `parameters.updateKeys` list
-/// — callers pass the verification key(s) the test expects the saga
-/// to see in the on-chain log. Used by deactivate and rotate-keys
-/// e2e tests; the saga steps only read `version_id`,
-/// `parameters.deactivated` / `parameters.update_keys`, and the
-/// embedded DID document, so signature bytes and other fields are
-/// left out.
+// Saga steps only read version_id, parameters.deactivated / .update_keys, and
+// the embedded DID document, so signature bytes and other fields are left out.
 pub fn fixture_genesis_entry(update_keys: &[&str]) -> DIDLogEntry {
     let value: Value = json!([
         "1-Qmfixture-genesis-version-id",
