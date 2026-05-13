@@ -93,38 +93,16 @@ pub async fn execute_build_rotation_didlog<R: RegistryFacade, S: SigningEngine>(
 mod tests {
     use super::*;
 
-    use chrono::DateTime;
-    use uuid::Uuid;
-
-    use swiyu_core::diddoc::public_keys::P256PublicKey;
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
     use crate::domain::signing_engine::test_support::{
-        GetPublicKeyCall, MockSigningEngine, SignCall,
+        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
     };
-    use crate::domain::{
-        Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature, TenantId,
-    };
+    use crate::domain::{Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId};
     use crate::worker::create_issuer::KeyTriple;
-    use crate::worker::test_support::{FetchLogCall, MockRegistry};
-
-    fn fixture_kid(byte: u8) -> KeyPairId {
-        let mut bytes = [byte; 16];
-        bytes[6] = (bytes[6] & 0x0F) | 0x40;
-        bytes[8] = (bytes[8] & 0x3F) | 0x80;
-        KeyPairId::from(Uuid::from_bytes(bytes))
-    }
-
-    fn fixture_p256() -> P256PublicKey {
-        P256PublicKey {
-            x: [1u8; 32],
-            y: [2u8; 32],
-        }
-    }
-
-    fn fixture_did() -> &'static str {
-        "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d"
-    }
+    use crate::worker::test_support::{
+        FetchLogCall, MockRegistry, fixture_did, fixture_kid, fixture_now, fixture_p256,
+    };
 
     fn fixture_issuer() -> Issuer {
         Issuer {
@@ -143,13 +121,8 @@ mod tests {
         }
     }
 
-    fn fixture_now() -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
-    }
-
-    /// Genesis entry whose `updateKeys` references an "old"
-    /// authorized multikey distinct from any new one. Stand-in for
-    /// the registry tail before the rotation we're about to publish.
+    // Stand-in for the registry tail before the rotation we're about to publish:
+    // the genesis entry's `updateKeys` references an "old" authorized multikey distinct from any new one.
     fn fixture_genesis_entry() -> DIDLogEntry {
         DIDLogEntry::new_genesis(
             &LogEntryFormat::TDW03,
@@ -165,23 +138,6 @@ mod tests {
         RawPublicKey {
             algorithm: KeyAlgorithm::Ed25519,
             bytes: vec![seed; 32],
-        }
-    }
-
-    fn fixture_p256_pk() -> RawPublicKey {
-        let mut bytes = vec![0x04];
-        bytes.extend_from_slice(&[0xcd; 32]);
-        bytes.extend_from_slice(&[0xef; 32]);
-        RawPublicKey {
-            algorithm: KeyAlgorithm::EcdsaP256,
-            bytes,
-        }
-    }
-
-    fn fixture_signature() -> Signature {
-        Signature {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0x42; 64],
         }
     }
 

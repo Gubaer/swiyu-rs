@@ -38,48 +38,24 @@ pub fn backoff_delay<R: RngCore + ?Sized>(attempts: u32, rng: &mut R) -> Duratio
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct FixedRng(u64);
-
-    impl RngCore for FixedRng {
-        fn next_u32(&mut self) -> u32 {
-            self.0 as u32
-        }
-
-        fn next_u64(&mut self) -> u64 {
-            self.0
-        }
-
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
-            for chunk in dest.chunks_mut(8) {
-                let bytes = self.0.to_le_bytes();
-                let take = chunk.len().min(bytes.len());
-                chunk[..take].copy_from_slice(&bytes[..take]);
-            }
-        }
-
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-            self.fill_bytes(dest);
-            Ok(())
-        }
-    }
+    use crate::worker::test_support::ConstantRng;
 
     #[test]
     fn first_attempt_caps_at_one_minute() {
-        let delay = backoff_delay(0, &mut FixedRng(u64::MAX));
+        let delay = backoff_delay(0, &mut ConstantRng(u64::MAX));
         assert!(delay <= Duration::from_secs(60), "{delay:?}");
     }
 
     #[test]
     fn second_attempt_caps_at_two_minutes() {
-        let delay = backoff_delay(1, &mut FixedRng(u64::MAX));
+        let delay = backoff_delay(1, &mut ConstantRng(u64::MAX));
         assert!(delay <= Duration::from_secs(120), "{delay:?}");
     }
 
     #[test]
     fn delay_caps_at_one_hour_for_high_attempt_counts() {
         for attempts in [6_u32, 10, 20, 100] {
-            let delay = backoff_delay(attempts, &mut FixedRng(u64::MAX));
+            let delay = backoff_delay(attempts, &mut ConstantRng(u64::MAX));
             assert!(
                 delay <= Duration::from_secs(3600),
                 "attempts={attempts}, delay={delay:?}",
@@ -91,7 +67,7 @@ mod tests {
     fn rng_zero_yields_zero_delay() {
         for attempts in 0_u32..10 {
             assert_eq!(
-                backoff_delay(attempts, &mut FixedRng(0)),
+                backoff_delay(attempts, &mut ConstantRng(0)),
                 Duration::from_millis(0),
                 "attempts={attempts}",
             );
@@ -103,7 +79,7 @@ mod tests {
         // attempts=0 -> ceiling = 60_000 ms; an RNG value strictly below
         // the ceiling falls through the modulo unchanged.
         assert_eq!(
-            backoff_delay(0, &mut FixedRng(30_001)),
+            backoff_delay(0, &mut ConstantRng(30_001)),
             Duration::from_millis(30_001),
         );
     }

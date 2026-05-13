@@ -37,20 +37,12 @@ pub async fn execute_build_initial_didlog<S: SigningEngine>(
 mod tests {
     use super::*;
 
-    use uuid::Uuid;
-
     use crate::domain::signing_engine::test_support::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_p256_pk,
     };
-    use crate::domain::{KeyAlgorithm, KeyPairId, RawPublicKey};
+    use crate::domain::{KeyAlgorithm, RawPublicKey};
     use crate::worker::create_issuer::KeyTriple;
-
-    fn fixture_kid(byte: u8) -> KeyPairId {
-        let mut bytes = [byte; 16];
-        bytes[6] = (bytes[6] & 0x0F) | 0x40;
-        bytes[8] = (bytes[8] & 0x3F) | 0x80;
-        KeyPairId::from(Uuid::from_bytes(bytes))
-    }
+    use crate::worker::test_support::{fixture_kid, fixture_now};
 
     fn fixture_state() -> CreateIssuerStateData {
         CreateIssuerStateData {
@@ -65,10 +57,6 @@ mod tests {
             status_list_registry_entry_id: None,
             status_list_registry_url: None,
         }
-    }
-
-    fn fixture_now() -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
     }
 
     #[tokio::test]

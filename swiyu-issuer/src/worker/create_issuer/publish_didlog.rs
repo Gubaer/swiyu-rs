@@ -83,19 +83,13 @@ mod tests {
     use super::*;
 
     use swiyu_registries::common::AccessToken;
-    use uuid::Uuid;
 
     use crate::domain::signing_engine::test_support::{GetPublicKeyCall, MockSigningEngine};
-    use crate::domain::{KeyPairId, StaticTokenProvider, TenantId};
+    use crate::domain::{StaticTokenProvider, TenantId};
     use crate::worker::create_issuer::KeyTriple;
-    use crate::worker::test_support::{AllocateCall, MockRegistry, PublishCall};
-
-    fn fixture_kid(byte: u8) -> KeyPairId {
-        let mut bytes = [byte; 16];
-        bytes[6] = (bytes[6] & 0x0F) | 0x40;
-        bytes[8] = (bytes[8] & 0x3F) | 0x80;
-        KeyPairId::from(Uuid::from_bytes(bytes))
-    }
+    use crate::worker::test_support::{
+        AllocateCall, MockRegistry, PublishCall, fixture_kid, fixture_now,
+    };
 
     fn fixture_state(didlog_published: bool) -> CreateIssuerStateData {
         CreateIssuerStateData {
@@ -124,10 +118,6 @@ mod tests {
             oauth_client_secret: None,
             oauth_refresh_token: None,
         }
-    }
-
-    fn fixture_now() -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
     }
 
     fn token_provider() -> StaticTokenProvider {

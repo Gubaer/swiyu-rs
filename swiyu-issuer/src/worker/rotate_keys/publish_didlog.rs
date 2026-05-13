@@ -157,46 +157,26 @@ mod tests {
     use super::*;
 
     use swiyu_registries::common::AccessToken;
-    use uuid::Uuid;
 
-    use swiyu_core::diddoc::public_keys::P256PublicKey;
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
     use crate::domain::signing_engine::test_support::{
-        GetPublicKeyCall, MockSigningEngine, SignCall,
+        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
     };
     use crate::domain::{
-        Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature,
-        StaticTokenProvider, TenantId,
+        Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, StaticTokenProvider, TenantId,
     };
     use crate::worker::create_issuer::KeyTriple;
-    use crate::worker::test_support::{FetchLogCall, MockRegistry, PublishCall};
-
-    fn fixture_kid(byte: u8) -> KeyPairId {
-        let mut bytes = [byte; 16];
-        bytes[6] = (bytes[6] & 0x0F) | 0x40;
-        bytes[8] = (bytes[8] & 0x3F) | 0x80;
-        KeyPairId::from(Uuid::from_bytes(bytes))
-    }
-
-    fn fixture_p256() -> P256PublicKey {
-        P256PublicKey {
-            x: [1u8; 32],
-            y: [2u8; 32],
-        }
-    }
-
-    const FIXTURE_UUID: &str = "fce949f2-32c4-4915-8b60-0ee2f705231d";
-
-    fn fixture_did() -> String {
-        format!("did:tdw:scid-placeholder:reg.example.com:{FIXTURE_UUID}")
-    }
+    use crate::worker::test_support::{
+        FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
+        fixture_kid, fixture_now, fixture_p256,
+    };
 
     fn fixture_issuer() -> Issuer {
         Issuer {
             id: IssuerId::generate(),
             tenant_id: TenantId::generate(),
-            did: fixture_did(),
+            did: fixture_did().into(),
             state: Some(IssuerState::Active),
             description: Some("fixture".into()),
             authorized_key_id: Some(fixture_kid(0x11)),
@@ -242,15 +222,11 @@ mod tests {
         StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
     }
 
-    fn fixture_now() -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
-    }
-
     fn fixture_genesis_entry() -> DIDLogEntry {
         DIDLogEntry::new_genesis(
             &LogEntryFormat::TDW03,
             "z6Mk-old-authorized",
-            &fixture_did(),
+            fixture_did(),
             &fixture_p256(),
             &fixture_p256(),
             "2026-05-04T12:00:00Z",
@@ -261,23 +237,6 @@ mod tests {
         RawPublicKey {
             algorithm: KeyAlgorithm::Ed25519,
             bytes: vec![seed; 32],
-        }
-    }
-
-    fn fixture_p256_pk() -> RawPublicKey {
-        let mut bytes = vec![0x04];
-        bytes.extend_from_slice(&[0xcd; 32]);
-        bytes.extend_from_slice(&[0xef; 32]);
-        RawPublicKey {
-            algorithm: KeyAlgorithm::EcdsaP256,
-            bytes,
-        }
-    }
-
-    fn fixture_signature() -> Signature {
-        Signature {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0x42; 64],
         }
     }
 
@@ -321,7 +280,7 @@ mod tests {
         assert_eq!(publishes.len(), 1);
         let (partner, identifier, entry) = &publishes[0];
         assert_eq!(partner, "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
-        assert_eq!(identifier, FIXTURE_UUID);
+        assert_eq!(identifier, FIXTURE_DID_REGISTRY_UUID);
         assert!(
             entry.starts_with('['),
             "entry is a JSON array (did:tdw 0.3 wire form)"
@@ -369,7 +328,7 @@ mod tests {
         let already_rotated_tail = DIDLogEntry::new_genesis(
             &LogEntryFormat::TDW03,
             &new_authorized_multikey,
-            &fixture_did(),
+            fixture_did(),
             &fixture_p256(),
             &fixture_p256(),
             "2026-05-04T12:00:00Z",

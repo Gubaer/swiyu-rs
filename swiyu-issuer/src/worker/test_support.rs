@@ -1,10 +1,10 @@
-//! In-memory test doubles for [`RegistryFacade`] and
-//! [`StatusRegistryFacade`].
-//!
-//! Used by the per-step worker tests so they stay fast and
-//! independent of Postgres or wiremock. Each mock records calls in
-//! order and replays a pre-configured queue of outcomes; tests fail
-//! loudly on under- or over-call.
+//! Shared worker test support: in-memory doubles for [`RegistryFacade`]
+//! and [`StatusRegistryFacade`], plus pure value fixtures
+//! (`fixture_kid`, `fixture_now`, `fixture_did`, `fixture_p256`) and a
+//! deterministic [`ConstantRng`] used across the per-step worker
+//! tests so they stay fast and independent of Postgres or wiremock.
+//! Each mock records calls in order and replays a pre-configured
+//! queue of outcomes; tests fail loudly on under- or over-call.
 //!
 //! The matching `MockSigningEngine` lives in
 //! [`crate::domain::signing_engine::test_support`] so the
@@ -13,14 +13,70 @@
 use std::future::Future;
 use std::sync::Mutex;
 
+use chrono::{DateTime, Utc};
+use rand_core::RngCore;
 use serde_json::Value;
 use swiyu_core::did::DID;
+use swiyu_core::diddoc::public_keys::P256PublicKey;
 use swiyu_core::didlog::DIDLogEntry;
 use swiyu_registries::common::{AccessToken, RegistryError};
 use swiyu_registries::identifier::Allocation;
 use swiyu_registries::status::StatusListEntry;
+use uuid::Uuid;
 
 use super::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
+use crate::domain::KeyPairId;
+
+pub fn fixture_kid(byte: u8) -> KeyPairId {
+    let mut bytes = [byte; 16];
+    // Force the UUIDv4 version/variant bits so the value parses as a valid UUID.
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    KeyPairId::from(Uuid::from_bytes(bytes))
+}
+
+// 1_768_982_400 = 2026-01-21T12:00:00Z.
+pub fn fixture_now() -> DateTime<Utc> {
+    DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
+}
+
+pub const FIXTURE_DID_REGISTRY_UUID: &str = "fce949f2-32c4-4915-8b60-0ee2f705231d";
+
+pub fn fixture_did() -> &'static str {
+    "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d"
+}
+
+pub fn fixture_p256() -> P256PublicKey {
+    P256PublicKey {
+        x: [1u8; 32],
+        y: [2u8; 32],
+    }
+}
+
+pub struct ConstantRng(pub u64);
+
+impl RngCore for ConstantRng {
+    fn next_u32(&mut self) -> u32 {
+        self.0 as u32
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        for chunk in dest.chunks_mut(8) {
+            let bytes = self.0.to_le_bytes();
+            let take = chunk.len().min(bytes.len());
+            chunk[..take].copy_from_slice(&bytes[..take]);
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AllocateCall {

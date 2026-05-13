@@ -82,42 +82,18 @@ pub async fn execute_build_deactivation_didlog<R: RegistryFacade, S: SigningEngi
 mod tests {
     use super::*;
 
-    use chrono::DateTime;
     use serde_json::Value;
-    use uuid::Uuid;
 
     use swiyu_core::diddoc::DIDDoc;
-    use swiyu_core::diddoc::public_keys::P256PublicKey;
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
     use crate::domain::signing_engine::test_support::{
-        GetPublicKeyCall, MockSigningEngine, SignCall,
+        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_signature,
     };
-    use crate::domain::{
-        Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, Signature, TenantId,
+    use crate::domain::{Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId};
+    use crate::worker::test_support::{
+        FetchLogCall, MockRegistry, fixture_did, fixture_kid, fixture_now, fixture_p256,
     };
-    use crate::worker::test_support::{FetchLogCall, MockRegistry};
-
-    fn fixture_kid(byte: u8) -> KeyPairId {
-        let mut bytes = [byte; 16];
-        bytes[6] = (bytes[6] & 0x0F) | 0x40;
-        bytes[8] = (bytes[8] & 0x3F) | 0x80;
-        KeyPairId::from(Uuid::from_bytes(bytes))
-    }
-
-    fn fixture_p256() -> P256PublicKey {
-        P256PublicKey {
-            x: [1u8; 32],
-            y: [2u8; 32],
-        }
-    }
-
-    fn fixture_did() -> &'static str {
-        // The trailing segment after the last colon is the registry
-        // identifier. Choose a fixture UUID so error messages are
-        // recognisable in failing tests.
-        "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d"
-    }
 
     fn fixture_issuer() -> Issuer {
         Issuer {
@@ -136,10 +112,6 @@ mod tests {
         }
     }
 
-    fn fixture_now() -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
-    }
-
     fn fixture_genesis_entry() -> DIDLogEntry {
         // A genesis entry whose did_doc_state is `Value` and whose
         // parameters do not carry `deactivated: true`. Stand-in for
@@ -152,20 +124,6 @@ mod tests {
             &fixture_p256(),
             "2026-05-04T12:00:00Z",
         )
-    }
-
-    fn fixture_ed25519_pk() -> RawPublicKey {
-        RawPublicKey {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0xab; 32],
-        }
-    }
-
-    fn fixture_signature() -> Signature {
-        Signature {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0x42; 64],
-        }
     }
 
     fn engine_for_happy_path() -> MockSigningEngine {

@@ -103,19 +103,12 @@ mod tests {
     use super::*;
 
     use chrono::Utc;
-    use uuid::Uuid;
 
     use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
     use crate::domain::{
-        GeneratedKeyPair, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey, TenantId,
+        GeneratedKeyPair, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId,
     };
-
-    fn fixture_kid(byte: u8) -> KeyPairId {
-        let mut bytes = [byte; 16];
-        bytes[6] = (bytes[6] & 0x0F) | 0x40;
-        bytes[8] = (bytes[8] & 0x3F) | 0x80;
-        KeyPairId::from(Uuid::from_bytes(bytes))
-    }
+    use crate::worker::test_support::fixture_kid;
 
     fn fixture_generated(byte: u8, algorithm: KeyAlgorithm, pk_len: usize) -> GeneratedKeyPair {
         GeneratedKeyPair {
