@@ -7,7 +7,7 @@
 use chrono::Utc;
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, StepOutcome, TenantId};
+use swiyu_issuer::domain::{IssuerId, IssuerState, KeyPairId, StepOutcome, TenantId};
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::create_issuer::KeyTriple;
 use swiyu_issuer::worker::deactivate_issuer::mark_deactivated::execute_mark_deactivated;
@@ -17,12 +17,6 @@ use swiyu_issuer::worker::rotate_keys::swap_keys::execute_swap_keys;
 #[path = "common/mod.rs"]
 mod common;
 use common::tenants::insert_test_tenant;
-
-async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
-    let issuer = common::issuers::active_with_keys(tenant_id);
-    common::issuers::insert(pool, &issuer).await;
-    issuer
-}
 
 fn state_with_triple(triple: KeyTriple) -> RotateKeysStateData {
     RotateKeysStateData {
@@ -35,7 +29,7 @@ fn state_with_triple(triple: KeyTriple) -> RotateKeysStateData {
 async fn happy_path_swaps_all_three_keys(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id).await;
 
     let new_triple = KeyTriple {
         authorized: KeyPairId::generate(),
@@ -70,7 +64,7 @@ async fn happy_path_swaps_only_one_role(pool: PgPool) {
     // change, and the row ends up exactly as requested.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id).await;
 
     let new_authentication = KeyPairId::generate();
     let new_triple = KeyTriple {
@@ -97,7 +91,7 @@ async fn happy_path_swaps_only_one_role(pool: PgPool) {
 async fn idempotent_rerun_after_already_swapped(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id).await;
 
     let new_triple = KeyTriple {
         authorized: KeyPairId::generate(),
@@ -123,7 +117,7 @@ async fn idempotent_rerun_after_already_swapped(pool: PgPool) {
 async fn missing_new_key_triple_is_terminal(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id).await;
 
     let state = RotateKeysStateData::default();
     let outcome = execute_swap_keys(&pool, &tenant_id, &issuer.id, &state).await;
@@ -164,7 +158,7 @@ async fn cross_tenant_caller_is_terminal(pool: PgPool) {
     let tenant_other = TenantId::generate();
     insert_test_tenant(&pool, &tenant_owner).await;
     insert_test_tenant(&pool, &tenant_other).await;
-    let issuer = insert_active_issuer(&pool, &tenant_owner).await;
+    let issuer = common::issuers::insert_active_with_keys(&pool, &tenant_owner).await;
 
     let new_triple = KeyTriple {
         authorized: KeyPairId::generate(),
@@ -196,7 +190,7 @@ async fn deactivated_issuer_is_terminal(pool: PgPool) {
     // in swap_key_triple rejects the swap.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id).await;
     execute_mark_deactivated(&pool, &tenant_id, &issuer.id, Utc::now()).await;
 
     let new_triple = KeyTriple {

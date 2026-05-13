@@ -28,12 +28,6 @@ use common::app_state::build_state;
 use common::http::{get_request, read_body};
 use common::tenants::insert_test_tenant;
 
-async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
-    let issuer = common::issuers::active(tenant_id);
-    common::issuers::insert(pool, &issuer).await;
-    issuer
-}
-
 async fn seed_offer(pool: &PgPool, issuer: &Issuer, vct: &str) -> CredentialOffer {
     let offer = CredentialOffer::new(
         issuer.tenant_id.clone(),
@@ -95,7 +89,7 @@ async fn get_returns_credential_with_full_shape(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
     let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
@@ -138,7 +132,7 @@ async fn get_marks_past_expires_at_as_expired(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
     let list_id = common::status_lists::provision(&pool, &issuer.id).await;
 
     // Insert directly so we can backdate `expires_at` past now.
@@ -188,7 +182,7 @@ async fn get_returns_404_for_unknown_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
 
     let app = router(build_state(pool.clone()));
@@ -214,8 +208,8 @@ async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_a = insert_active_issuer(&pool, &tenant_id).await;
-    let issuer_b = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer_a = common::issuers::insert_active(&pool, &tenant_id).await;
+    let issuer_b = common::issuers::insert_active(&pool, &tenant_id).await;
     let list_id = common::status_lists::provision(&pool, &issuer_a.id).await;
     let credential = seed_credential(
         &pool,
@@ -247,7 +241,7 @@ async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
 async fn get_is_tenant_scoped(pool: PgPool) {
     let tenant_a = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
-    let issuer = insert_active_issuer(&pool, &tenant_a).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_a).await;
     let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
@@ -303,7 +297,7 @@ async fn list_returns_credentials_newest_first(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
     let list_id = common::status_lists::provision(&pool, &issuer.id).await;
 
     let now = Utc::now();
@@ -350,8 +344,8 @@ async fn list_returns_only_url_issuers_credentials(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_a = insert_active_issuer(&pool, &tenant_id).await;
-    let issuer_b = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer_a = common::issuers::insert_active(&pool, &tenant_id).await;
+    let issuer_b = common::issuers::insert_active(&pool, &tenant_id).await;
     let list_a = common::status_lists::provision(&pool, &issuer_a.id).await;
     let list_b = common::status_lists::provision(&pool, &issuer_b.id).await;
     let cred_a = seed_credential(
@@ -395,7 +389,7 @@ async fn list_filters_by_state(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
     let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let active = seed_credential(
         &pool,
@@ -442,7 +436,7 @@ async fn list_filters_by_vct(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
     let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     seed_credential(
         &pool,
@@ -488,7 +482,7 @@ async fn list_paginates_with_cursor(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
     let list_id = common::status_lists::provision(&pool, &issuer.id).await;
 
     let now = Utc::now();
@@ -555,7 +549,7 @@ async fn list_for_other_tenants_issuer_returns_404(pool: PgPool) {
     // gets a 404 — the URL names an issuer they do not own.
     let tenant_a = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
-    let issuer = insert_active_issuer(&pool, &tenant_a).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_a).await;
     let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     seed_credential(
         &pool,
@@ -606,7 +600,7 @@ async fn list_rejects_invalid_state_filter(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
 
     let app = router(build_state(pool.clone()));
     let response = app
@@ -627,7 +621,7 @@ async fn list_rejects_out_of_range_limit(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = insert_active_issuer(&pool, &tenant_id).await;
+    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
 
     let app = router(build_state(pool.clone()));
     let response = app

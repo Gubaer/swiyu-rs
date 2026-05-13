@@ -52,3 +52,15 @@ pub fn active_with_keys(tenant_id: &TenantId) -> Issuer {
         ..active(tenant_id)
     }
 }
+
+pub async fn insert_active(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
+    let issuer = active(tenant_id);
+    insert(pool, &issuer).await;
+    issuer
+}
+
+pub async fn insert_active_with_keys(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
+    let issuer = active_with_keys(tenant_id);
+    insert(pool, &issuer).await;
+    issuer
+}
