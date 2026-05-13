@@ -23,15 +23,8 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence::tenant_secret_keys::oauth2_client_secret_key_name;
 use swiyu_issuer::persistence::tenants;
 
+use common::oauth::read_refresh_token;
 use common::tenants::insert_test_tenant;
-
-async fn read_refresh_token(
-    pool: &PgPool,
-    tenant_id: &TenantId,
-    engine: &AnySecretEncryptionEngine,
-) -> Option<String> {
-    common::oauth::read_refresh_token(pool, tenant_id, engine).await
-}
 
 async fn read_client_credentials(
     pool: &PgPool,
