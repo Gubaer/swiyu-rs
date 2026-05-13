@@ -5,7 +5,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::keypairs::fixture_kid;
+use common::keypairs::{fixture_ed25519_pk, fixture_kid, fixture_p256_pk, fixture_signature};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -20,38 +20,14 @@ use swiyu_issuer::domain::signing_engine::test_support::{
     GenerateKeypairCall, GetPublicKeyCall, MockSigningEngine, SignCall,
 };
 use swiyu_issuer::domain::{
-    GeneratedKeyPair, IssuerId, KeyAlgorithm, OperationTask, ProviderRegistry, RawPublicKey,
-    Signature, TaskState, TaskType, TenantId,
+    GeneratedKeyPair, IssuerId, KeyAlgorithm, OperationTask, ProviderRegistry, TaskState, TaskType,
+    TenantId,
 };
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     AllocateCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-
-fn fixture_ed25519_pk() -> RawPublicKey {
-    RawPublicKey {
-        algorithm: KeyAlgorithm::Ed25519,
-        bytes: vec![0xab; 32],
-    }
-}
-
-fn fixture_p256_pk() -> RawPublicKey {
-    let mut bytes = vec![0x04];
-    bytes.extend_from_slice(&[0xcd; 32]);
-    bytes.extend_from_slice(&[0xef; 32]);
-    RawPublicKey {
-        algorithm: KeyAlgorithm::EcdsaP256,
-        bytes,
-    }
-}
-
-fn fixture_signature() -> Signature {
-    Signature {
-        algorithm: KeyAlgorithm::Ed25519,
-        bytes: vec![0x42; 64],
-    }
-}
 
 fn fixture_keypair(byte: u8, algorithm: KeyAlgorithm) -> GeneratedKeyPair {
     GeneratedKeyPair {

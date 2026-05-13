@@ -9,9 +9,7 @@ use sqlx::PgPool;
 use swiyu_issuer::domain::signing_engine::test_support::{
     GetPublicKeyCall, MockSigningEngine, SignCall,
 };
-use swiyu_issuer::domain::{
-    Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, Signature, StepOutcome, TenantId,
-};
+use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, StepOutcome, TenantId};
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, KeyTriple, execute_persist_issuer,
@@ -39,30 +37,6 @@ fn fixture_state() -> CreateIssuerStateData {
     }
 }
 
-fn fixture_ed25519_pk() -> RawPublicKey {
-    RawPublicKey {
-        algorithm: KeyAlgorithm::Ed25519,
-        bytes: vec![0xab; 32],
-    }
-}
-
-fn fixture_p256_pk() -> RawPublicKey {
-    let mut bytes = vec![0x04];
-    bytes.extend_from_slice(&[0xcd; 32]);
-    bytes.extend_from_slice(&[0xef; 32]);
-    RawPublicKey {
-        algorithm: KeyAlgorithm::EcdsaP256,
-        bytes,
-    }
-}
-
-fn fixture_signature() -> Signature {
-    Signature {
-        algorithm: KeyAlgorithm::Ed25519,
-        bytes: vec![0x42; 64],
-    }
-}
-
 fn engine_for_happy_path() -> MockSigningEngine {
     let engine = MockSigningEngine::new();
     engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
@@ -74,7 +48,7 @@ fn engine_for_happy_path() -> MockSigningEngine {
 
 #[path = "common/mod.rs"]
 mod common;
-use common::keypairs::fixture_kid;
+use common::keypairs::{fixture_ed25519_pk, fixture_kid, fixture_p256_pk, fixture_signature};
 use common::tenants::insert_test_tenant;
 use common::time::fixture_now;
 
