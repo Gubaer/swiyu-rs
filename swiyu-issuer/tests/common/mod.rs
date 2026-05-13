@@ -3,7 +3,6 @@ pub mod app_state;
 pub mod credential_offers;
 pub mod fixtures;
 pub mod http;
-pub mod issued_credentials;
 pub mod issuers;
 pub mod oauth;
 pub mod operation_tasks;

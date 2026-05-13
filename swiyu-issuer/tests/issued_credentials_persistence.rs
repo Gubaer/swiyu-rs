@@ -13,7 +13,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::issued_credentials::SAMPLE_HOLDER_KEY_JKT;
+use common::fixtures::SAMPLE_HOLDER_KEY_JKT;
 
 use chrono::{Duration, Utc};
 use sqlx::PgPool;

@@ -33,7 +33,7 @@ fn build_state(pool: PgPool) -> AppState {
     AppState::new(
         pool,
         Config {
-            issuer_base_url: TEST_BASE_URL.into(),
+            issuer_base_url: SAMPLE_BASE_URL.into(),
             access_token_ttl: Duration::seconds(300),
             c_nonce_ttl: Duration::seconds(300),
         },
@@ -43,7 +43,7 @@ fn build_state(pool: PgPool) -> AppState {
 
 #[path = "common/mod.rs"]
 mod common;
-use common::app_state::TEST_BASE_URL;
+use common::app_state::SAMPLE_BASE_URL;
 use common::fixtures::SAMPLE_STATUS_ENTRY_ID;
 use common::tenants::insert_test_tenant;
 
@@ -200,7 +200,7 @@ async fn happy_path_returns_es256_signed_credential(pool: PgPool) {
     let nonce = mint_nonce(&pool, &issuer, &offer).await;
 
     let app = router(build_state(pool.clone()));
-    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let aud = format!("{SAMPLE_BASE_URL}/i/{}", issuer.id.bare());
     let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
 
     let response = app
@@ -259,7 +259,7 @@ async fn issuer_without_assertion_key_returns_invalid_request(pool: PgPool) {
     let nonce = mint_nonce(&pool, &issuer, &offer).await;
 
     let app = router(build_state(pool.clone()));
-    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let aud = format!("{SAMPLE_BASE_URL}/i/{}", issuer.id.bare());
     let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
 
     let response = app
@@ -284,7 +284,7 @@ async fn unknown_bearer_returns_invalid_token(pool: PgPool) {
     // No access token row inserted — the bearer is unknown.
 
     let app = router(build_state(pool.clone()));
-    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let aud = format!("{SAMPLE_BASE_URL}/i/{}", issuer.id.bare());
     let proof_jwt = build_proof_jwt(&aud, "any-nonce");
 
     let response = app
@@ -315,7 +315,7 @@ async fn issuance_inserts_issued_credential_row(pool: PgPool) {
     let nonce = mint_nonce(&pool, &issuer, &offer).await;
 
     let app = router(build_state(pool.clone()));
-    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let aud = format!("{SAMPLE_BASE_URL}/i/{}", issuer.id.bare());
     let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
 
     let response = app
@@ -357,7 +357,7 @@ async fn issuance_bumps_allocated_count_and_committed_version(pool: PgPool) {
     let nonce = mint_nonce(&pool, &issuer, &offer).await;
 
     let app = router(build_state(pool.clone()));
-    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let aud = format!("{SAMPLE_BASE_URL}/i/{}", issuer.id.bare());
     let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
     let response = app
         .oneshot(post_credential(
@@ -409,7 +409,7 @@ async fn issuance_fails_when_issuer_has_no_status_list(pool: PgPool) {
     let nonce = mint_nonce(&pool, &issuer, &offer).await;
 
     let app = router(build_state(pool.clone()));
-    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let aud = format!("{SAMPLE_BASE_URL}/i/{}", issuer.id.bare());
     let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
     let response = app
         .oneshot(post_credential(
@@ -435,7 +435,7 @@ async fn credential_payload_carries_status_claim(pool: PgPool) {
     let nonce = mint_nonce(&pool, &issuer, &offer).await;
 
     let app = router(build_state(pool.clone()));
-    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let aud = format!("{SAMPLE_BASE_URL}/i/{}", issuer.id.bare());
     let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
 
     let response = app
@@ -478,7 +478,7 @@ async fn vct_mismatch_with_offer_is_invalid_credential_request(pool: PgPool) {
     let nonce = mint_nonce(&pool, &issuer, &offer).await;
 
     let app = router(build_state(pool.clone()));
-    let aud = format!("{TEST_BASE_URL}/i/{}", issuer.id.bare());
+    let aud = format!("{SAMPLE_BASE_URL}/i/{}", issuer.id.bare());
     let proof_jwt = build_proof_jwt(&aud, nonce.as_str());
 
     let response = app

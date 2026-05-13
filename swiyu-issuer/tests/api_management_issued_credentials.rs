@@ -25,8 +25,8 @@ use swiyu_issuer::persistence;
 mod common;
 use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
+use common::fixtures::SAMPLE_HOLDER_KEY_JKT;
 use common::http::{post_request_empty, read_body};
-use common::issued_credentials::SAMPLE_HOLDER_KEY_JKT;
 use common::tenants::insert_test_tenant;
 
 async fn seed_offer(pool: &PgPool, issuer: &Issuer) -> CredentialOffer {
