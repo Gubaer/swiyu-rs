@@ -24,6 +24,7 @@ use swiyu_registries::identifier::Allocation;
 use swiyu_registries::status::StatusListEntry;
 use uuid::Uuid;
 
+use super::create_issuer::KeyTriple;
 use super::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 use crate::domain::{
     GeneratedKeyPair, KeyAlgorithm, KeyPairId, RawPublicKey, StaticTokenProvider, Tenant, TenantId,
@@ -46,6 +47,14 @@ pub const FIXTURE_DID_REGISTRY_UUID: &str = "fce949f2-32c4-4915-8b60-0ee2f705231
 
 pub fn fixture_did() -> &'static str {
     "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d"
+}
+
+pub fn fixture_rotated_triple() -> KeyTriple {
+    KeyTriple {
+        authorized: fixture_kid(0xAA),
+        authentication: fixture_kid(0xBB),
+        assertion: fixture_kid(0xCC),
+    }
 }
 
 pub fn fixture_keypair(byte: u8, algorithm: KeyAlgorithm, pk_len: usize) -> GeneratedKeyPair {

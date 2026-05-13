@@ -162,10 +162,10 @@ mod tests {
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
     };
     use crate::domain::{Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId};
-    use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{
         FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
-        fixture_kid, fixture_now, fixture_p256, fixture_tenant, fixture_token_provider,
+        fixture_kid, fixture_now, fixture_p256, fixture_rotated_triple, fixture_tenant,
+        fixture_token_provider,
     };
 
     fn fixture_issuer() -> Issuer {
@@ -187,16 +187,8 @@ mod tests {
 
     fn fixture_state(didlog_published: bool, with_triple: bool) -> RotateKeysStateData {
         RotateKeysStateData {
-            new_key_triple: with_triple.then(new_triple_all_three),
+            new_key_triple: with_triple.then(fixture_rotated_triple),
             didlog_published,
-        }
-    }
-
-    fn new_triple_all_three() -> KeyTriple {
-        KeyTriple {
-            authorized: fixture_kid(0xAA),
-            authentication: fixture_kid(0xBB),
-            assertion: fixture_kid(0xCC),
         }
     }
 

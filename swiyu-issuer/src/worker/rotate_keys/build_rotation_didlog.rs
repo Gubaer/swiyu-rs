@@ -99,9 +99,9 @@ mod tests {
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
     };
     use crate::domain::{Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId};
-    use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{
         FetchLogCall, MockRegistry, fixture_did, fixture_kid, fixture_now, fixture_p256,
+        fixture_rotated_triple,
     };
 
     fn fixture_issuer() -> Issuer {
@@ -141,14 +141,6 @@ mod tests {
         }
     }
 
-    fn new_triple_all_three() -> KeyTriple {
-        KeyTriple {
-            authorized: fixture_kid(0xAA),
-            authentication: fixture_kid(0xBB),
-            assertion: fixture_kid(0xCC),
-        }
-    }
-
     /// Engine queue for a happy-path single-role rotation of
     /// authorized: the four `get_public_key` calls (new authorized,
     /// new authentication, new assertion, outgoing authorized for
@@ -175,7 +167,7 @@ mod tests {
         let engine = engine_for_happy_path();
 
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
         let outcome = execute_build_rotation_didlog(
@@ -202,7 +194,7 @@ mod tests {
         let engine = engine_for_happy_path();
 
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
         execute_build_rotation_didlog(&fixture_issuer(), &state, &registry, &engine, fixture_now())
@@ -252,7 +244,7 @@ mod tests {
         });
         let engine = MockSigningEngine::new();
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
 
@@ -282,7 +274,7 @@ mod tests {
         });
         let engine = MockSigningEngine::new();
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
 
@@ -309,7 +301,7 @@ mod tests {
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![]));
         let engine = MockSigningEngine::new();
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
 
@@ -360,7 +352,7 @@ mod tests {
         engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
 
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
         let outcome = execute_build_rotation_didlog(
@@ -389,7 +381,7 @@ mod tests {
         issuer.state = Some(IssuerState::Deactivated);
 
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
         let outcome =
@@ -412,7 +404,7 @@ mod tests {
         issuer.authorized_key_id = None;
 
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
         let outcome =
@@ -438,7 +430,7 @@ mod tests {
         engine.enqueue_sign(SignCall::Backend("hsm offline".into()));
 
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
         let outcome = execute_build_rotation_didlog(
@@ -469,7 +461,7 @@ mod tests {
         }));
 
         let state = RotateKeysStateData {
-            new_key_triple: Some(new_triple_all_three()),
+            new_key_triple: Some(fixture_rotated_triple()),
             didlog_published: false,
         };
         let outcome = execute_build_rotation_didlog(

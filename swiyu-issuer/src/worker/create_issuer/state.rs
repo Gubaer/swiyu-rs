@@ -89,19 +89,14 @@ mod tests {
     use super::*;
 
     use serde_json::{Value, json};
-    use uuid::Uuid;
+
+    use crate::worker::test_support::fixture_kid;
 
     fn fixture_key_triple() -> KeyTriple {
         KeyTriple {
-            authorized: KeyPairId::from(
-                Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap(),
-            ),
-            authentication: KeyPairId::from(
-                Uuid::parse_str("22222222-2222-4222-8222-222222222222").unwrap(),
-            ),
-            assertion: KeyPairId::from(
-                Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap(),
-            ),
+            authorized: fixture_kid(0x11),
+            authentication: fixture_kid(0x22),
+            assertion: fixture_kid(0x33),
         }
     }
 
