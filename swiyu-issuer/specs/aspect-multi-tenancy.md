@@ -97,6 +97,8 @@ Registering a new issuer for a tenant requires the SWIYU Business Partner record
 
 Issuer creation is driven by the tenant's business application: the BA calls the management API (`POST /api/v1/issuers`) and `swiyu-issuer` runs the `create_issuer` saga — generating the issuer's keys via the `SigningEngine` and publishing the genesis DID log entry to the SWIYU Identifier Registry. The saga's terminal state (Succeeded / Failed) is observable via the operation-task endpoint.
 
+Contributors run a dev variant of `tenant create` that reads SWIYU credentials from `.env`: `swiyu-issuer-cli tenant bootstrap-dev-from-env` finds the contributor's dev tenant by `DEV_TENANT_PARTNER_ID` (creating it on first run) and writes the OAuth2 columns idempotently. The compose `bootstrap-dev-tenant` service calls it on every `docker compose up`. See [`impl-tenant-management.md`](impl-tenant-management.md).
+
 ## Risks and mitigations
 
 The core risk of multi-tenancy is **scoping**: every query and operation must be bound to the correct tenant and, where applicable, the correct issuer within that tenant. A missed scope is a cross-tenant or cross-issuer data leak.

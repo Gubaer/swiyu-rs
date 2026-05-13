@@ -101,21 +101,9 @@ swiyu-issuer-mgmtapi mint-token --tenant <bare-tenant-id> --name <label> \
 
 The dispatcher in `bin/swiyu-issuer-mgmtapi.rs` uses `clap` (added by this slice). Subcommand parsing is simple enough that hand-rolled arg matching would also work; `clap` earns its keep when the next admin subcommand lands (revoke-token, list-tokens, …).
 
-## Dev token seeding
+## Dev token bootstrap
 
-The migration that creates `api_tokens` also seeds **one fixed dev token** for the seeded tenant `4Mk7yK5pQR7sN3`:
-
-- Bare wire form: `tok_DevDevDevDevDevDevDevDevDevDevDevDevDevDe` (a documented well-known value, NOT generated; valid base58, no collision concern at this entropy).
-- The migration inserts the corresponding SHA-256 hex hash directly into `api_tokens.token_hash`.
-- `name = "seeded-dev-token"`.
-- `expires_at = NULL`, `revoked_at = NULL`.
-
-Rationale:
-
-- Migrations cannot read env vars, so the bare token cannot arrive that way at migration time. Hardcoding the dev token's hash is operationally simpler than running a post-migration seeder.
-- The dev token is **alpha/beta-only** by policy. The transition to production maturity (prod-1) revokes it explicitly via a later migration; see [`aspect-persistence.md`](aspect-persistence.md) for maturity rules.
-
-`docker-compose.yml` and `test-commands.txt` should be updated in the same slice to use the dev token.
+There is no seeded dev API token. The init migration leaves `api_tokens` empty; contributors mint their first token with `swiyu-issuer-cli tenant api-token mint --tenant <id> --name dev` after the compose `bootstrap-dev-tenant` service has materialised their dev tenant row (see [`impl-tenant-management.md`](impl-tenant-management.md#tenant-bootstrap-dev-from-env)). Each contributor's token is local to their machine and never enters the repo.
 
 ## Error mapping
 
@@ -161,12 +149,12 @@ No new env vars in v0.1.2.
 
 ## Suggested slice ordering
 
-1. Migration: `api_tokens` table + the seeded dev-token row.
+1. Migration: `api_tokens` table.
 2. Domain: `ApiTokenSecret`, `ApiTokenHash`, `ApiToken`.
 3. Persistence: `insert`, `find_valid_by_hash`, `mark_used`.
 4. `auth.rs` extractor body swap. Handlers untouched.
 5. `bin/swiyu-issuer-mgmtapi.rs` dispatcher + `mint-token` subcommand.
-6. Update `docker-compose.yml`, `test-commands.txt`, and any developer onboarding to use the dev token. Remove `DEFAULT_TENANT_ID` references.
+6. Update `docker-compose.yml`, `test-commands.txt`, and any developer onboarding to mint tokens via the CLI. Remove `DEFAULT_TENANT_ID` references.
 7. Tests per the section above.
 
 Steps 1–3 may land together. Step 4 must come last among the server-side changes; step 5 may land alongside or just after.
@@ -212,5 +200,4 @@ So that the migration above stays cheap, v0.1.2 must not bake in assumptions tha
 - **`last_used_at` write strategy.** Inline per-request `UPDATE` is the v0.1.2 lean. If contention shows up under bursty authenticated traffic, throttle to once per N seconds per token, or batch via a deferred-write queue. Not worth over- engineering before there is a measurable signal.
 - **Default token TTL.** v0.1.2 mints non-expiring tokens by default. A finite default (e.g. 90 days) would push operators toward rotation but adds friction in dev/CI. Revisit when the audit slice surfaces token-age metrics.
 - **CLI argument parsing crate.** `clap` is the lean for the reasons above. If `mint-token` stays the only subcommand for more than one release, hand-rolled `args().collect()` parsing would shave the dependency. Decide when `revoke-token` lands.
-- **Dev token rotation policy.** The seeded dev token's hash is baked into a migration. Rotating it (e.g. to invalidate a leaked alpha token) requires shipping a follow-up migration. Acceptable for alpha/beta; document explicitly so it does not surprise.
-- **Bootstrap for fresh tenants.** Onboarding a real tenant now happens via `swiyu-issuer-cli tenant create`; minting the **first** API token for that tenant remains a separate operator step (`tenant api-token mint`). When tenant onboarding moves to an admin UI / API, that flow needs its own initial-token story so the operator can hand the first token to the BA without shell access.
+- **Bootstrap for fresh tenants.** Onboarding a real tenant happens via `swiyu-issuer-cli tenant create`; the contributor dev loop uses `tenant bootstrap-dev-from-env` (see [`impl-tenant-management.md`](impl-tenant-management.md#tenant-bootstrap-dev-from-env)) to materialise a per-contributor dev tenant from `.env`. In both paths, minting the **first** API token for the tenant is a separate operator step (`tenant api-token mint`) — no token is ever seeded by a migration. When tenant onboarding moves to an admin UI / API, that flow needs its own initial-token story so the operator can hand the first token to the BA without shell access.

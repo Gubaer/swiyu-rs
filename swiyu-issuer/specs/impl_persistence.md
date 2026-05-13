@@ -160,7 +160,7 @@ Indexes:
 
 ### Seed data
 
-The init migration seeds one tenant (`4Mk7yK5pQR7sN3`, partner_id = kacon gmbh), one issuer (`9hXq2vRtL8pK7f`, no key triple yet), and one API token (`9DevDevDevDev1`, bare body `DevDevDevDevDevDevDevDevDevDevDevDevDevDe`). IDs are hand-picked valid 14-character base58 strings so they look like real generated IDs to dev tooling. The token hash is a literal; a unit test in `domain::api_token` recomputes it and asserts equality, so any change to the seed body breaks loudly. The seeded token is alpha/beta-only by policy and must be revoked by a follow-up migration before prod-1.
+The init migration does **not** seed any dev tenant, issuer, or API-token rows. A fresh database is empty of application rows; each contributor brings their own SWIYU Business Partner record and OAuth2 credentials, and the compose `bootstrap-dev-tenant` service materialises their dev tenant via `swiyu-issuer-cli tenant bootstrap-dev-from-env` (see [`impl-tenant-management.md`](impl-tenant-management.md#tenant-bootstrap-dev-from-env)). API tokens are minted on demand with `tenant api-token mint`.
 
 ## Cargo dependencies
 

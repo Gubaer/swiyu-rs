@@ -18,6 +18,7 @@ All tenant-scoped commands the binary currently ships, grouped by which spec sli
 # Tenant lifecycle (this document)
 swiyu-issuer-cli tenant create                      --partner-id <uuid> [--display-name <name>] [--description <text>]
 swiyu-issuer-cli tenant update                      --tenant <bare-tenant-id> [--partner-id <uuid>] [--display-name <name>] [--description <text>]
+swiyu-issuer-cli tenant bootstrap-dev-from-env      [--force]
 
 # OAuth2 credentials (impl-oauth2.md)
 swiyu-issuer-cli tenant set-oauth-credentials       --tenant <bare-tenant-id> --client-id <id> --client-secret-stdin
@@ -45,15 +46,39 @@ There are no `--clear-*` flags in v1. Operators that need to NULL a `display_nam
 
 `tenant update` rejects an unknown bare tenant id with a non-zero exit and a message naming the missing tenant; this matches the behaviour of `tenant set-oauth-credentials` and `tenant import-oauth-refresh-token`.
 
+## `tenant bootstrap-dev-from-env`
+
+Contributor-facing variant of `tenant create` for the local dev loop. Every contributor brings their own SWIYU Business Partner record and credentials; the subcommand reads `DEV_TENANT_*` from the process environment (typically populated by `.env`) and either creates the contributor's dev tenant row or syncs OAuth2 columns into an existing one. Returns the bare `TenantId` on stdout — captured by `docker-compose.yml`'s `bootstrap-dev-tenant` entrypoint to feed Vault Transit key provisioning when `SECRET_ENCRYPTION_ENGINE=vault`.
+
+Env vars read:
+
+- `DEV_TENANT_PARTNER_ID` — **required**, validated as a UUID. The lookup key.
+- `DEV_TENANT_DISPLAY_NAME`, `DEV_TENANT_DESCRIPTION` — optional metadata, written at row creation.
+- `DEV_TENANT_CLIENT_ID`, `DEV_TENANT_CLIENT_SECRET` — optional. The pair is written atomically.
+- `DEV_TENANT_REFRESH_TOKEN` — optional.
+
+Empty and unset are treated identically — both mean "absent". An absent oauth value just skips that write; the absent required `DEV_TENANT_PARTNER_ID` fails fast.
+
+The row is located by `partner_id` via `persistence::tenants::find_by_partner_id` (UNIQUE on `partner_id`, so the result is deterministic). Behaviour:
+
+- **Row absent.** Generate a fresh `TenantId`, INSERT with the supplied metadata, and write any supplied oauth columns.
+- **Row present, no `--force`.** Leave `display_name` and `description` alone. Write each oauth column only when it is currently NULL; a runtime-rotated `oauth_refresh_token` is never clobbered.
+- **Row present, `--force`.** Overwrite `display_name`, `description`, and every supplied oauth column unconditionally. Operator-driven resync from `.env`.
+
+The default (no `--force`) is what compose runs on every `docker compose up`; `--force` is for operators who want `.env` to be the source of truth for the whole row (e.g. after rotating credentials at the ePortal). API-token minting is out of scope — contributors run `tenant api-token mint` themselves.
+
+There is intentionally no management-API counterpart: tenant onboarding (production *and* contributor dev) stays operator-only.
+
 ## Persistence module
 
 ```
 swiyu-issuer/src/persistence/tenants.rs   — extended with:
     fn insert(...)                                    — INSERT INTO tenants
     fn update_metadata(...)                           — partial UPDATE of partner_id / display_name / description
+    fn find_by_partner_id(conn, partner_id)           — SELECT … WHERE partner_id = $1; UNIQUE on partner_id makes it deterministic
 ```
 
-Both take `&mut PgConnection`; transaction boundaries are owned by the calling CLI handler (one transaction per CLI invocation, committed if all writes succeed).
+All three take `&mut PgConnection`; transaction boundaries are owned by the calling CLI handler (one transaction per CLI invocation, committed if all writes succeed).
 
 ## Out of scope (this implementation)
 

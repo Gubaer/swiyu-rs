@@ -391,42 +391,71 @@ New env vars consumed by the binary at startup, passed into `ProviderRegistry::n
 
 ## Local development seeding
 
-`oauth_refresh_token` rotates on every successful grant, but starts NULL on a freshly migrated database — the migration that seeds the dev tenant cannot embed a real refresh token. Without explicit handling, every `docker compose down -v && up -d` cycle leaves the dev tenant with NULL credentials and the next worker call fails with `MissingCredentials`.
+`oauth_refresh_token` rotates on every successful grant, but starts NULL on a freshly migrated database — no migration can embed a real refresh token. Without explicit handling, every `docker compose down -v && up -d` cycle leaves the contributor's dev tenant with NULL credentials and the next worker call fails with `MissingCredentials`. The init migration also no longer seeds any dev tenant row: every contributor brings their own SWIYU Business Partner record and credentials.
 
-The dev loop is closed by a compose-driven auto-seed: the operator pastes a refresh token from the ePortal into `.env` once per refresh-token TTL window (~7 days), and a one-shot compose service writes it to the dev tenant whenever the column is NULL. The `.env` value survives `docker compose down -v`, so the operator's manual ePortal step happens at the cadence of the OAuth2 refresh-token cliff rather than the cadence of DB wipes. An empty value silently skips the seed, so first-run dev still works without the operator pasting anything; the failure surfaces at the first worker call as today.
+The dev loop is closed by a compose-driven bootstrap: the contributor pastes their `DEV_TENANT_*` values into `.env` once, and a one-shot compose service finds or creates their dev tenant row and writes the OAuth2 columns idempotently. The `.env` value survives `docker compose down -v`, so the manual ePortal step happens at the cadence of the OAuth2 refresh-token cliff (~7 days) rather than the cadence of DB wipes. Absent oauth values silently skip the corresponding write; the failure surfaces at the first worker call.
 
-### `--only-if-empty` flag
+### CLI
 
-`swiyu-issuer-cli tenant import-oauth-refresh-token` gains an `--only-if-empty` flag that turns the write into a no-op when `oauth_refresh_token IS NOT NULL`. The check-and-write runs in one transaction so a token rotation between the SELECT and the UPDATE does not get clobbered.
+A single subcommand drives the bootstrap end-to-end. See [`impl-tenant-management.md`](impl-tenant-management.md#tenant-bootstrap-dev-from-env) for the full semantics; the OAuth2-relevant summary:
 
 ```
-swiyu-issuer-cli tenant import-oauth-refresh-token \
-    --tenant <bare-tenant-id> --token-stdin --only-if-empty
+swiyu-issuer-cli tenant bootstrap-dev-from-env [--force]
 ```
 
-The operator path (re-pasting a rotated token after a >7-day cliff) omits the flag and overwrites unconditionally — same code path otherwise.
+Without `--force`, the OAuth2 columns are written only-if-empty: a runtime-rotated `oauth_refresh_token` survives a re-run, and an existing `(oauth_client_id, oauth_client_secret)` pair is left alone. With `--force`, every supplied OAuth2 column is overwritten — the operator path after credential rotation at the ePortal.
+
+The two long-form subcommands `tenant set-oauth-credentials` and `tenant import-oauth-refresh-token` remain available for column-by-column edits (e.g. surgical refresh-token rotation outside the bootstrap loop). Both still accept `--only-if-empty` for the dev-loop semantics; the operator path omits it.
 
 ### Compose service
 
-A new one-shot `bootstrap-dev-tenant` compose service runs once after Postgres is healthy, and gates the long-running `swiyu-issuer-mgmtapi` service on its successful completion. It uses the same image as `swiyu-issuer-mgmtapi` (which now ships `swiyu-issuer-cli` alongside) and exits cleanly after the seed.
+A one-shot `bootstrap-dev-tenant` compose service runs once after Postgres is healthy and gates the long-running `swiyu-issuer-mgmtapi` service on its successful completion. It uses the `runtime-cli` Docker target (the same builder layers as `swiyu-issuer-mgmtapi`, but only the `swiyu-issuer-cli` binary in the runtime image) and exits cleanly after the seed.
+
+The entrypoint runs `bootstrap-dev-from-env` in two passes so per-tenant Vault Transit keys (when `SECRET_ENCRYPTION_ENGINE=vault`) can be provisioned between the row creation and the OAuth2-column writes: the runtime tenant id is captured from the first call's stdout, fed into the Vault key-provisioning curl loop, and used by the second call. The `dev` secret-encryption engine path runs both passes too; the Vault loop is a no-op there.
 
 ```yaml
 bootstrap-dev-tenant:
-  image: swiyu-issuer-swiyu-issuer-mgmtapi
+  build:
+    context: ..
+    dockerfile: swiyu-issuer/Dockerfile
+    target: runtime-cli
   depends_on:
     postgres:
       condition: service_healthy
+    vault-init:
+      condition: service_completed_successfully
   environment:
     DATABASE_URL: postgres://...
-    DEV_TENANT_ID: ${DEV_TENANT_ID:-4Mk7yK5pQR7sN3}
-    SWIYU_REFRESH_TOKEN: ${SWIYU_REFRESH_TOKEN}
-  entrypoint: ["/bin/sh", "-c"]
-  command: |
-    if [ -n "$$SWIYU_REFRESH_TOKEN" ]; then
-      printf '%s' "$$SWIYU_REFRESH_TOKEN" | \
-        swiyu-issuer-cli tenant import-oauth-refresh-token \
-          --tenant "$$DEV_TENANT_ID" --token-stdin --only-if-empty
-    fi
+    DEV_TENANT_PARTNER_ID: ${DEV_TENANT_PARTNER_ID}
+    DEV_TENANT_DISPLAY_NAME: ${DEV_TENANT_DISPLAY_NAME}
+    DEV_TENANT_DESCRIPTION: ${DEV_TENANT_DESCRIPTION}
+    DEV_TENANT_CLIENT_ID: ${DEV_TENANT_CLIENT_ID}
+    DEV_TENANT_CLIENT_SECRET: ${DEV_TENANT_CLIENT_SECRET}
+    DEV_TENANT_REFRESH_TOKEN: ${DEV_TENANT_REFRESH_TOKEN}
+    SECRET_ENCRYPTION_ENGINE: ${SECRET_ENCRYPTION_ENGINE:-dev}
+    # ...VAULT_*, SECRET_ENCRYPTION_DEV_MASTER_KEY...
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      # Phase 1: ensure the row exists, capture the runtime tenant id.
+      # Oauth env vars are unset for this call so a vault-engine
+      # secret write cannot fire before the Transit key is provisioned.
+      TENANT_ID=$$(
+        env -u DEV_TENANT_CLIENT_ID -u DEV_TENANT_CLIENT_SECRET -u DEV_TENANT_REFRESH_TOKEN \
+          swiyu-issuer-cli tenant bootstrap-dev-from-env
+      )
+      if [ "$$SECRET_ENCRYPTION_ENGINE" = "vault" ]; then
+        for family in oauth2_client_secret oauth2_refresh_token; do
+          curl -fsS -X POST -H "X-Vault-Token: $$VAULT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"aes256-gcm96"}' \
+            "$$VAULT_ADDR/v1/transit/keys/tenant-$$TENANT_ID-$$family" >/dev/null
+        done
+      fi
+      # Phase 2: write oauth columns (only-if-empty by default).
+      swiyu-issuer-cli tenant bootstrap-dev-from-env >/dev/null
   restart: "no"
 
 swiyu-issuer-mgmtapi:
@@ -435,24 +464,23 @@ swiyu-issuer-mgmtapi:
       condition: service_completed_successfully
 ```
 
-The CLI runs migrations itself, so no separate migrate step is needed. The same env var (`SWIYU_REFRESH_TOKEN`) was already declared in `.env.example` as a doc-only seed; this section turns that comment into a working code path. `DEV_TENANT_ID` defaults to the bare id of the tenant seeded by `migrations/20260430_000001_init.sql`; it is parameterised so the magic string in the compose file becomes a named knob, even though no current dev workflow overrides the default.
+The CLI runs migrations itself, so no separate migrate step is needed. The compose path omits `--force`, matching the dev-loop semantics (preserve runtime-rotated tokens). Contributors who want to force-resync from `.env` after rotating credentials at the ePortal run the CLI directly with `--force`.
 
 ### Dockerfile
 
-The image now builds and ships both binaries:
+The image builds three runtime targets from a single cargo-chef cook layer:
 
 ```dockerfile
-RUN cargo build --release --bin swiyu-issuer-mgmtapi --bin swiyu-issuer-cli
+RUN cargo build --release \
+  --bin swiyu-issuer-mgmtapi --bin swiyu-issuer-oidcapi --bin swiyu-issuer-cli
 ...
-COPY --from=builder /app/target/release/swiyu-issuer-mgmtapi      /usr/local/bin/
+FROM runtime-base AS runtime-cli
 COPY --from=builder /app/target/release/swiyu-issuer-cli /usr/local/bin/
 ```
 
-### `tenant set-oauth-credentials` and the `oauth_client_id` / `oauth_client_secret` columns
+### `tenant set-oauth-credentials` and `tenant import-oauth-refresh-token`
 
-The other two OAuth2 columns have the same "must be in DB before any worker call" problem as `oauth_refresh_token`, but rotate far less frequently — `aspect-oauth2.md` describes them as a one-time onboarding write that survives the runtime's per-grant refresh-token rotation. They are written by a sibling CLI subcommand and the same `bootstrap-dev-tenant` compose service.
-
-#### CLI
+These long-form subcommands are still the operator path for surgical edits to the OAuth2 columns outside the bootstrap loop. They keep their `--only-if-empty` flag (the dev-loop semantics): when supplied, the write is a no-op if the target column(s) are already non-NULL; omitted, the write overwrites unconditionally.
 
 ```
 swiyu-issuer-cli tenant set-oauth-credentials \
@@ -460,53 +488,14 @@ swiyu-issuer-cli tenant set-oauth-credentials \
     --client-id <value> \
     [--client-secret <value> | --client-secret-stdin] \
     [--only-if-empty]
+
+swiyu-issuer-cli tenant import-oauth-refresh-token \
+    --tenant <bare-tenant-id> \
+    [--token <value> | --token-stdin] \
+    [--only-if-empty]
 ```
 
-`--client-secret` and `--client-secret-stdin` are mutually exclusive, enforced by a `clap::ArgGroup` mirroring `import-oauth-refresh-token`. Operators almost always want `--client-secret-stdin` — pasting the secret on the command line leaves it in shell history.
-
-The subcommand writes both columns atomically inside one transaction. It does **not** touch `oauth_refresh_token`, which has a separate lifecycle (rotated by the runtime on every grant) and is handled by `tenant import-oauth-refresh-token`.
-
-#### `--only-if-empty` semantics
-
-Skip the write when **both** `oauth_client_id` and `oauth_client_secret` are non-NULL; write both otherwise. The all-or-none rule avoids leaving the row in a partial state if one column was nuked out-of-band, and it is what the dev-loop auto-seed wants: re-seeding only when the column pair is genuinely empty.
-
-The operator path — credential rotation at the ePortal — omits the flag and overwrites unconditionally. Both columns must always be supplied together; the subcommand intentionally does not let an operator update only one half of the pair.
-
-#### Lib function
-
-```rust
-pub async fn set_oauth_credentials(
-    pool: &PgPool,
-    tenant_id: &TenantId,
-    client_id: String,
-    client_secret: SecretString,
-    only_if_empty: bool,
-) -> Result<SeedOutcome, SetOauthCredentialsError>;
-```
-
-Reuses the `SeedOutcome { Wrote, Skipped }` enum from `import_oauth_refresh_token`. `SetOauthCredentialsError` mirrors `ImportOauthRefreshTokenError` (`TenantNotFound`, `Persistence`, `Sqlx` variants).
-
-#### `bootstrap-dev-tenant` extension
-
-The compose service grows a credentials seed step that runs **before** the existing refresh-token seed. Order matters: a refresh-token grant can only succeed once `client_id` and `client_secret` are populated, so the credentials must land first.
-
-```yaml
-command: |
-  if [ -n "$$SWIYU_CLIENT_ID" ] && [ -n "$$SWIYU_CLIENT_SECRET" ]; then
-    printf '%s' "$$SWIYU_CLIENT_SECRET" \
-      | swiyu-issuer-cli tenant set-oauth-credentials \
-          --tenant "$$DEV_TENANT_ID" \
-          --client-id "$$SWIYU_CLIENT_ID" \
-          --client-secret-stdin --only-if-empty
-  fi
-  if [ -n "$$SWIYU_REFRESH_TOKEN" ]; then
-    printf '%s' "$$SWIYU_REFRESH_TOKEN" \
-      | swiyu-issuer-cli tenant import-oauth-refresh-token \
-          --tenant "$$DEV_TENANT_ID" --token-stdin --only-if-empty
-  fi
-```
-
-Both blocks are gated on the relevant env var being non-empty; with both empty, the bootstrap silently skips and the first worker call fails with `MissingCredentials`, same as without this service. `SWIYU_CLIENT_ID` and `SWIYU_CLIENT_SECRET` were already declared in `.env.example` as doc-only seeds; this design promotes them to active env vars consumed by the bootstrap service.
+`--client-secret` / `--client-secret-stdin` and `--token` / `--token-stdin` are mutually exclusive, enforced by `clap::ArgGroup`. Operators almost always want the `…-stdin` form — pasting the secret on the command line leaves it in shell history. `set-oauth-credentials` writes both columns atomically inside one transaction; the all-or-none rule avoids leaving the row in a partial state, and it is what `--only-if-empty` keys off (skip if **both** columns are non-NULL).
 
 ## Testing
 
