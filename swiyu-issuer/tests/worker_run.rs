@@ -5,7 +5,6 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::fixtures::{SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -27,18 +26,8 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence::{issuers, operation_tasks};
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
-    AllocateCall, CreateStatusListEntryCall, MockRegistry, MockStatusRegistry, PublishCall,
+    AllocateCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-use swiyu_registries::status::StatusListEntry;
-
-fn status_registry_with_one_ok() -> MockStatusRegistry {
-    let r = MockStatusRegistry::new();
-    r.enqueue_create(CreateStatusListEntryCall::Ok(StatusListEntry {
-        id: SAMPLE_STATUS_ENTRY_ID.into(),
-        registry_url: SAMPLE_STATUS_REGISTRY_URL.into(),
-    }));
-    r
-}
 
 fn fixture_kid(byte: u8) -> KeyPairId {
     let mut bytes = [byte; 16];
@@ -182,7 +171,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let registry = MockRegistry::new();
     let engine = MockSigningEngine::new();
     load_happy_path_mocks(&registry, &engine);
-    let status_registry = status_registry_with_one_ok();
+    let status_registry = common::status_registry::with_one_ok();
 
     let (_token_server, providers) =
         build_provider_setup(&pool, std::sync::Arc::clone(&secret_engine)).await;

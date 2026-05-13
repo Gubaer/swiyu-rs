@@ -14,7 +14,6 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::fixtures::{SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
 use common::rng::ConstantRng;
 use common::time::now_micros;
@@ -34,9 +33,8 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence::operation_tasks;
 use swiyu_issuer::worker::Worker;
-use swiyu_issuer::worker::test_support::{CreateStatusListEntryCall, MockStatusRegistry};
+use swiyu_issuer::worker::test_support::MockStatusRegistry;
 use swiyu_registries::identifier::IdentifierRegistryClient;
-use swiyu_registries::status::StatusListEntry;
 
 fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
@@ -50,15 +48,6 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
         updated_at: now,
         ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
-}
-
-fn status_registry_with_one_ok() -> MockStatusRegistry {
-    let r = MockStatusRegistry::new();
-    r.enqueue_create(CreateStatusListEntryCall::Ok(StatusListEntry {
-        id: SAMPLE_STATUS_ENTRY_ID.into(),
-        registry_url: SAMPLE_STATUS_REGISTRY_URL.into(),
-    }));
-    r
 }
 
 fn build_registry_client(server: &MockServer) -> IdentifierRegistryClient {
@@ -100,7 +89,7 @@ fn build_worker(
         pool.clone(),
         build_registry_client(registry_server),
         DevSigningEngine::new(pool),
-        status_registry_with_one_ok(),
+        common::status_registry::with_one_ok(),
         providers,
         Box::new(ConstantRng(0)),
     )

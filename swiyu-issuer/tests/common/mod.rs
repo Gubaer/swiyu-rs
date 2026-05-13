@@ -9,5 +9,6 @@ pub mod oauth;
 pub mod operation_tasks;
 pub mod rng;
 pub mod status_lists;
+pub mod status_registry;
 pub mod tenants;
 pub mod time;
