@@ -141,11 +141,9 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> (IssuerId,
 
     let issuer = Issuer {
         did: fixture_did(),
-        description: Some("e2e fixture".into()),
         authorized_key_id: Some(authorized.id),
         authentication_key_id: Some(authentication.id),
         assertion_key_id: Some(assertion.id),
-        display_name: Some("E2E fixture".into()),
         created_at: now_micros(),
         ..common::issuers::active(tenant_id)
     };

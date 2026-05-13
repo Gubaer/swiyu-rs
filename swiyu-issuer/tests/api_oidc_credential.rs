@@ -60,9 +60,7 @@ async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer 
 
     let issuer = Issuer {
         did: FIXTURE_DID.into(),
-        description: Some("integration-test issuer".into()),
         assertion_key_id: Some(assertion.id),
-        display_name: Some("Test Issuer".into()),
         ..common::issuers::active(tenant_id)
     };
     common::issuers::insert(pool, &issuer).await;
@@ -256,7 +254,6 @@ async fn issuer_without_assertion_key_returns_invalid_request(pool: PgPool) {
     let issuer = Issuer {
         did: FIXTURE_DID.into(),
         state: None,
-        display_name: None,
         ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &issuer).await;
@@ -407,9 +404,7 @@ async fn issuance_fails_when_issuer_has_no_status_list(pool: PgPool) {
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
     let issuer = Issuer {
         did: FIXTURE_DID.into(),
-        description: Some("issuer without status list".into()),
         assertion_key_id: Some(assertion.id),
-        display_name: Some("Test Issuer".into()),
         ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &issuer).await;

@@ -183,8 +183,8 @@ fn pending_create_issuer_task(tenant_id: &TenantId, issuer_id: IssuerId) -> Oper
     let now = now_micros();
     OperationTask {
         input: json!({
-            "description": "Cantonal driver-licence issuer",
-            "display_name": "Canton Bern Verkehrsamt",
+            "description": common::issuers::SAMPLE_DESCRIPTION,
+            "display_name": common::issuers::SAMPLE_DISPLAY_NAME,
         }),
         result_issuer_id: Some(issuer_id),
         created_at: now,

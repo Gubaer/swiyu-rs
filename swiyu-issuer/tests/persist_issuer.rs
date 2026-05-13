@@ -29,8 +29,8 @@ fn fixture_kid(byte: u8) -> KeyPairId {
 
 fn fixture_input() -> CreateIssuerInput {
     CreateIssuerInput {
-        description: "Cantonal driver-licence issuer".into(),
-        display_name: "Canton Bern Verkehrsamt".into(),
+        description: common::issuers::SAMPLE_DESCRIPTION.into(),
+        display_name: common::issuers::SAMPLE_DISPLAY_NAME.into(),
     }
 }
 
@@ -124,11 +124,11 @@ async fn happy_path_inserts_issuer_row(pool: PgPool) {
     assert_eq!(loaded.state, Some(IssuerState::Active));
     assert_eq!(
         loaded.description.as_deref(),
-        Some("Cantonal driver-licence issuer")
+        Some(common::issuers::SAMPLE_DESCRIPTION)
     );
     assert_eq!(
         loaded.display_name.as_deref(),
-        Some("Canton Bern Verkehrsamt")
+        Some(common::issuers::SAMPLE_DISPLAY_NAME)
     );
     assert_eq!(loaded.authorized_key_id, Some(fixture_kid(0x11)));
     assert_eq!(loaded.authentication_key_id, Some(fixture_kid(0x22)));

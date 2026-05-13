@@ -21,8 +21,6 @@ use common::tenants::insert_test_tenant;
 fn target_shape_issuer(tenant_id: &TenantId) -> Issuer {
     Issuer {
         did: "did:tdw:example.com:9hXq2vRtL8pK7f".into(),
-        description: Some("Cantonal driver-licence issuer".into()),
-        display_name: Some("Canton Bern Verkehrsamt".into()),
         ..common::issuers::active_with_keys(tenant_id)
     }
 }
@@ -49,8 +47,8 @@ async fn happy_path_returns_target_shape_dto(pool: PgPool) {
     assert_eq!(body["id"], issuer.id.bare());
     assert_eq!(body["did"], "did:tdw:example.com:9hXq2vRtL8pK7f");
     assert_eq!(body["state"], "active");
-    assert_eq!(body["description"], "Cantonal driver-licence issuer");
-    assert_eq!(body["display_name"], "Canton Bern Verkehrsamt");
+    assert_eq!(body["description"], common::issuers::SAMPLE_DESCRIPTION);
+    assert_eq!(body["display_name"], common::issuers::SAMPLE_DISPLAY_NAME);
     // tenant_id and the three SigningEngine key-pair handles are
     // deliberately not exposed on the wire.
     assert!(body.get("tenant_id").is_none());
@@ -118,8 +116,6 @@ async fn returns_404_for_legacy_issuer(pool: PgPool) {
     let issuer = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
-        description: Some("Legacy fixture (no state, no key triple)".into()),
-        display_name: Some("Legacy".into()),
         ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &issuer).await;

@@ -28,8 +28,8 @@ async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let body = json!({
-        "description": "Cantonal driver-licence issuer",
-        "display_name": "Canton Bern Verkehrsamt",
+        "description": common::issuers::SAMPLE_DESCRIPTION,
+        "display_name": common::issuers::SAMPLE_DISPLAY_NAME,
     });
     let response = app
         .oneshot(post_request_json(
@@ -57,8 +57,14 @@ async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
     assert!(task.step.is_none());
     assert_eq!(task.attempts, 0);
     assert_eq!(task.result_issuer_id, Some(issuer_id));
-    assert_eq!(task.input["description"], "Cantonal driver-licence issuer");
-    assert_eq!(task.input["display_name"], "Canton Bern Verkehrsamt");
+    assert_eq!(
+        task.input["description"],
+        common::issuers::SAMPLE_DESCRIPTION
+    );
+    assert_eq!(
+        task.input["display_name"],
+        common::issuers::SAMPLE_DISPLAY_NAME
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

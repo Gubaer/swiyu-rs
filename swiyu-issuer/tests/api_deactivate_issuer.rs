@@ -24,7 +24,6 @@ use common::tenants::insert_test_tenant;
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = Issuer {
         did: "did:tdw:scid:example.com:fixture-uuid".into(),
-        description: Some("test issuer".into()),
         ..common::issuers::active_with_keys(tenant_id)
     };
     let id = issuer.id.clone();
@@ -253,7 +252,6 @@ async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
     let legacy = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
-        display_name: None,
         ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &legacy).await;

@@ -22,7 +22,6 @@ use common::tenants::insert_test_tenant;
 async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = Issuer {
         did: "did:tdw:scid:example.com:fixture".into(),
-        display_name: Some("Fixture issuer".into()),
         ..common::issuers::active_with_keys(tenant_id)
     };
     let id = issuer.id.clone();

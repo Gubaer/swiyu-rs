@@ -179,8 +179,6 @@ async fn legacy_issuer_is_filtered_out(pool: PgPool) {
     let legacy = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
-        description: Some("Legacy fixture (no state, no key triple)".into()),
-        display_name: Some("Legacy".into()),
         ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &legacy).await;
