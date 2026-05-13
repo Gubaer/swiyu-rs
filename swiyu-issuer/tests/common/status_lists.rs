@@ -3,11 +3,23 @@
 use chrono::Utc;
 use sqlx::PgPool;
 
+use swiyu_core::statuslist::{SWIYU_STATUS_LIST_BITS, StatusList as CoreStatusList};
 use swiyu_issuer::domain::{
     AnySecretEncryptionEngine, DevSigningEngine, Issuer, IssuerId, KeyRole, SigningEngine,
     StatusList, StatusListId, StatusListIndex, StatusValue,
 };
 use swiyu_issuer::persistence;
+
+/// Decode the slot at `idx` from a raw SWIYU-shaped status-list
+/// bitstring. Mirrors `persistence::status_lists::write_bit`'s
+/// in-place core call; used by tests that round-trip `write_bit`
+/// or assert on the bit a credential was assigned.
+pub fn read_slot(bitstring: &[u8], idx: StatusListIndex) -> StatusValue {
+    CoreStatusList::from_raw(SWIYU_STATUS_LIST_BITS, bitstring.to_vec())
+        .unwrap()
+        .value_at(u64::from(idx.value()))
+        .unwrap()
+}
 
 /// `(published_version, committed_version, publish_attempts)` for the
 /// given list id. Used by status-list publisher tests to assert on

@@ -19,25 +19,12 @@ use common::fixtures::SAMPLE_STATUS_ENTRY_ID;
 use chrono::{Duration, Utc};
 use common::tenants::insert_test_tenant as insert_tenant;
 use sqlx::PgPool;
-use swiyu_core::statuslist::{
-    SWIYU_STATUS_LIST_BITS, SWIYU_STATUS_LIST_CAPACITY, StatusList as CoreStatusList,
-};
+use swiyu_core::statuslist::SWIYU_STATUS_LIST_CAPACITY;
 
 use swiyu_issuer::domain::{
     BITSTRING_BYTES, IssuerId, StatusListId, StatusListIndex, StatusValue, TenantId,
 };
 use swiyu_issuer::persistence::status_lists;
-
-/// Decodes the slot at `idx` from a raw bitstring read out of the
-/// `status_lists` table. Mirror of `persistence::status_lists::write_bit`'s
-/// in-place core call; used by tests that round-trip `write_bit` against
-/// the database.
-fn read_slot(bitstring: &[u8], idx: StatusListIndex) -> StatusValue {
-    CoreStatusList::from_raw(SWIYU_STATUS_LIST_BITS, bitstring.to_vec())
-        .unwrap()
-        .value_at(u64::from(idx.value()))
-        .unwrap()
-}
 
 async fn insert_issuer(pool: &PgPool, tenant_id: &TenantId, issuer_id: &str) {
     sqlx::query(
@@ -523,11 +510,17 @@ async fn write_bit_flips_target_slot(pool: PgPool) {
         .unwrap();
 
     let bitstring = fetch_bitstring(&pool, &list_id).await;
-    assert_eq!(read_slot(&bitstring, target), StatusValue::Revoked);
+    assert_eq!(
+        common::status_lists::read_slot(&bitstring, target),
+        StatusValue::Revoked
+    );
     // Neighbouring slots stay zero (Valid).
     for other in [0u32, 1, 2, 3, 4, 5, 6, 8, 9] {
         let idx = StatusListIndex::try_from(other).unwrap();
-        assert_eq!(read_slot(&bitstring, idx), StatusValue::Valid);
+        assert_eq!(
+            common::status_lists::read_slot(&bitstring, idx),
+            StatusValue::Valid
+        );
     }
 }
 
@@ -549,7 +542,7 @@ async fn write_bit_round_trips_each_value(pool: PgPool) {
             .await
             .unwrap();
         let bitstring = fetch_bitstring(&pool, &list_id).await;
-        assert_eq!(read_slot(&bitstring, target), value);
+        assert_eq!(common::status_lists::read_slot(&bitstring, target), value);
     }
 }
 

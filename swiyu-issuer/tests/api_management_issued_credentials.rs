@@ -13,7 +13,6 @@ use chrono::{Duration, Utc};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use swiyu_core::statuslist::{SWIYU_STATUS_LIST_BITS, StatusList as CoreStatusList};
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
     BITSTRING_BYTES, CredentialOffer, INTEGRITY_HASH_LEN, IssuedCredential, IssuedCredentialState,
@@ -110,10 +109,7 @@ async fn fetch_status_bit(pool: &PgPool, credential: &IssuedCredential) -> Statu
         .await
         .unwrap();
     assert_eq!(bitstring.len(), BITSTRING_BYTES);
-    CoreStatusList::from_raw(SWIYU_STATUS_LIST_BITS, bitstring)
-        .unwrap()
-        .value_at(u64::from(credential.status_list_index.value()))
-        .unwrap()
+    common::status_lists::read_slot(&bitstring, credential.status_list_index)
 }
 
 async fn fetch_committed_version(pool: &PgPool, list_id: &StatusListId) -> i64 {
