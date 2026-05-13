@@ -194,6 +194,32 @@ async fn rejects_oversized_display_name(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn rejects_oversized_description(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let secret = mint_test_token(&pool, &tenant_id).await;
+    let app = router(build_state(pool));
+
+    let oversized = "a".repeat(256);
+    let body = json!({ "description": oversized, "display_name": "ok" });
+    let response = app
+        .oneshot(post_request_json(
+            "/api/v1/issuers",
+            Some(&secret.as_wire()),
+            body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = read_body(response).await;
+    assert_eq!(body["error"], "invalid_input");
+    assert!(
+        body["details"].as_str().unwrap().contains("description"),
+        "details = {body}",
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn rejects_unknown_field(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
