@@ -46,15 +46,11 @@ mod tests {
     use super::*;
 
     use serde_json::Value;
-    use swiyu_registries::common::AccessToken;
     use swiyu_registries::identifier::Allocation;
 
-    use crate::domain::StaticTokenProvider;
-    use crate::worker::test_support::{AllocateCall, MockRegistry, fixture_tenant};
-
-    fn token_provider() -> StaticTokenProvider {
-        StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
-    }
+    use crate::worker::test_support::{
+        AllocateCall, MockRegistry, fixture_tenant, fixture_token_provider,
+    };
 
     fn fixture_allocation() -> Allocation {
         Allocation {
@@ -73,7 +69,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token_provider(),
+            &fixture_token_provider(),
         )
         .await;
 
@@ -107,7 +103,8 @@ mod tests {
             ..CreateIssuerStateData::default()
         };
 
-        let outcome = execute_allocate_did(&tenant, &state, &registry, &token_provider()).await;
+        let outcome =
+            execute_allocate_did(&tenant, &state, &registry, &fixture_token_provider()).await;
 
         match outcome {
             StepOutcome::Done(result) => assert!(result.state_data_patch.is_empty()),
@@ -129,7 +126,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token_provider(),
+            &fixture_token_provider(),
         )
         .await;
 
@@ -158,7 +155,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token_provider(),
+            &fixture_token_provider(),
         )
         .await;
 
@@ -180,7 +177,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token_provider(),
+            &fixture_token_provider(),
         )
         .await;
 

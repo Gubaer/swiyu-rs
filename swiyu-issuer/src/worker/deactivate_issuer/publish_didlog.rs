@@ -147,18 +147,16 @@ fn state_patch_didlog_published() -> StepResult {
 mod tests {
     use super::*;
 
-    use swiyu_registries::common::AccessToken;
-
     use swiyu_core::diddoc::DIDDoc;
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
     use crate::domain::signing_engine::test_support::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_signature,
     };
-    use crate::domain::{Issuer, IssuerId, IssuerState, StaticTokenProvider, TenantId};
+    use crate::domain::{Issuer, IssuerId, IssuerState, TenantId};
     use crate::worker::test_support::{
         FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
-        fixture_kid, fixture_now, fixture_p256, fixture_tenant,
+        fixture_kid, fixture_now, fixture_p256, fixture_tenant, fixture_token_provider,
     };
 
     fn fixture_issuer() -> Issuer {
@@ -180,10 +178,6 @@ mod tests {
 
     fn fixture_state(didlog_published: bool) -> DeactivateIssuerStateData {
         DeactivateIssuerStateData { didlog_published }
-    }
-
-    fn token_provider() -> StaticTokenProvider {
-        StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
     }
 
     fn fixture_genesis_entry() -> DIDLogEntry {
@@ -228,7 +222,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -264,7 +258,7 @@ mod tests {
             &fixture_state(true),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -298,7 +292,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -327,7 +321,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -357,7 +351,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -387,7 +381,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -414,7 +408,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -443,7 +437,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -473,7 +467,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -503,7 +497,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -532,7 +526,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;

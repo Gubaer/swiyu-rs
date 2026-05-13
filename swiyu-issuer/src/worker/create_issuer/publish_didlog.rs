@@ -82,13 +82,11 @@ pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
 mod tests {
     use super::*;
 
-    use swiyu_registries::common::AccessToken;
-
-    use crate::domain::StaticTokenProvider;
     use crate::domain::signing_engine::test_support::{GetPublicKeyCall, MockSigningEngine};
     use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{
         AllocateCall, MockRegistry, PublishCall, fixture_kid, fixture_now, fixture_tenant,
+        fixture_token_provider,
     };
 
     fn fixture_state(didlog_published: bool) -> CreateIssuerStateData {
@@ -106,10 +104,6 @@ mod tests {
         }
     }
 
-    fn token_provider() -> StaticTokenProvider {
-        StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
-    }
-
     #[tokio::test]
     async fn happy_path_publishes_and_marks_didlog_published() {
         let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
@@ -122,7 +116,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -154,7 +148,7 @@ mod tests {
             &fixture_state(true),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -182,7 +176,7 @@ mod tests {
             &state,
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -211,7 +205,7 @@ mod tests {
             &state,
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -236,7 +230,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -265,7 +259,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -293,7 +287,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;
@@ -324,7 +318,7 @@ mod tests {
             &fixture_state(false),
             &registry,
             &engine,
-            &token_provider(),
+            &fixture_token_provider(),
             fixture_now(),
         )
         .await;

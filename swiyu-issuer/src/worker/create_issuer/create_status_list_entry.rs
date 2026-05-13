@@ -52,17 +52,11 @@ mod tests {
     use super::*;
 
     use serde_json::Value;
-    use swiyu_registries::common::AccessToken;
     use swiyu_registries::status::StatusListEntry;
 
-    use crate::domain::StaticTokenProvider;
     use crate::worker::test_support::{
-        CreateStatusListEntryCall, MockStatusRegistry, fixture_tenant,
+        CreateStatusListEntryCall, MockStatusRegistry, fixture_tenant, fixture_token_provider,
     };
-
-    fn token_provider() -> StaticTokenProvider {
-        StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
-    }
 
     fn fixture_entry() -> StatusListEntry {
         StatusListEntry {
@@ -81,7 +75,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token_provider(),
+            &fixture_token_provider(),
         )
         .await;
 
@@ -116,7 +110,8 @@ mod tests {
             ..CreateIssuerStateData::default()
         };
         let outcome =
-            execute_create_status_list_entry(&tenant, &state, &registry, &token_provider()).await;
+            execute_create_status_list_entry(&tenant, &state, &registry, &fixture_token_provider())
+                .await;
 
         match outcome {
             StepOutcome::Done(StepResult { state_data_patch }) => {
@@ -140,7 +135,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token_provider(),
+            &fixture_token_provider(),
         )
         .await;
 
@@ -165,7 +160,7 @@ mod tests {
             &tenant,
             &CreateIssuerStateData::default(),
             &registry,
-            &token_provider(),
+            &fixture_token_provider(),
         )
         .await;
 

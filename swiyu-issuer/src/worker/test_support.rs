@@ -25,7 +25,7 @@ use swiyu_registries::status::StatusListEntry;
 use uuid::Uuid;
 
 use super::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
-use crate::domain::{KeyPairId, Tenant, TenantId};
+use crate::domain::{KeyPairId, StaticTokenProvider, Tenant, TenantId};
 
 pub fn fixture_kid(byte: u8) -> KeyPairId {
     let mut bytes = [byte; 16];
@@ -44,6 +44,10 @@ pub const FIXTURE_DID_REGISTRY_UUID: &str = "fce949f2-32c4-4915-8b60-0ee2f705231
 
 pub fn fixture_did() -> &'static str {
     "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d"
+}
+
+pub fn fixture_token_provider() -> StaticTokenProvider {
+    StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
 }
 
 pub fn fixture_tenant(partner_id: &str) -> Tenant {
