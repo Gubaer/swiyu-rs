@@ -4,12 +4,15 @@
 -- into a single pre-production baseline. The originals covered 0001
 -- through 0015 (status-list, issued-credentials, registry-coordinate
 -- additions), the OAuth2 credential columns on tenants (originally a
--- separate `tenants_oauth` migration), and the subsequent re-type of
+-- separate `tenants_oauth` migration), the subsequent re-type of
 -- those secret columns from TEXT to BYTEA for encryption-at-rest
--- (originally `tenants_oauth_encrypted`). The project is still
--- pre-production; collapsing was cheaper than carrying the
--- expand/contract history. Subsequent schema changes go in their own
--- numbered migration on top of this one.
+-- (originally `tenants_oauth_encrypted`), the tenant-metadata slice
+-- that tightened `partner_id` to `UUID NOT NULL` and added
+-- `display_name` / `description`, and the follow-up that pinned
+-- `partner_id` UNIQUE. The project is still pre-production;
+-- collapsing was cheaper than carrying the expand/contract history.
+-- Subsequent schema changes go in their own numbered migration on
+-- top of this one.
 --
 -- See specs/impl_persistence.md and
 -- specs/impl-credential-management.md for design rationale.
@@ -20,11 +23,15 @@
 --
 -- Organisational entities operating issuers.
 --
--- `partner_id` is the SWIYU business-partner UUID; the worker's
--- allocate_did step reads it when calling the registry. Nullable so
--- non-registry-touching tenants stay possible; the worker fails the
--- task Terminal with 'tenant_missing_partner_id' when this column is
--- NULL.
+-- `partner_id` is the SWIYU Business Partner UUID; the worker's
+-- allocate_did step reads it when calling the registry. NOT NULL
+-- because SWIYU Business Partner registration is a precondition for
+-- tenant creation, and UNIQUE because aspect-multi-tenancy.md
+-- declares the tenant ↔ Business Partner mapping as 1:1.
+--
+-- `display_name` and `description` are operator-supplied tenant
+-- metadata, both nullable. The UI layer derives a fallback display
+-- name from the bare id when `display_name` is NULL.
 --
 -- The three OAuth2 columns hold per-tenant SWIYU credentials and are
 -- all NULLable: tenants that do not call SWIYU registries leave them
@@ -44,7 +51,9 @@
 
 CREATE TABLE tenants (
     id TEXT PRIMARY KEY,
-    partner_id TEXT,
+    partner_id UUID NOT NULL UNIQUE,
+    display_name TEXT,
+    description TEXT,
     oauth_client_id TEXT,
     oauth_client_secret BYTEA,
     oauth_refresh_token BYTEA
