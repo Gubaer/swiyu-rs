@@ -3,10 +3,9 @@
 //! Drives requests through the full management router using
 //! `tower::ServiceExt::oneshot` against a `sqlx::test`-managed pool.
 
-use axum::body::{self, Body};
-use axum::http::{Request, StatusCode, header};
+use axum::http::StatusCode;
 use chrono::Utc;
-use serde_json::{Value, json};
+use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -20,6 +19,7 @@ use swiyu_issuer::persistence;
 mod common;
 use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
+use common::http::{post_request_json, read_body};
 use common::tenants::insert_test_tenant;
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
@@ -77,26 +77,6 @@ async fn insert_rotate_task(
     id
 }
 
-fn post_request(uri: &str, bearer: Option<&str>, body: Value) -> Request<Body> {
-    let mut builder = Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header(header::CONTENT_TYPE, "application/json");
-    if let Some(b) = bearer {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
-    }
-    builder
-        .body(Body::from(serde_json::to_vec(&body).unwrap()))
-        .unwrap()
-}
-
-async fn read_body(response: axum::response::Response) -> Value {
-    let bytes = body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    serde_json::from_slice(&bytes).unwrap()
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn fresh_rotation_returns_201_and_inserts_task(pool: PgPool) {
     let tenant_id = TenantId::generate();
@@ -106,7 +86,7 @@ async fn fresh_rotation_returns_201_and_inserts_task(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["authorized"]}),
@@ -145,7 +125,7 @@ async fn all_sentinel_expands_server_side(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["all"]}),
@@ -178,7 +158,7 @@ async fn in_flight_task_returns_200_and_same_task_id(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["authorized"]}),
@@ -204,7 +184,7 @@ async fn prior_completed_task_falls_through_to_fresh_201(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["authorized"]}),
@@ -235,7 +215,7 @@ async fn deactivated_issuer_returns_409(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["authorized"]}),
@@ -257,7 +237,7 @@ async fn empty_roles_returns_400(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": []}),
@@ -276,7 +256,7 @@ async fn unknown_role_returns_400(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["administrator"]}),
@@ -295,7 +275,7 @@ async fn all_mixed_with_concrete_role_returns_400(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["all", "authorized"]}),
@@ -316,7 +296,7 @@ async fn cross_tenant_issuer_returns_404(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", issuer_id.bare()),
             Some(&secret_other.as_wire()),
             json!({"roles": ["authorized"]}),
@@ -335,7 +315,7 @@ async fn unknown_issuer_returns_404(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", unknown.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["authorized"]}),
@@ -372,7 +352,7 @@ async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", legacy.id.bare()),
             Some(&secret.as_wire()),
             json!({"roles": ["authorized"]}),

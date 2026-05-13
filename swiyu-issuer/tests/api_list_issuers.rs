@@ -4,10 +4,8 @@
 //! extractors + serde + handler + persistence) using
 //! `tower::ServiceExt::oneshot` against a `sqlx::test`-managed pool.
 
-use axum::body::{self, Body};
-use axum::http::{Request, StatusCode, header};
+use axum::http::StatusCode;
 use chrono::{Duration, Utc};
-use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -19,6 +17,7 @@ use swiyu_issuer::persistence;
 mod common;
 use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
+use common::http::{get_request, read_body};
 use common::tenants::insert_test_tenant;
 
 /// Inserts an issuer in the BA-facing target shape (state set,
@@ -49,21 +48,6 @@ async fn insert_target_shape_issuer(
         .await
         .unwrap();
     issuer
-}
-
-fn get_request(uri: &str, bearer: Option<&str>) -> Request<Body> {
-    let mut builder = Request::builder().method("GET").uri(uri);
-    if let Some(b) = bearer {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
-    }
-    builder.body(Body::empty()).unwrap()
-}
-
-async fn read_body(response: axum::response::Response) -> Value {
-    let bytes = body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    serde_json::from_slice(&bytes).unwrap()
 }
 
 #[sqlx::test(migrations = "./migrations")]

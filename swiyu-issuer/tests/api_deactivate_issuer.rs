@@ -3,8 +3,7 @@
 //! Drives requests through the full management router using
 //! `tower::ServiceExt::oneshot` against a `sqlx::test`-managed pool.
 
-use axum::body::{self, Body};
-use axum::http::{Request, StatusCode, header};
+use axum::http::StatusCode;
 use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -20,6 +19,7 @@ use swiyu_issuer::persistence;
 mod common;
 use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
+use common::http::{post_request_empty, post_request_json, read_body};
 use common::tenants::insert_test_tenant;
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
@@ -77,21 +77,6 @@ async fn insert_deactivate_task(
     id
 }
 
-fn post_request_no_body(uri: &str, bearer: Option<&str>) -> Request<Body> {
-    let mut builder = Request::builder().method("POST").uri(uri);
-    if let Some(b) = bearer {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
-    }
-    builder.body(Body::empty()).unwrap()
-}
-
-async fn read_body(response: axum::response::Response) -> Value {
-    let bytes = body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    serde_json::from_slice(&bytes).unwrap()
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn fresh_deactivation_returns_201_and_inserts_task(pool: PgPool) {
     let tenant_id = TenantId::generate();
@@ -101,7 +86,7 @@ async fn fresh_deactivation_returns_201_and_inserts_task(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request_no_body(
+        .oneshot(post_request_empty(
             &format!("/api/v1/issuers/{}/deactivate", issuer_id.bare()),
             Some(&secret.as_wire()),
         ))
@@ -138,7 +123,7 @@ async fn already_pending_returns_200_and_same_task_id(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request_no_body(
+        .oneshot(post_request_empty(
             &format!("/api/v1/issuers/{}/deactivate", issuer_id.bare()),
             Some(&secret.as_wire()),
         ))
@@ -162,7 +147,7 @@ async fn already_in_progress_returns_200_and_same_task_id(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request_no_body(
+        .oneshot(post_request_empty(
             &format!("/api/v1/issuers/{}/deactivate", issuer_id.bare()),
             Some(&secret.as_wire()),
         ))
@@ -194,7 +179,7 @@ async fn already_deactivated_with_traceable_task_returns_200_and_completed_task_
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request_no_body(
+        .oneshot(post_request_empty(
             &format!("/api/v1/issuers/{}/deactivate", issuer_id.bare()),
             Some(&secret.as_wire()),
         ))
@@ -226,7 +211,7 @@ async fn already_deactivated_without_task_returns_200_and_null_task_id(pool: PgP
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request_no_body(
+        .oneshot(post_request_empty(
             &format!("/api/v1/issuers/{}/deactivate", issuer_id.bare()),
             Some(&secret.as_wire()),
         ))
@@ -250,7 +235,7 @@ async fn cross_tenant_issuer_returns_404(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request_no_body(
+        .oneshot(post_request_empty(
             &format!("/api/v1/issuers/{}/deactivate", issuer_id.bare()),
             Some(&secret_other.as_wire()),
         ))
@@ -277,7 +262,7 @@ async fn unknown_issuer_returns_404(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let response = app
-        .oneshot(post_request_no_body(
+        .oneshot(post_request_empty(
             &format!("/api/v1/issuers/{}/deactivate", unknown.bare()),
             Some(&secret.as_wire()),
         ))
@@ -316,7 +301,7 @@ async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request_no_body(
+        .oneshot(post_request_empty(
             &format!("/api/v1/issuers/{}/deactivate", legacy.id.bare()),
             Some(&secret.as_wire()),
         ))
@@ -336,17 +321,13 @@ async fn empty_json_body_is_accepted(pool: PgPool) {
     let issuer_id = insert_active_issuer(&pool, &tenant_id).await;
     let app = router(build_state(pool.clone()));
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/v1/issuers/{}/deactivate", issuer_id.bare()))
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(
-            header::AUTHORIZATION,
-            format!("Bearer {}", secret.as_wire()),
-        )
-        .body(Body::from("{}"))
+    let response = app
+        .oneshot(post_request_json(
+            &format!("/api/v1/issuers/{}/deactivate", issuer_id.bare()),
+            Some(&secret.as_wire()),
+            json!({}),
+        ))
+        .await
         .unwrap();
-
-    let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
 }

@@ -4,9 +4,8 @@
 //! extractors + serde + handler + persistence) using
 //! `tower::ServiceExt::oneshot` against a `sqlx::test`-managed pool.
 
-use axum::body::{self, Body};
-use axum::http::{Request, StatusCode, header};
-use serde_json::{Value, json};
+use axum::http::StatusCode;
+use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -18,27 +17,8 @@ use swiyu_issuer::persistence;
 mod common;
 use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
+use common::http::{post_request_json, read_body};
 use common::tenants::insert_test_tenant;
-
-fn post_request(uri: &str, bearer: Option<&str>, body: Value) -> Request<Body> {
-    let mut builder = Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header(header::CONTENT_TYPE, "application/json");
-    if let Some(b) = bearer {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
-    }
-    builder
-        .body(Body::from(serde_json::to_vec(&body).unwrap()))
-        .unwrap()
-}
-
-async fn read_body(response: axum::response::Response) -> Value {
-    let bytes = body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    serde_json::from_slice(&bytes).unwrap()
-}
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
@@ -52,7 +32,7 @@ async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
         "display_name": "Canton Bern Verkehrsamt",
     });
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             "/api/v1/issuers",
             Some(&secret.as_wire()),
             body,
@@ -93,7 +73,7 @@ async fn trims_whitespace_in_input_fields(pool: PgPool) {
         "display_name": "  Padded name  ",
     });
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             "/api/v1/issuers",
             Some(&secret.as_wire()),
             body,
@@ -122,7 +102,7 @@ async fn missing_fields_apply_defaults(pool: PgPool) {
     // Empty body — both description and display_name omitted.
     let body = json!({});
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             "/api/v1/issuers",
             Some(&secret.as_wire()),
             body,
@@ -157,7 +137,7 @@ async fn blank_fields_apply_defaults(pool: PgPool) {
     // Both fields present but trim to empty — same as omitted.
     let body = json!({ "description": "  ", "display_name": "\t\n" });
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             "/api/v1/issuers",
             Some(&secret.as_wire()),
             body,
@@ -191,7 +171,7 @@ async fn rejects_oversized_display_name(pool: PgPool) {
     let oversized = "a".repeat(256);
     let body = json!({ "description": "ok", "display_name": oversized });
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             "/api/v1/issuers",
             Some(&secret.as_wire()),
             body,
@@ -220,7 +200,7 @@ async fn rejects_unknown_field(pool: PgPool) {
         "did_method": "tdw:0.3",
     });
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             "/api/v1/issuers",
             Some(&secret.as_wire()),
             body,
@@ -241,7 +221,7 @@ async fn rejects_request_without_authorization(pool: PgPool) {
 
     let body = json!({ "description": "ok", "display_name": "ok" });
     let response = app
-        .oneshot(post_request("/api/v1/issuers", None, body))
+        .oneshot(post_request_json("/api/v1/issuers", None, body))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -256,7 +236,7 @@ async fn rejects_unknown_bearer_token(pool: PgPool) {
     let bogus = ApiTokenSecret::generate();
     let body = json!({ "description": "ok", "display_name": "ok" });
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_json(
             "/api/v1/issuers",
             Some(&bogus.as_wire()),
             body,

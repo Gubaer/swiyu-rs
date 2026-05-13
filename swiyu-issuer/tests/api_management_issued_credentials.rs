@@ -8,10 +8,8 @@
 //! and asserts both the HTTP response and the resulting DB state
 //! (lifecycle column, status-list bitstring slot, committed_version).
 
-use axum::body::{self, Body};
-use axum::http::{Request, StatusCode, header};
+use axum::http::StatusCode;
 use chrono::{Duration, Utc};
-use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -28,6 +26,7 @@ use swiyu_issuer::persistence;
 mod common;
 use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
+use common::http::{post_request_empty, read_body};
 use common::tenants::insert_test_tenant;
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
@@ -128,21 +127,6 @@ async fn seed_credential(
     }
 }
 
-fn post_request(uri: &str, bearer: Option<&str>) -> Request<Body> {
-    let mut builder = Request::builder().method("POST").uri(uri);
-    if let Some(b) = bearer {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
-    }
-    builder.body(Body::empty()).unwrap()
-}
-
-async fn read_body(response: axum::response::Response) -> Value {
-    let bytes = body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    serde_json::from_slice(&bytes).unwrap()
-}
-
 async fn fetch_state(pool: &PgPool, credential: &IssuedCredential) -> String {
     sqlx::query_scalar("SELECT state FROM issued_credentials WHERE id = $1")
         .bind(credential.id.bare())
@@ -201,7 +185,7 @@ async fn suspend_active_flips_state_and_status_bit(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "suspend"),
             Some(&secret.as_wire()),
         ))
@@ -243,7 +227,7 @@ async fn unsuspend_restores_active_and_clears_status_bit(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "unsuspend"),
             Some(&secret.as_wire()),
         ))
@@ -279,7 +263,7 @@ async fn revoke_active_flips_state_and_status_bit(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "revoke"),
             Some(&secret.as_wire()),
         ))
@@ -315,7 +299,7 @@ async fn revoke_suspended_succeeds(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "revoke"),
             Some(&secret.as_wire()),
         ))
@@ -344,7 +328,7 @@ async fn suspend_already_suspended_returns_409(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "suspend"),
             Some(&secret.as_wire()),
         ))
@@ -376,7 +360,7 @@ async fn unsuspend_active_returns_409(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "unsuspend"),
             Some(&secret.as_wire()),
         ))
@@ -404,7 +388,7 @@ async fn revoke_already_revoked_returns_409(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "revoke"),
             Some(&secret.as_wire()),
         ))
@@ -437,7 +421,7 @@ async fn lifecycle_op_against_other_tenant_returns_404(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "suspend"),
             Some(&secret_b.as_wire()),
         ))
@@ -459,7 +443,7 @@ async fn unknown_credential_returns_404(pool: PgPool) {
     let app = router(build_state(pool.clone()));
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &format!(
                 "/api/v1/issuers/{}/credentials/{}/suspend",
                 issuer.id.bare(),
@@ -495,7 +479,7 @@ async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &format!(
                 "/api/v1/issuers/{}/credentials/{}/suspend",
                 issuer_b.id.bare(),
@@ -517,7 +501,7 @@ async fn missing_bearer_returns_401(pool: PgPool) {
     let issuer_id = swiyu_issuer::domain::IssuerId::generate();
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &format!(
                 "/api/v1/issuers/{}/credentials/{}/suspend",
                 issuer_id.bare(),
@@ -539,7 +523,7 @@ async fn malformed_credential_id_returns_400(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             &format!(
                 "/api/v1/issuers/{}/credentials/notValid0/suspend",
                 issuer.id.bare()
@@ -561,7 +545,7 @@ async fn malformed_issuer_id_returns_400(pool: PgPool) {
 
     let app = router(build_state(pool.clone()));
     let response = app
-        .oneshot(post_request(
+        .oneshot(post_request_empty(
             "/api/v1/issuers/notValid0/credentials/9hXq2vRtL8pK7f/suspend",
             Some(&secret.as_wire()),
         ))
