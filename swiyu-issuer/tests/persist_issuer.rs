@@ -4,7 +4,6 @@
 //! migrations apply automatically. Requires `DATABASE_URL` to point
 //! to a Postgres instance whose user has `CREATEDB` privilege.
 
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use swiyu_issuer::domain::signing_engine::test_support::{
@@ -38,10 +37,6 @@ fn fixture_state() -> CreateIssuerStateData {
         status_list_registry_entry_id: None,
         status_list_registry_url: None,
     }
-}
-
-fn fixture_now() -> DateTime<Utc> {
-    DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
 }
 
 fn fixture_ed25519_pk() -> RawPublicKey {
@@ -81,6 +76,7 @@ fn engine_for_happy_path() -> MockSigningEngine {
 mod common;
 use common::keypairs::fixture_kid;
 use common::tenants::insert_test_tenant;
+use common::time::fixture_now;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_inserts_issuer_row(pool: PgPool) {
