@@ -4,14 +4,9 @@
 //! migrations apply automatically. Requires `DATABASE_URL` to point
 //! to a Postgres instance whose user has `CREATEDB` privilege.
 
-use chrono::{Duration, Utc};
-use serde_json::json;
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::{
-    CredentialOffer, CredentialOfferState, IssuerId, IssuerState, PreAuthCode, StepOutcome,
-    TenantId,
-};
+use swiyu_issuer::domain::{CredentialOfferState, IssuerId, IssuerState, StepOutcome, TenantId};
 use swiyu_issuer::persistence::{credential_offers, issuers};
 use swiyu_issuer::worker::deactivate_issuer::mark_deactivated::execute_mark_deactivated;
 
@@ -27,17 +22,6 @@ async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     id
 }
 
-fn pending_offer(tenant_id: &TenantId, issuer_id: &IssuerId) -> CredentialOffer {
-    CredentialOffer::new(
-        tenant_id.clone(),
-        issuer_id.clone(),
-        "https://example.com/vct/test".into(),
-        json!({"first_name": "Anna"}),
-        PreAuthCode::generate(),
-        Utc::now() + Duration::hours(1),
-    )
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) {
     let tenant_id = TenantId::generate();
@@ -47,22 +31,22 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
 
     let mut conn = pool.acquire().await.unwrap();
 
-    let target_pending_a = pending_offer(&tenant_id, &target_issuer);
-    let target_pending_b = pending_offer(&tenant_id, &target_issuer);
+    let target_pending_a = common::credential_offers::pending(&tenant_id, &target_issuer);
+    let target_pending_b = common::credential_offers::pending(&tenant_id, &target_issuer);
 
-    let mut target_issued = pending_offer(&tenant_id, &target_issuer);
+    let mut target_issued = common::credential_offers::pending(&tenant_id, &target_issuer);
     target_issued.state = CredentialOfferState::Issued;
     target_issued.issued_at = Some(now_micros());
     target_issued.pre_auth_code = None;
 
-    let mut target_cancelled = pending_offer(&tenant_id, &target_issuer);
+    let mut target_cancelled = common::credential_offers::pending(&tenant_id, &target_issuer);
     target_cancelled.state = CredentialOfferState::Cancelled;
     target_cancelled.cancelled_at = Some(now_micros());
     target_cancelled.pre_auth_code = None;
 
     // Pending offer on a different issuer in the same tenant — must
     // be untouched after deactivating only the target issuer.
-    let bystander_pending = pending_offer(&tenant_id, &bystander_issuer);
+    let bystander_pending = common::credential_offers::pending(&tenant_id, &bystander_issuer);
 
     for offer in [
         &target_pending_a,

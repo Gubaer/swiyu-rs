@@ -152,14 +152,7 @@ async fn insert_pending_offer(
     tenant_id: &TenantId,
     issuer_id: &IssuerId,
 ) -> CredentialOffer {
-    let offer = CredentialOffer::new(
-        tenant_id.clone(),
-        issuer_id.clone(),
-        "https://example.com/vct/test".into(),
-        json!({"first_name": "Anna"}),
-        PreAuthCode::generate(),
-        Utc::now() + ChronoDuration::hours(1),
-    );
+    let offer = common::credential_offers::pending(tenant_id, issuer_id);
     common::credential_offers::insert(pool, &offer).await;
     offer
 }

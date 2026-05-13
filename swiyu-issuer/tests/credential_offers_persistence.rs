@@ -5,13 +5,10 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
-use chrono::{Duration, Utc};
-use serde_json::json;
+use chrono::Utc;
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::{
-    CredentialOffer, CredentialOfferState, IssuerId, PreAuthCode, TenantId,
-};
+use swiyu_issuer::domain::{CredentialOfferState, TenantId};
 use swiyu_issuer::persistence::credential_offers;
 use swiyu_issuer::persistence::oidc::credential_offers as oidc_credential_offers;
 
@@ -19,17 +16,6 @@ use swiyu_issuer::persistence::oidc::credential_offers as oidc_credential_offers
 mod common;
 use common::tenants::insert_test_tenant;
 use common::time::now_micros;
-
-fn pending_offer(tenant_id: &TenantId, issuer_id: &IssuerId) -> CredentialOffer {
-    CredentialOffer::new(
-        tenant_id.clone(),
-        issuer_id.clone(),
-        "https://example.com/vct/test".into(),
-        json!({"first_name": "Anna"}),
-        PreAuthCode::generate(),
-        Utc::now() + Duration::hours(1),
-    )
-}
 
 #[sqlx::test(migrations = "./migrations")]
 async fn cancel_all_pending_flips_only_pending_offers(pool: PgPool) {
@@ -41,15 +27,15 @@ async fn cancel_all_pending_flips_only_pending_offers(pool: PgPool) {
 
     let mut conn = pool.acquire().await.unwrap();
 
-    let pending_a = pending_offer(&tenant_id, &issuer_id);
-    let pending_b = pending_offer(&tenant_id, &issuer_id);
+    let pending_a = common::credential_offers::pending(&tenant_id, &issuer_id);
+    let pending_b = common::credential_offers::pending(&tenant_id, &issuer_id);
 
-    let mut already_issued = pending_offer(&tenant_id, &issuer_id);
+    let mut already_issued = common::credential_offers::pending(&tenant_id, &issuer_id);
     already_issued.state = CredentialOfferState::Issued;
     already_issued.issued_at = Some(now_micros());
     already_issued.pre_auth_code = None;
 
-    let mut already_cancelled = pending_offer(&tenant_id, &issuer_id);
+    let mut already_cancelled = common::credential_offers::pending(&tenant_id, &issuer_id);
     already_cancelled.state = CredentialOfferState::Cancelled;
     already_cancelled.cancelled_at = Some(now_micros());
     already_cancelled.pre_auth_code = None;
@@ -109,7 +95,7 @@ async fn cancel_all_pending_is_idempotent_on_rerun(pool: PgPool) {
 
     let mut conn = pool.acquire().await.unwrap();
 
-    let pending = pending_offer(&tenant_id, &issuer_id);
+    let pending = common::credential_offers::pending(&tenant_id, &issuer_id);
     credential_offers::insert(&mut conn, &pending)
         .await
         .unwrap();
@@ -163,8 +149,8 @@ async fn cancel_all_pending_does_not_touch_other_tenants(pool: PgPool) {
 
     let mut conn = pool.acquire().await.unwrap();
 
-    let owner_offer = pending_offer(&tenant_owner, &issuer_owner);
-    let other_offer = pending_offer(&tenant_other, &issuer_other);
+    let owner_offer = common::credential_offers::pending(&tenant_owner, &issuer_owner);
+    let other_offer = common::credential_offers::pending(&tenant_other, &issuer_other);
     credential_offers::insert(&mut conn, &owner_offer)
         .await
         .unwrap();
@@ -211,8 +197,8 @@ async fn cancel_all_pending_does_not_touch_other_issuers(pool: PgPool) {
 
     let mut conn = pool.acquire().await.unwrap();
 
-    let target_offer = pending_offer(&tenant_id, &issuer_target);
-    let bystander_offer = pending_offer(&tenant_id, &issuer_bystander);
+    let target_offer = common::credential_offers::pending(&tenant_id, &issuer_target);
+    let bystander_offer = common::credential_offers::pending(&tenant_id, &issuer_bystander);
     credential_offers::insert(&mut conn, &target_offer)
         .await
         .unwrap();
@@ -256,7 +242,7 @@ async fn find_by_id_for_update_then_set_issued_state_marks_issued(pool: PgPool) 
         .await
         .id;
 
-    let offer = pending_offer(&tenant_id, &issuer_id);
+    let offer = common::credential_offers::pending(&tenant_id, &issuer_id);
     {
         let mut conn = pool.acquire().await.unwrap();
         credential_offers::insert(&mut conn, &offer).await.unwrap();
@@ -300,7 +286,7 @@ async fn find_by_id_for_update_blocks_concurrent_writer(pool: PgPool) {
         .await
         .id;
 
-    let offer = pending_offer(&tenant_id, &issuer_id);
+    let offer = common::credential_offers::pending(&tenant_id, &issuer_id);
     {
         let mut conn = pool.acquire().await.unwrap();
         credential_offers::insert(&mut conn, &offer).await.unwrap();
