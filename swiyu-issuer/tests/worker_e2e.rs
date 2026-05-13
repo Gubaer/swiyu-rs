@@ -12,6 +12,9 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::{
+    SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL,
+};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -32,33 +35,29 @@ use swiyu_issuer::worker::test_support::{CreateStatusListEntryCall, MockStatusRe
 use swiyu_registries::identifier::IdentifierRegistryClient;
 use swiyu_registries::status::StatusListEntry;
 
-const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
-const STATUS_REGISTRY_URL: &str = "https://status-reg.test/lists/abc.jwt";
-
 fn status_registry_with_one_ok() -> MockStatusRegistry {
     let r = MockStatusRegistry::new();
     r.enqueue_create(CreateStatusListEntryCall::Ok(StatusListEntry {
-        id: STATUS_ENTRY_ID.into(),
-        registry_url: STATUS_REGISTRY_URL.into(),
+        id: SAMPLE_STATUS_ENTRY_ID.into(),
+        registry_url: SAMPLE_STATUS_REGISTRY_URL.into(),
     }));
     r
 }
 
-const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
-const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-
 fn allocate_path() -> String {
-    format!("/api/v1/identifier/business-entities/{PARTNER_ID}/identifier-entries")
+    format!("/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries")
 }
 
 fn publish_path() -> String {
-    format!("/api/v1/identifier/business-entities/{PARTNER_ID}/identifier-entries/{REGISTRY_UUID}")
+    format!(
+        "/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries/{SAMPLE_REGISTRY_UUID}"
+    )
 }
 
 /// The URL the registry returns in the allocate response. Picked so
 /// didlog_builder's URL parser can derive a clean did:tdw host/path.
 fn registry_url_in_response() -> String {
-    format!("https://reg.test/api/v1/did/{REGISTRY_UUID}/did.jsonl")
+    format!("https://reg.test/api/v1/did/{SAMPLE_REGISTRY_UUID}/did.jsonl")
 }
 
 async fn insert_test_tenant(
@@ -164,7 +163,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
 
     let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &engine).await;
+    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
@@ -200,11 +199,11 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     assert_eq!(final_task.state, TaskState::Completed);
     assert_eq!(final_task.result_issuer_id, Some(issuer_id.clone()));
 
-    // The allocate response carried REGISTRY_UUID in the URL; verify it
+    // The allocate response carried SAMPLE_REGISTRY_UUID in the URL; verify it
     // round-tripped into state_data.
     assert_eq!(
         final_task.state_data["assigned_identifier"],
-        json!(REGISTRY_UUID)
+        json!(SAMPLE_REGISTRY_UUID)
     );
     assert_eq!(final_task.state_data["didlog_published"], json!(true));
 
@@ -255,7 +254,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
 
     let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &engine).await;
+    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
@@ -322,7 +321,7 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
 
     let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &engine).await;
+    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &engine).await;
 
     // Pre-populate state_data with allocate_did's output, simulating a
     // crash that occurred after allocate_did succeeded but before
@@ -331,7 +330,7 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
     let mut task = pending_task(&tenant_id, issuer_id.clone());
     task.state_data = json!({
         "assigned_did_url": registry_url_in_response(),
-        "assigned_identifier": REGISTRY_UUID,
+        "assigned_identifier": SAMPLE_REGISTRY_UUID,
     });
     let task_id = task.id.clone();
     common::operation_tasks::insert(&pool, &task).await;

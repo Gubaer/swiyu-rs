@@ -14,6 +14,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::SAMPLE_STATUS_ENTRY_ID;
 
 use chrono::{Duration, Utc};
 use common::tenants::insert_test_tenant as insert_tenant;
@@ -238,7 +239,7 @@ async fn registry_coords_round_trip(pool: PgPool) {
         .await
         .unwrap();
 
-    let entry_id = "11111111-2222-3333-4444-555555555555";
+    let entry_id = SAMPLE_STATUS_ENTRY_ID;
     let url = "https://status-reg.example.com/lists/abc.jwt";
     sqlx::query("UPDATE status_lists SET registry_entry_id = $1, registry_url = $2 WHERE id = $3")
         .bind(entry_id)
@@ -614,7 +615,7 @@ async fn acquire_next_dirty_returns_dirty_list_with_columns_populated(pool: PgPo
     let list_id = status_lists::provision_for_issuer(
         &mut conn,
         &issuer_id,
-        Some("11111111-2222-3333-4444-555555555555"),
+        Some(SAMPLE_STATUS_ENTRY_ID),
         Some("https://status-reg.example.com/lists/abc.jwt"),
     )
     .await
@@ -637,7 +638,7 @@ async fn acquire_next_dirty_returns_dirty_list_with_columns_populated(pool: PgPo
     assert_eq!(picked.id, list_id);
     assert_eq!(
         picked.registry_entry_id.as_deref(),
-        Some("11111111-2222-3333-4444-555555555555")
+        Some(SAMPLE_STATUS_ENTRY_ID)
     );
     assert_eq!(
         picked.registry_url.as_deref(),

@@ -10,6 +10,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_STATUS_ENTRY_ID};
 use common::rng::ConstantRng;
 
 use std::sync::Arc;
@@ -29,11 +30,10 @@ use swiyu_issuer::persistence::{self, status_lists};
 use swiyu_issuer::worker::StatusListPublisher;
 use swiyu_registries::status::StatusRegistryClient;
 
-const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
-const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
-
 fn update_path() -> String {
-    format!("/api/v1/status/business-entities/{PARTNER_ID}/status-list-entries/{STATUS_ENTRY_ID}")
+    format!(
+        "/api/v1/status/business-entities/{SAMPLE_PARTNER_ID}/status-list-entries/{SAMPLE_STATUS_ENTRY_ID}"
+    )
 }
 
 fn build_status_client(server: &MockServer) -> StatusRegistryClient {
@@ -53,7 +53,7 @@ fn registry_url_for(server: &MockServer) -> String {
     // The `sub` claim on the published JWT and the `uri` embedded in
     // every issued credential. Real deployments get this from the
     // `statusRegistryUrl` returned by `create_status_list_entry`.
-    format!("{}/lists/{STATUS_ENTRY_ID}.jwt", server.uri())
+    format!("{}/lists/{SAMPLE_STATUS_ENTRY_ID}.jwt", server.uri())
 }
 
 async fn seeded_environment(
@@ -65,7 +65,7 @@ async fn seeded_environment(
     common::oauth::insert_tenant_with_oauth_secrets(
         pool,
         &tenant_id,
-        PARTNER_ID.parse().unwrap(),
+        SAMPLE_PARTNER_ID.parse().unwrap(),
         secret_engine,
         "test-client",
         "test-secret",
@@ -88,7 +88,7 @@ async fn seeded_environment(
     let list_id = status_lists::provision_for_issuer(
         &mut conn,
         &issuer.id,
-        Some(STATUS_ENTRY_ID),
+        Some(SAMPLE_STATUS_ENTRY_ID),
         Some(&registry_url),
     )
     .await

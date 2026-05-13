@@ -25,7 +25,6 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-const FIXTURE_STATUS_REGISTRY_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
 const FIXTURE_STATUS_REGISTRY_URL: &str =
     "https://registry.example.invalid/api/v1/statuslist/11111111-2222-3333-4444-555555555555.jwt";
 
@@ -45,6 +44,7 @@ fn build_state(pool: PgPool) -> AppState {
 #[path = "common/mod.rs"]
 mod common;
 use common::app_state::TEST_BASE_URL;
+use common::fixtures::SAMPLE_STATUS_ENTRY_ID;
 use common::tenants::insert_test_tenant;
 
 /// Constructs a fully-onboarded issuer: a real assertion key stored
@@ -72,7 +72,7 @@ async fn provision_test_status_list(pool: &PgPool, issuer: &Issuer) {
     persistence::status_lists::provision_for_issuer(
         &mut conn,
         &issuer.id,
-        Some(FIXTURE_STATUS_REGISTRY_ENTRY_ID),
+        Some(SAMPLE_STATUS_ENTRY_ID),
         Some(FIXTURE_STATUS_REGISTRY_URL),
     )
     .await

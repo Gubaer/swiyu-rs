@@ -14,6 +14,9 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::{
+    SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL,
+};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -36,21 +39,18 @@ use swiyu_issuer::worker::test_support::{CreateStatusListEntryCall, MockStatusRe
 use swiyu_registries::identifier::IdentifierRegistryClient;
 use swiyu_registries::status::StatusListEntry;
 
-const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
-const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
-const STATUS_REGISTRY_URL: &str = "https://status-reg.test/lists/abc.jwt";
-
 fn allocate_path() -> String {
-    format!("/api/v1/identifier/business-entities/{PARTNER_ID}/identifier-entries")
+    format!("/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries")
 }
 
 fn publish_path() -> String {
-    format!("/api/v1/identifier/business-entities/{PARTNER_ID}/identifier-entries/{REGISTRY_UUID}")
+    format!(
+        "/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries/{SAMPLE_REGISTRY_UUID}"
+    )
 }
 
 fn registry_url_in_response() -> String {
-    format!("https://reg.test/api/v1/did/{REGISTRY_UUID}/did.jsonl")
+    format!("https://reg.test/api/v1/did/{SAMPLE_REGISTRY_UUID}/did.jsonl")
 }
 
 async fn insert_tenant_with_oauth(
@@ -61,7 +61,7 @@ async fn insert_tenant_with_oauth(
     common::oauth::insert_tenant_with_oauth_secrets(
         pool,
         tenant_id,
-        PARTNER_ID.parse().unwrap(),
+        SAMPLE_PARTNER_ID.parse().unwrap(),
         engine,
         "test-client",
         "test-secret",
@@ -87,8 +87,8 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
 fn status_registry_with_one_ok() -> MockStatusRegistry {
     let r = MockStatusRegistry::new();
     r.enqueue_create(CreateStatusListEntryCall::Ok(StatusListEntry {
-        id: STATUS_ENTRY_ID.into(),
-        registry_url: STATUS_REGISTRY_URL.into(),
+        id: SAMPLE_STATUS_ENTRY_ID.into(),
+        registry_url: SAMPLE_STATUS_REGISTRY_URL.into(),
     }));
     r
 }

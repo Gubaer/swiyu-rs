@@ -5,6 +5,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -30,14 +31,11 @@ use swiyu_issuer::worker::test_support::{
 };
 use swiyu_registries::status::StatusListEntry;
 
-const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
-const STATUS_REGISTRY_URL: &str = "https://status-reg.example.com/lists/abc.jwt";
-
 fn status_registry_with_one_ok() -> MockStatusRegistry {
     let r = MockStatusRegistry::new();
     r.enqueue_create(CreateStatusListEntryCall::Ok(StatusListEntry {
-        id: STATUS_ENTRY_ID.into(),
-        registry_url: STATUS_REGISTRY_URL.into(),
+        id: SAMPLE_STATUS_ENTRY_ID.into(),
+        registry_url: SAMPLE_STATUS_REGISTRY_URL.into(),
     }));
     r
 }
@@ -193,13 +191,7 @@ async fn wait_for_task_state(
 async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(
-        &pool,
-        &tenant_id,
-        "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef",
-        &secret_engine,
-    )
-    .await;
+    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_create_issuer_task(&tenant_id, issuer_id.clone());

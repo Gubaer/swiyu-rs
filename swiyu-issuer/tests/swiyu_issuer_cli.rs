@@ -5,6 +5,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::SAMPLE_PARTNER_ID;
 
 use secrecy::SecretString;
 use sqlx::PgPool;
@@ -392,7 +393,7 @@ async fn set_oauth_credentials_returns_tenant_not_found_for_unknown_tenant(pool:
 #[sqlx::test(migrations = "./migrations")]
 async fn create_inserts_new_tenant_row(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     create_tenant(
         &pool,
@@ -417,7 +418,7 @@ async fn create_inserts_new_tenant_row(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn create_returns_already_exists_for_colliding_tenant_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     create_tenant(&pool, &tenant_id, partner_id, None, None)
         .await
@@ -435,7 +436,7 @@ async fn create_returns_already_exists_for_colliding_tenant_id(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn update_partial_writes_only_specified_fields(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     create_tenant(
         &pool,
@@ -494,7 +495,7 @@ fn bootstrap_args_full(partner_id: Uuid) -> BootstrapDevTenantArgs {
 #[sqlx::test(migrations = "./migrations")]
 async fn bootstrap_dev_from_env_creates_missing_tenant(pool: PgPool) {
     let engine = common::oauth::test_engine();
-    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     let tenant_id = bootstrap_dev_from_env(&pool, bootstrap_args_full(partner_id), false, &engine)
         .await
@@ -525,7 +526,7 @@ async fn bootstrap_dev_from_env_creates_missing_tenant(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn bootstrap_dev_from_env_without_force_preserves_existing_oauth(pool: PgPool) {
     let engine = common::oauth::test_engine();
-    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     // First call: missing -> create with one set of oauth values.
     let original_args = BootstrapDevTenantArgs {
@@ -577,7 +578,7 @@ async fn bootstrap_dev_from_env_without_force_preserves_existing_oauth(pool: PgP
 #[sqlx::test(migrations = "./migrations")]
 async fn bootstrap_dev_from_env_with_force_syncs_row_from_env(pool: PgPool) {
     let engine = common::oauth::test_engine();
-    let partner_id: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     bootstrap_dev_from_env(
         &pool,
@@ -632,10 +633,7 @@ async fn bootstrap_dev_from_env_with_force_syncs_row_from_env(pool: PgPool) {
 #[test]
 fn parse_dev_tenant_args_happy_path() {
     let env: std::collections::HashMap<&str, &str> = [
-        (
-            "DEV_TENANT_PARTNER_ID",
-            "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef",
-        ),
+        ("DEV_TENANT_PARTNER_ID", SAMPLE_PARTNER_ID),
         ("DEV_TENANT_DISPLAY_NAME", "Dev"),
         ("DEV_TENANT_DESCRIPTION", "notes"),
         ("DEV_TENANT_CLIENT_ID", "cid"),
@@ -645,7 +643,7 @@ fn parse_dev_tenant_args_happy_path() {
     .into_iter()
     .collect();
     let args = parse_dev_tenant_args(|k| env.get(k).map(|s| (*s).to_string())).unwrap();
-    let expected_partner: Uuid = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef".parse().unwrap();
+    let expected_partner: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
     assert_eq!(args.partner_id, expected_partner);
     assert_eq!(args.display_name.as_deref(), Some("Dev"));
     assert_eq!(args.description.as_deref(), Some("notes"));
@@ -655,10 +653,7 @@ fn parse_dev_tenant_args_happy_path() {
 #[test]
 fn parse_dev_tenant_args_treats_empty_as_absent() {
     let env: std::collections::HashMap<&str, &str> = [
-        (
-            "DEV_TENANT_PARTNER_ID",
-            "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef",
-        ),
+        ("DEV_TENANT_PARTNER_ID", SAMPLE_PARTNER_ID),
         ("DEV_TENANT_DISPLAY_NAME", ""),
         ("DEV_TENANT_CLIENT_ID", ""),
     ]

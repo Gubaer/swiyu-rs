@@ -11,11 +11,9 @@ use swiyu_issuer::domain::{IssuerId, StepOutcome, TenantId};
 use swiyu_issuer::persistence;
 use swiyu_issuer::worker::create_issuer::{CreateIssuerStateData, execute_provision_status_list};
 
-const ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
-const REGISTRY_URL: &str = "https://status-reg.example.com/lists/abc.jwt";
-
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::{SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::tenants::insert_test_tenant;
 
 async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId, issuer_id: &IssuerId) {
@@ -34,8 +32,8 @@ async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId, issuer_id: &Iss
 
 fn fixture_state() -> CreateIssuerStateData {
     CreateIssuerStateData {
-        status_list_registry_entry_id: Some(ENTRY_ID.into()),
-        status_list_registry_url: Some(REGISTRY_URL.into()),
+        status_list_registry_entry_id: Some(SAMPLE_STATUS_ENTRY_ID.into()),
+        status_list_registry_url: Some(SAMPLE_STATUS_REGISTRY_URL.into()),
         ..CreateIssuerStateData::default()
     }
 }
@@ -62,7 +60,13 @@ async fn happy_path_provisions_row_and_repoints_pointer(pool: PgPool) {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(row, (Some(ENTRY_ID.into()), Some(REGISTRY_URL.into())));
+    assert_eq!(
+        row,
+        (
+            Some(SAMPLE_STATUS_ENTRY_ID.into()),
+            Some(SAMPLE_STATUS_REGISTRY_URL.into())
+        )
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -112,7 +116,7 @@ async fn missing_entry_id_is_terminal(pool: PgPool) {
 
     let state = CreateIssuerStateData {
         status_list_registry_entry_id: None,
-        status_list_registry_url: Some(REGISTRY_URL.into()),
+        status_list_registry_url: Some(SAMPLE_STATUS_REGISTRY_URL.into()),
         ..CreateIssuerStateData::default()
     };
     let outcome = execute_provision_status_list(&pool, &issuer_id, &state).await;
@@ -130,7 +134,7 @@ async fn missing_registry_url_is_terminal(pool: PgPool) {
     insert_test_issuer(&pool, &tenant_id, &issuer_id).await;
 
     let state = CreateIssuerStateData {
-        status_list_registry_entry_id: Some(ENTRY_ID.into()),
+        status_list_registry_entry_id: Some(SAMPLE_STATUS_ENTRY_ID.into()),
         status_list_registry_url: None,
         ..CreateIssuerStateData::default()
     };

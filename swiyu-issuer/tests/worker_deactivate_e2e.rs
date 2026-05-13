@@ -13,6 +13,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -37,12 +38,10 @@ use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
 
-const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
-const REGISTRY_UUID: &str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const FIXTURE_SCID: &str = "Qm-fixture-scid";
 
 fn fixture_did() -> String {
-    format!("did:tdw:{FIXTURE_SCID}:reg.test:{REGISTRY_UUID}")
+    format!("did:tdw:{FIXTURE_SCID}:reg.test:{SAMPLE_REGISTRY_UUID}")
 }
 
 async fn insert_test_tenant(
@@ -203,7 +202,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
 
     let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, PARTNER_ID, &secret_engine).await;
+    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &secret_engine).await;
     let (issuer_id, engine) = insert_active_issuer(&pool, &tenant_id).await;
 
     let pending_a = insert_pending_offer(&pool, &tenant_id, &issuer_id).await;
@@ -279,8 +278,8 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     let publishes = registry.publish_invocations.lock().unwrap();
     assert_eq!(publishes.len(), 1);
     let (partner, identifier, body_str) = &publishes[0];
-    assert_eq!(partner, PARTNER_ID);
-    assert_eq!(identifier, REGISTRY_UUID);
+    assert_eq!(partner, SAMPLE_PARTNER_ID);
+    assert_eq!(identifier, SAMPLE_REGISTRY_UUID);
     let last_line = body_str
         .trim_end_matches('\n')
         .rsplit('\n')

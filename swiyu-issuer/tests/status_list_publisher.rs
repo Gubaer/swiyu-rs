@@ -6,6 +6,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::rng::ConstantRng;
 
 use std::sync::Arc;
@@ -25,10 +26,6 @@ use swiyu_issuer::worker::test_support::{
 };
 use swiyu_registries::status::StatusListEntry;
 
-const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
-const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
-const STATUS_REGISTRY_URL: &str = "https://status-reg.test/lists/abc.jwt";
-
 async fn build_provider_setup(
     pool: &PgPool,
     engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
@@ -46,7 +43,7 @@ async fn seeded_environment(
     common::oauth::insert_tenant_with_oauth_secrets(
         pool,
         &tenant_id,
-        PARTNER_ID.parse().unwrap(),
+        SAMPLE_PARTNER_ID.parse().unwrap(),
         secret_engine,
         "test-client",
         "test-secret",
@@ -68,8 +65,8 @@ async fn seeded_environment(
     let list_id = status_lists::provision_for_issuer(
         &mut conn,
         &issuer.id,
-        Some(STATUS_ENTRY_ID),
-        Some(STATUS_REGISTRY_URL),
+        Some(SAMPLE_STATUS_ENTRY_ID),
+        Some(SAMPLE_STATUS_REGISTRY_URL),
     )
     .await
     .unwrap();
