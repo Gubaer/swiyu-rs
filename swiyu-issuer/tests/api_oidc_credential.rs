@@ -100,10 +100,7 @@ async fn create_pending_offer(pool: &PgPool, issuer: &Issuer, claims: Value) -> 
         PreAuthCode::generate(),
         Utc::now() + Duration::minutes(5),
     );
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::credential_offers::insert(&mut conn, &offer)
-        .await
-        .unwrap();
+    common::credential_offers::insert(pool, &offer).await;
     offer
 }
 

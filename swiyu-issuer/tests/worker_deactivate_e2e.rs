@@ -171,8 +171,7 @@ async fn insert_pending_offer(
         PreAuthCode::generate(),
         Utc::now() + ChronoDuration::hours(1),
     );
-    let mut conn = pool.acquire().await.unwrap();
-    credential_offers::insert(&mut conn, &offer).await.unwrap();
+    common::credential_offers::insert(pool, &offer).await;
     offer
 }
 
@@ -192,8 +191,7 @@ async fn insert_issued_offer(
     offer.state = CredentialOfferState::Issued;
     offer.issued_at = Some(now_micros());
     offer.pre_auth_code = None;
-    let mut conn = pool.acquire().await.unwrap();
-    credential_offers::insert(&mut conn, &offer).await.unwrap();
+    common::credential_offers::insert(pool, &offer).await;
     offer
 }
 
