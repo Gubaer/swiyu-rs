@@ -62,16 +62,7 @@ async fn seeded_environment(
     secret_engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
 ) -> (Issuer, StatusList, DevSigningEngine) {
     let tenant_id = TenantId::generate();
-    common::oauth::insert_tenant_with_oauth_secrets(
-        pool,
-        &tenant_id,
-        SAMPLE_PARTNER_ID.parse().unwrap(),
-        secret_engine,
-        "test-client",
-        "test-secret",
-        "test-refresh",
-    )
-    .await;
+    common::oauth::insert_test_tenant_with_oauth(pool, &tenant_id, secret_engine).await;
 
     let engine = DevSigningEngine::new(pool.clone());
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();

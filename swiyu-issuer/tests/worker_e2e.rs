@@ -12,9 +12,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::fixtures::{
-    SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL,
-};
+use common::fixtures::{SAMPLE_REGISTRY_UUID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
 use common::rng::ConstantRng;
 use common::time::now_micros;
@@ -43,26 +41,6 @@ fn status_registry_with_one_ok() -> MockStatusRegistry {
         registry_url: SAMPLE_STATUS_REGISTRY_URL.into(),
     }));
     r
-}
-
-async fn insert_test_tenant(
-    pool: &PgPool,
-    tenant_id: &TenantId,
-    partner_id: &str,
-    engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
-) {
-    common::oauth::insert_tenant_with_oauth_secrets(
-        pool,
-        tenant_id,
-        partner_id
-            .parse()
-            .expect("test partner_id must be a valid UUID"),
-        engine,
-        "test-client",
-        "test-secret",
-        "test-refresh",
-    )
-    .await;
 }
 
 fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
@@ -148,7 +126,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
 
     let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &engine).await;
+    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
@@ -239,7 +217,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
 
     let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &engine).await;
+    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
@@ -306,7 +284,7 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
 
     let engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &engine).await;
+    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
 
     // Pre-populate state_data with allocate_did's output, simulating a
     // crash that occurred after allocate_did succeeded but before

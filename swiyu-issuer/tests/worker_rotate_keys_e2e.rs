@@ -40,26 +40,6 @@ use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
 
-async fn insert_test_tenant(
-    pool: &PgPool,
-    tenant_id: &TenantId,
-    partner_id: &str,
-    engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
-) {
-    common::oauth::insert_tenant_with_oauth_secrets(
-        pool,
-        tenant_id,
-        partner_id
-            .parse()
-            .expect("test partner_id must be a valid UUID"),
-        engine,
-        "test-client",
-        "test-secret",
-        "test-refresh",
-    )
-    .await;
-}
-
 async fn build_provider_setup(
     pool: &PgPool,
     engine: Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
@@ -170,7 +150,7 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
 
     let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &secret_engine).await;
+    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
     let (issuer, engine) = insert_active_issuer(&pool, &tenant_id).await;
 
     let task = rotate_task(&tenant_id, issuer.id.clone(), vec!["all"]);
@@ -259,7 +239,7 @@ async fn rotates_only_authentication(pool: PgPool) {
 
     let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &secret_engine).await;
+    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
     let (issuer, engine) = insert_active_issuer(&pool, &tenant_id).await;
     let original_authorized: KeyPairId = issuer.authorized_key_id.unwrap();
     let original_assertion: KeyPairId = issuer.assertion_key_id.unwrap();

@@ -14,7 +14,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
+use common::fixtures::{SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
 use common::rng::ConstantRng;
 use common::time::now_micros;
@@ -37,23 +37,6 @@ use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{CreateStatusListEntryCall, MockStatusRegistry};
 use swiyu_registries::identifier::IdentifierRegistryClient;
 use swiyu_registries::status::StatusListEntry;
-
-async fn insert_tenant_with_oauth(
-    pool: &PgPool,
-    tenant_id: &TenantId,
-    engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
-) {
-    common::oauth::insert_tenant_with_oauth_secrets(
-        pool,
-        tenant_id,
-        SAMPLE_PARTNER_ID.parse().unwrap(),
-        engine,
-        "test-client",
-        "test-secret",
-        "test-refresh",
-    )
-    .await;
-}
 
 fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
@@ -152,7 +135,7 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
         .await;
 
     let tenant_id = TenantId::generate();
-    insert_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
+    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
@@ -242,7 +225,7 @@ async fn registry_401_triggers_invalidate_and_retry(pool: PgPool) {
         .await;
 
     let tenant_id = TenantId::generate();
-    insert_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
+    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());

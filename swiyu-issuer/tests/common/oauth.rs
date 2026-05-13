@@ -102,6 +102,25 @@ pub async fn insert_tenant_with_oauth_secrets(
     .unwrap();
 }
 
+pub async fn insert_test_tenant_with_oauth(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    engine: &AnySecretEncryptionEngine,
+) {
+    insert_tenant_with_oauth_secrets(
+        pool,
+        tenant_id,
+        super::fixtures::SAMPLE_PARTNER_ID
+            .parse()
+            .expect("SAMPLE_PARTNER_ID parses"),
+        engine,
+        "test-client",
+        "test-secret",
+        "test-refresh",
+    )
+    .await;
+}
+
 pub async fn read_refresh_token(
     pool: &PgPool,
     tenant_id: &TenantId,

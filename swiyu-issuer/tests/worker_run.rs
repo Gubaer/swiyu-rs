@@ -5,7 +5,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
+use common::fixtures::{SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -118,26 +118,6 @@ fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
     }
 }
 
-async fn insert_test_tenant(
-    pool: &PgPool,
-    tenant_id: &TenantId,
-    partner_id: &str,
-    engine: &swiyu_issuer::domain::AnySecretEncryptionEngine,
-) {
-    common::oauth::insert_tenant_with_oauth_secrets(
-        pool,
-        tenant_id,
-        partner_id
-            .parse()
-            .expect("test partner_id must be a valid UUID"),
-        engine,
-        "test-client",
-        "test-secret",
-        "test-refresh",
-    )
-    .await;
-}
-
 async fn build_provider_setup(
     pool: &PgPool,
     engine: std::sync::Arc<swiyu_issuer::domain::AnySecretEncryptionEngine>,
@@ -191,7 +171,7 @@ async fn wait_for_task_state(
 async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
     let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id, SAMPLE_PARTNER_ID, &secret_engine).await;
+    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_create_issuer_task(&tenant_id, issuer_id.clone());
