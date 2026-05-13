@@ -12,25 +12,15 @@ use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
-    ApiToken, ApiTokenSecret, Issuer, IssuerId, IssuerState, KeyPairId, OperationTask, TaskId,
-    TaskState, TaskType, TenantId,
+    Issuer, IssuerId, IssuerState, KeyPairId, OperationTask, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence;
 
 #[path = "common/mod.rs"]
 mod common;
+use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
 use common::tenants::insert_test_tenant;
-
-async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
-    let secret = ApiTokenSecret::generate();
-    let token = ApiToken::new(tenant_id.clone(), "test-token".into(), secret.hash(), None);
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::api_tokens::insert(&mut conn, &token)
-        .await
-        .unwrap();
-    secret
-}
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = Issuer {

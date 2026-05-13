@@ -12,25 +12,14 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
-use swiyu_issuer::domain::{
-    ApiToken, ApiTokenSecret, IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId,
-};
+use swiyu_issuer::domain::{IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence;
 
 #[path = "common/mod.rs"]
 mod common;
+use common::api_tokens::mint_test_token;
 use common::app_state::build_state;
 use common::tenants::insert_test_tenant;
-
-async fn mint_test_token(pool: &PgPool, tenant_id: &TenantId) -> ApiTokenSecret {
-    let secret = ApiTokenSecret::generate();
-    let token = ApiToken::new(tenant_id.clone(), "test-token".into(), secret.hash(), None);
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::api_tokens::insert(&mut conn, &token)
-        .await
-        .unwrap();
-    secret
-}
 
 fn pending_task(tenant_id: TenantId, result_issuer_id: Option<IssuerId>) -> OperationTask {
     let now = Utc::now();
