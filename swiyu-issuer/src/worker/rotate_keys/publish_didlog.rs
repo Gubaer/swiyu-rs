@@ -161,29 +161,12 @@ mod tests {
     use crate::domain::signing_engine::test_support::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
     };
-    use crate::domain::{Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId};
+    use crate::domain::{KeyAlgorithm, RawPublicKey};
     use crate::worker::test_support::{
         FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
-        fixture_kid, fixture_now, fixture_p256, fixture_rotated_triple, fixture_tenant,
+        fixture_issuer, fixture_now, fixture_p256, fixture_rotated_triple, fixture_tenant,
         fixture_token_provider,
     };
-
-    fn fixture_issuer() -> Issuer {
-        Issuer {
-            id: IssuerId::generate(),
-            tenant_id: TenantId::generate(),
-            did: fixture_did().into(),
-            state: Some(IssuerState::Active),
-            description: Some("fixture".into()),
-            authorized_key_id: Some(fixture_kid(0x11)),
-            authentication_key_id: Some(fixture_kid(0x22)),
-            assertion_key_id: Some(fixture_kid(0x33)),
-            display_name: Some("Fixture".into()),
-            logo_uri: None,
-            locale: None,
-            created_at: Utc::now(),
-        }
-    }
 
     fn fixture_state(didlog_published: bool, with_triple: bool) -> RotateKeysStateData {
         RotateKeysStateData {

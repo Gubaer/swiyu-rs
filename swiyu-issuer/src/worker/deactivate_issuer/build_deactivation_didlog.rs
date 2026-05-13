@@ -90,27 +90,11 @@ mod tests {
     use crate::domain::signing_engine::test_support::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk,
     };
-    use crate::domain::{Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId};
+    use crate::domain::{IssuerState, KeyAlgorithm, RawPublicKey};
     use crate::worker::test_support::{
-        FetchLogCall, MockRegistry, fixture_did, fixture_kid, fixture_now, fixture_p256,
+        FetchLogCall, MockRegistry, fixture_did, fixture_issuer, fixture_kid, fixture_now,
+        fixture_p256,
     };
-
-    fn fixture_issuer() -> Issuer {
-        Issuer {
-            id: IssuerId::generate(),
-            tenant_id: TenantId::generate(),
-            did: fixture_did().into(),
-            state: Some(IssuerState::Active),
-            description: Some("fixture issuer".into()),
-            authorized_key_id: Some(fixture_kid(0x11)),
-            authentication_key_id: Some(fixture_kid(0x22)),
-            assertion_key_id: Some(fixture_kid(0x33)),
-            display_name: Some("Fixture".into()),
-            logo_uri: None,
-            locale: None,
-            created_at: Utc::now(),
-        }
-    }
 
     fn fixture_genesis_entry() -> DIDLogEntry {
         // A genesis entry whose did_doc_state is `Value` and whose

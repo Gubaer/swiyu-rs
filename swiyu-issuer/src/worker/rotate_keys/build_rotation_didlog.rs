@@ -98,28 +98,11 @@ mod tests {
     use crate::domain::signing_engine::test_support::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
     };
-    use crate::domain::{Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId};
+    use crate::domain::{IssuerState, KeyAlgorithm, RawPublicKey};
     use crate::worker::test_support::{
-        FetchLogCall, MockRegistry, fixture_did, fixture_kid, fixture_now, fixture_p256,
-        fixture_rotated_triple,
+        FetchLogCall, MockRegistry, fixture_did, fixture_issuer, fixture_kid, fixture_now,
+        fixture_p256, fixture_rotated_triple,
     };
-
-    fn fixture_issuer() -> Issuer {
-        Issuer {
-            id: IssuerId::generate(),
-            tenant_id: TenantId::generate(),
-            did: fixture_did().into(),
-            state: Some(IssuerState::Active),
-            description: Some("fixture".into()),
-            authorized_key_id: Some(fixture_kid(0x11)),
-            authentication_key_id: Some(fixture_kid(0x22)),
-            assertion_key_id: Some(fixture_kid(0x33)),
-            display_name: Some("Fixture".into()),
-            logo_uri: None,
-            locale: None,
-            created_at: Utc::now(),
-        }
-    }
 
     // Stand-in for the registry tail before the rotation we're about to publish:
     // the genesis entry's `updateKeys` references an "old" authorized multikey distinct from any new one.

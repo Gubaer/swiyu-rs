@@ -27,7 +27,8 @@ use uuid::Uuid;
 use super::create_issuer::KeyTriple;
 use super::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 use crate::domain::{
-    GeneratedKeyPair, KeyAlgorithm, KeyPairId, RawPublicKey, StaticTokenProvider, Tenant, TenantId,
+    GeneratedKeyPair, Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey,
+    StaticTokenProvider, Tenant, TenantId,
 };
 
 pub fn fixture_kid(byte: u8) -> KeyPairId {
@@ -76,6 +77,23 @@ pub fn fixture_allocation() -> Allocation {
 
 pub fn fixture_token_provider() -> StaticTokenProvider {
     StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
+}
+
+pub fn fixture_issuer() -> Issuer {
+    Issuer {
+        id: IssuerId::generate(),
+        tenant_id: TenantId::generate(),
+        did: fixture_did().into(),
+        state: Some(IssuerState::Active),
+        description: Some("fixture".into()),
+        authorized_key_id: Some(fixture_kid(0x11)),
+        authentication_key_id: Some(fixture_kid(0x22)),
+        assertion_key_id: Some(fixture_kid(0x33)),
+        display_name: Some("Fixture".into()),
+        logo_uri: None,
+        locale: None,
+        created_at: Utc::now(),
+    }
 }
 
 pub fn fixture_tenant(partner_id: &str) -> Tenant {
