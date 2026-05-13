@@ -98,19 +98,27 @@ services:
       - vault secrets enable transit || true
     restart: "no"
 
-  # One-shot dev seed: writes the OAuth2 columns of the seeded dev
-  # tenant from .env. Two steps — credentials first, then the
-  # refresh token — because a refresh-token grant fails until
-  # client_id/client_secret are populated.
-  #   1. ${SWIYU_CLIENT_ID} + ${SWIYU_CLIENT_SECRET} → oauth_client_id +
-  #      oauth_client_secret (atomic, both columns or neither).
-  #   2. ${SWIYU_REFRESH_TOKEN} → oauth_refresh_token.
-  # Both steps idempotent via `--only-if-empty`: the credentials seed
-  # skips when both columns are non-NULL; the refresh-token seed skips
-  # when the column is non-NULL (e.g. because the runtime rotated it).
-  # Empty env vars silently skip the corresponding step; the first
-  # worker call then fails with MissingCredentials, same as without
-  # this service. swiyu-issuer-mgmtapi's start is gated on
+  # One-shot dev seed: brings up the contributor's dev tenant from
+  # `.env`. `swiyu-issuer-cli tenant bootstrap-dev-from-env` finds the
+  # tenant row by DEV_TENANT_PARTNER_ID (creating it if missing) and
+  # writes the oauth_* columns from DEV_TENANT_CLIENT_ID,
+  # DEV_TENANT_CLIENT_SECRET, and DEV_TENANT_REFRESH_TOKEN. The default
+  # invocation is only-if-empty on the oauth columns and leaves
+  # display_name/description alone, so a runtime-rotated refresh token
+  # survives a re-run.
+  #
+  # Two CLI invocations are needed when SECRET_ENCRYPTION_ENGINE=vault:
+  # the per-tenant Transit key has to exist before the CLI encrypts
+  # any oauth secret, but the tenant id is only known once the row is
+  # created. The first call suppresses the oauth env vars so the row
+  # is created without a secret write; the second call (after the
+  # Vault key provisioning loop) writes the oauth columns. For
+  # SECRET_ENCRYPTION_ENGINE=dev the second call is the only one that
+  # writes oauth values; the first is a cheap no-op on the row.
+  #
+  # API-token minting is left to the contributor:
+  # `swiyu-issuer-cli tenant api-token mint --tenant <id> --name <name>`.
+  # swiyu-issuer-mgmtapi's start is gated on
   # service_completed_successfully so the seed lands before any
   # OAuth2 grant is attempted.
   bootstrap-dev-tenant:
@@ -126,10 +134,12 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}
-      DEV_TENANT_ID: ${DEV_TENANT_ID:-4Mk7yK5pQR7sN3}
-      SWIYU_CLIENT_ID: ${SWIYU_CLIENT_ID}
-      SWIYU_CLIENT_SECRET: ${SWIYU_CLIENT_SECRET}
-      SWIYU_REFRESH_TOKEN: ${SWIYU_REFRESH_TOKEN}
+      DEV_TENANT_PARTNER_ID: ${DEV_TENANT_PARTNER_ID}
+      DEV_TENANT_DISPLAY_NAME: ${DEV_TENANT_DISPLAY_NAME}
+      DEV_TENANT_DESCRIPTION: ${DEV_TENANT_DESCRIPTION}
+      DEV_TENANT_CLIENT_ID: ${DEV_TENANT_CLIENT_ID}
+      DEV_TENANT_CLIENT_SECRET: ${DEV_TENANT_CLIENT_SECRET}
+      DEV_TENANT_REFRESH_TOKEN: ${DEV_TENANT_REFRESH_TOKEN}
       # Must match the values handed to swiyu-issuer-mgmtapi /
       # swiyu-issuer-oidcapi: the secrets the CLI writes here are
       # decrypted by those services at runtime under the same engine.
@@ -142,6 +152,23 @@ services:
       - /bin/sh
       - -c
       - |
+        set -e
+        # Phase 1: ensure the row exists; capture the runtime tenant id
+        # on stdout. Oauth env vars are unset for this call so a
+        # vault-engine secret write cannot fire before the Transit key
+        # is provisioned below. (POSIX `set -e` doesn't trigger on a
+        # failure inside command substitution, hence the explicit
+        # empty-string check.)
+        TENANT_ID=$$(
+          env -u DEV_TENANT_CLIENT_ID -u DEV_TENANT_CLIENT_SECRET -u DEV_TENANT_REFRESH_TOKEN \
+            swiyu-issuer-cli tenant bootstrap-dev-from-env
+        )
+        if [ -z "$$TENANT_ID" ]; then
+          echo "bootstrap-dev-tenant: phase 1 produced no tenant id" >&2
+          exit 1
+        fi
+        echo "bootstrap-dev-tenant: dev tenant id = $$TENANT_ID" >&2
+
         if [ "$$SECRET_ENCRYPTION_ENGINE" = "vault" ]; then
           # Operator-provisioning step for the dev stack: the runtime
           # never calls `vault write -f {transit}/keys/*`. Idempotent;
@@ -151,26 +178,14 @@ services:
               -H "X-Vault-Token: $$VAULT_TOKEN" \
               -H "Content-Type: application/json" \
               -d '{"type":"aes256-gcm96"}' \
-              "$$VAULT_ADDR/v1/transit/keys/tenant-$$DEV_TENANT_ID-$$family" >/dev/null \
-              || { echo "bootstrap-dev-tenant: failed to provision Vault key tenant-$$DEV_TENANT_ID-$$family" >&2; exit 1; }
+              "$$VAULT_ADDR/v1/transit/keys/tenant-$$TENANT_ID-$$family" >/dev/null \
+              || { echo "bootstrap-dev-tenant: failed to provision Vault key tenant-$$TENANT_ID-$$family" >&2; exit 1; }
           done
         fi
-        if [ -n "$$SWIYU_CLIENT_ID" ] && [ -n "$$SWIYU_CLIENT_SECRET" ]; then
-          printf '%s' "$$SWIYU_CLIENT_SECRET" \
-            | swiyu-issuer-cli tenant set-oauth-credentials \
-                --tenant "$$DEV_TENANT_ID" \
-                --client-id "$$SWIYU_CLIENT_ID" \
-                --client-secret-stdin --only-if-empty
-        else
-          echo "bootstrap-dev-tenant: SWIYU_CLIENT_ID and/or SWIYU_CLIENT_SECRET empty, skipping credentials seed" >&2
-        fi
-        if [ -n "$$SWIYU_REFRESH_TOKEN" ]; then
-          printf '%s' "$$SWIYU_REFRESH_TOKEN" \
-            | swiyu-issuer-cli tenant import-oauth-refresh-token \
-                --tenant "$$DEV_TENANT_ID" --token-stdin --only-if-empty
-        else
-          echo "bootstrap-dev-tenant: SWIYU_REFRESH_TOKEN is empty, skipping refresh-token seed" >&2
-        fi
+
+        # Phase 2: write the oauth columns (only-if-empty by default).
+        # Stdout re-prints the tenant id; redirect it to /dev/null.
+        swiyu-issuer-cli tenant bootstrap-dev-from-env >/dev/null
     restart: "no"
 
   # The swiyu-issuer-mgmtapi management API. SWIYU_IDENTIFIER_REGISTRY_URL,
