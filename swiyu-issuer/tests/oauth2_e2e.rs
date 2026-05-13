@@ -15,7 +15,6 @@
 #[path = "common/mod.rs"]
 mod common;
 use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
-use common::rng::ConstantRng;
 use common::time::now_micros;
 
 use std::sync::Arc;
@@ -27,13 +26,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swiyu_issuer::domain::{
-    DevSigningEngine, IssuerId, OperationTask, ProviderRegistry, TaskState, TaskType, TenantId,
-};
-
-use swiyu_issuer::worker::Worker;
-use swiyu_issuer::worker::test_support::MockStatusRegistry;
-use swiyu_registries::identifier::IdentifierRegistryClient;
+use swiyu_issuer::domain::{IssuerId, OperationTask, TaskState, TaskType, TenantId};
 
 fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
@@ -47,22 +40,6 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
         updated_at: now,
         ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
-}
-
-fn build_worker(
-    pool: PgPool,
-    registry_server: &MockServer,
-    providers: Arc<ProviderRegistry>,
-) -> Worker<IdentifierRegistryClient, DevSigningEngine, MockStatusRegistry> {
-    Worker::new(
-        pool.clone(),
-        common::identifier_registry::build_client(registry_server),
-        DevSigningEngine::new(pool),
-        common::status_registry::with_one_ok(),
-        providers,
-        Box::new(ConstantRng(0)),
-    )
-    .with_poll_interval(Duration::from_millis(20))
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -101,7 +78,7 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
     common::operation_tasks::insert(&pool, &task).await;
 
     let shutdown = CancellationToken::new();
-    let worker = build_worker(pool.clone(), &registry_server, providers);
+    let worker = common::worker::build_real(pool.clone(), &registry_server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
     let final_task = common::operation_tasks::wait_for_state(
@@ -191,7 +168,7 @@ async fn registry_401_triggers_invalidate_and_retry(pool: PgPool) {
     common::operation_tasks::insert(&pool, &task).await;
 
     let shutdown = CancellationToken::new();
-    let worker = build_worker(pool.clone(), &registry_server, providers);
+    let worker = common::worker::build_real(pool.clone(), &registry_server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
     let final_task = common::operation_tasks::wait_for_state(

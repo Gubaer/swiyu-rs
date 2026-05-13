@@ -14,7 +14,6 @@
 mod common;
 use common::fixtures::SAMPLE_REGISTRY_UUID;
 use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
-use common::rng::ConstantRng;
 use common::time::now_micros;
 
 use std::time::Duration;
@@ -25,11 +24,8 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swiyu_issuer::domain::{
-    DevSigningEngine, IssuerId, OperationTask, TaskState, TaskType, TenantId,
-};
+use swiyu_issuer::domain::{IssuerId, OperationTask, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence::issuers;
-use swiyu_issuer::worker::Worker;
 
 fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     let now = now_micros();
@@ -94,15 +90,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let (_token_server, providers) =
         build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
-    let worker = Worker::new(
-        pool.clone(),
-        common::identifier_registry::build_client(&server),
-        DevSigningEngine::new(pool.clone()),
-        common::status_registry::with_one_ok(),
-        providers,
-        Box::new(ConstantRng(0)),
-    )
-    .with_poll_interval(Duration::from_millis(20));
+    let worker = common::worker::build_real(pool.clone(), &server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
     let final_task = common::operation_tasks::wait_for_state(
@@ -187,15 +175,7 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
     let shutdown = CancellationToken::new();
     // ConstantRng(0) → backoff_delay returns 0ms, so the retry fires on
     // the very next poll without waiting on real exponential backoff.
-    let worker = Worker::new(
-        pool.clone(),
-        common::identifier_registry::build_client(&server),
-        DevSigningEngine::new(pool.clone()),
-        common::status_registry::with_one_ok(),
-        providers,
-        Box::new(ConstantRng(0)),
-    )
-    .with_poll_interval(Duration::from_millis(20));
+    let worker = common::worker::build_real(pool.clone(), &server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
     let final_task = common::operation_tasks::wait_for_state(
@@ -259,15 +239,7 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
     let (_token_server, providers) =
         build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
-    let worker = Worker::new(
-        pool.clone(),
-        common::identifier_registry::build_client(&server),
-        DevSigningEngine::new(pool.clone()),
-        common::status_registry::with_one_ok(),
-        providers,
-        Box::new(ConstantRng(0)),
-    )
-    .with_poll_interval(Duration::from_millis(20));
+    let worker = common::worker::build_real(pool.clone(), &server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
     let final_task = common::operation_tasks::wait_for_state(

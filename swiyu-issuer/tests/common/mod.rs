@@ -12,3 +12,4 @@ pub mod status_lists;
 pub mod status_registry;
 pub mod tenants;
 pub mod time;
+pub mod worker;
