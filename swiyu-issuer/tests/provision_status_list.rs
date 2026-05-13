@@ -102,8 +102,7 @@ async fn missing_entry_id_is_terminal(pool: PgPool) {
 
     let state = CreateIssuerStateData {
         status_list_registry_entry_id: None,
-        status_list_registry_url: Some(SAMPLE_STATUS_REGISTRY_URL.into()),
-        ..CreateIssuerStateData::default()
+        ..fixture_state()
     };
     let outcome = execute_provision_status_list(&pool, &issuer_id, &state).await;
     match outcome {
@@ -120,9 +119,8 @@ async fn missing_registry_url_is_terminal(pool: PgPool) {
     common::issuers::insert_test_with_did(&pool, &tenant_id, &issuer_id).await;
 
     let state = CreateIssuerStateData {
-        status_list_registry_entry_id: Some(SAMPLE_STATUS_ENTRY_ID.into()),
         status_list_registry_url: None,
-        ..CreateIssuerStateData::default()
+        ..fixture_state()
     };
     let outcome = execute_provision_status_list(&pool, &issuer_id, &state).await;
     match outcome {
