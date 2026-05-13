@@ -105,20 +105,8 @@ mod tests {
     use chrono::Utc;
 
     use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
-    use crate::domain::{
-        GeneratedKeyPair, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId,
-    };
-    use crate::worker::test_support::fixture_kid;
-
-    fn fixture_generated(byte: u8, algorithm: KeyAlgorithm, pk_len: usize) -> GeneratedKeyPair {
-        GeneratedKeyPair {
-            id: fixture_kid(byte),
-            public_key: RawPublicKey {
-                algorithm,
-                bytes: vec![byte; pk_len],
-            },
-        }
-    }
+    use crate::domain::{IssuerId, IssuerState, KeyAlgorithm, TenantId};
+    use crate::worker::test_support::{fixture_keypair, fixture_kid};
 
     fn fixture_issuer() -> Issuer {
         Issuer {
@@ -140,7 +128,7 @@ mod tests {
     #[tokio::test]
     async fn happy_path_single_role_rotates_only_authorized() {
         let engine = MockSigningEngine::new();
-        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_generated(
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
             0xAA,
             KeyAlgorithm::Ed25519,
             32,
@@ -172,17 +160,17 @@ mod tests {
     #[tokio::test]
     async fn happy_path_all_roles_rotates_all_three() {
         let engine = MockSigningEngine::new();
-        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_generated(
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
             0xAA,
             KeyAlgorithm::Ed25519,
             32,
         )));
-        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_generated(
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
             0xBB,
             KeyAlgorithm::EcdsaP256,
             65,
         )));
-        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_generated(
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
             0xCC,
             KeyAlgorithm::EcdsaP256,
             65,
@@ -313,7 +301,7 @@ mod tests {
         // engine produces the new id, and there's no stale value to
         // carry forward.
         let engine = MockSigningEngine::new();
-        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_generated(
+        engine.enqueue_generate(GenerateKeypairCall::Ok(fixture_keypair(
             0xAA,
             KeyAlgorithm::Ed25519,
             32,

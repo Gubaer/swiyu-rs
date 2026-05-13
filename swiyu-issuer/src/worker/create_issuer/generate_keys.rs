@@ -75,24 +75,9 @@ fn outcome_for_engine_error(error_code: &str, e: SigningEngineError) -> StepOutc
 mod tests {
     use super::*;
 
-    use uuid::Uuid;
-
     use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
-    use crate::domain::{GeneratedKeyPair, KeyAlgorithm, KeyPairId, RawPublicKey};
-
-    fn fixture_keypair(uuid_byte: u8, algorithm: KeyAlgorithm, pk_len: usize) -> GeneratedKeyPair {
-        let bytes = [uuid_byte; 16];
-        let mut uuid_bytes = bytes;
-        uuid_bytes[6] = (uuid_bytes[6] & 0x0F) | 0x40;
-        uuid_bytes[8] = (uuid_bytes[8] & 0x3F) | 0x80;
-        GeneratedKeyPair {
-            id: KeyPairId::from(Uuid::from_bytes(uuid_bytes)),
-            public_key: RawPublicKey {
-                algorithm,
-                bytes: vec![uuid_byte; pk_len],
-            },
-        }
-    }
+    use crate::domain::{KeyAlgorithm, KeyPairId};
+    use crate::worker::test_support::fixture_keypair;
 
     #[tokio::test]
     async fn happy_path_generates_three_keys_in_order() {
