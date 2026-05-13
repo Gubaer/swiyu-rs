@@ -401,7 +401,7 @@ mod with_refresh_tests {
     use std::sync::Mutex;
 
     use crate::domain::oauth2::TokenProviderError;
-    use crate::worker::test_support::{AllocateCall, MockRegistry};
+    use crate::worker::test_support::{AllocateCall, MockRegistry, fixture_allocation};
 
     /// In-test `TokenProvider` that records every call and either
     /// returns a fresh access token or a configured failure.
@@ -451,13 +451,6 @@ mod with_refresh_tests {
         }
     }
 
-    fn allocation() -> Allocation {
-        Allocation {
-            url: "https://reg.example/api/v1/did/abc/did.jsonl".into(),
-            identifier: "abc".into(),
-        }
-    }
-
     fn http_401() -> AllocateCall {
         AllocateCall::HttpStatus {
             status: 401,
@@ -480,7 +473,7 @@ mod with_refresh_tests {
     async fn success_on_first_try_calls_op_once_and_no_invalidate() {
         let provider = MockTokenProvider::new();
         let registry = MockRegistry::new();
-        registry.enqueue_allocate(AllocateCall::Ok(allocation()));
+        registry.enqueue_allocate(AllocateCall::Ok(fixture_allocation()));
 
         let result = allocate_did_with_refresh(&provider, &registry, "p").await;
 
@@ -494,7 +487,7 @@ mod with_refresh_tests {
         let provider = MockTokenProvider::new();
         let registry = MockRegistry::new();
         registry.enqueue_allocate(http_401());
-        registry.enqueue_allocate(AllocateCall::Ok(allocation()));
+        registry.enqueue_allocate(AllocateCall::Ok(fixture_allocation()));
 
         let result = allocate_did_with_refresh(&provider, &registry, "p").await;
 

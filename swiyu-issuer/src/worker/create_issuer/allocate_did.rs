@@ -46,18 +46,10 @@ mod tests {
     use super::*;
 
     use serde_json::Value;
-    use swiyu_registries::identifier::Allocation;
 
     use crate::worker::test_support::{
-        AllocateCall, MockRegistry, fixture_tenant, fixture_token_provider,
+        AllocateCall, MockRegistry, fixture_allocation, fixture_tenant, fixture_token_provider,
     };
-
-    fn fixture_allocation() -> Allocation {
-        Allocation {
-            url: "https://reg.example/api/v1/did/abc/did.jsonl".into(),
-            identifier: "abc".into(),
-        }
-    }
 
     #[tokio::test]
     async fn happy_path_records_url_and_identifier() {

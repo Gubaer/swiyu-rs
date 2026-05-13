@@ -46,6 +46,13 @@ pub fn fixture_did() -> &'static str {
     "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d"
 }
 
+pub fn fixture_allocation() -> Allocation {
+    Allocation {
+        url: "https://reg.example/api/v1/did/abc/did.jsonl".into(),
+        identifier: "abc".into(),
+    }
+}
+
 pub fn fixture_token_provider() -> StaticTokenProvider {
     StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
 }
