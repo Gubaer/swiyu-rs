@@ -48,13 +48,6 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
     issuer
 }
 
-async fn provision_status_list(pool: &PgPool, issuer_id: &IssuerId) -> StatusListId {
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::status_lists::provision_for_issuer(&mut conn, issuer_id, None, None)
-        .await
-        .unwrap()
-}
-
 async fn seed_offer(pool: &PgPool, issuer: &Issuer) -> CredentialOffer {
     let offer = CredentialOffer::new(
         issuer.tenant_id.clone(),
@@ -168,7 +161,7 @@ async fn suspend_active_flips_state_and_status_bit(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -211,7 +204,7 @@ async fn unsuspend_restores_active_and_clears_status_bit(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -247,7 +240,7 @@ async fn revoke_active_flips_state_and_status_bit(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -283,7 +276,7 @@ async fn revoke_suspended_succeeds(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -312,7 +305,7 @@ async fn suspend_already_suspended_returns_409(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -344,7 +337,7 @@ async fn unsuspend_active_returns_409(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -372,7 +365,7 @@ async fn revoke_already_revoked_returns_409(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -401,7 +394,7 @@ async fn lifecycle_op_against_other_tenant_returns_404(pool: PgPool) {
     let tenant_a = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
     let issuer = insert_active_issuer(&pool, &tenant_a).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -463,7 +456,7 @@ async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer_a = insert_active_issuer(&pool, &tenant_id).await;
     let issuer_b = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer_a.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer_a.id).await;
     let credential = seed_credential(
         &pool,
         &issuer_a,

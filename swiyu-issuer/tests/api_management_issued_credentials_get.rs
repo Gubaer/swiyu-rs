@@ -47,13 +47,6 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
     issuer
 }
 
-async fn provision_status_list(pool: &PgPool, issuer_id: &IssuerId) -> StatusListId {
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::status_lists::provision_for_issuer(&mut conn, issuer_id, None, None)
-        .await
-        .unwrap()
-}
-
 async fn seed_offer(pool: &PgPool, issuer: &Issuer, vct: &str) -> CredentialOffer {
     let offer = CredentialOffer::new(
         issuer.tenant_id.clone(),
@@ -119,7 +112,7 @@ async fn get_returns_credential_with_full_shape(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -162,7 +155,7 @@ async fn get_marks_past_expires_at_as_expired(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
 
     // Insert directly so we can backdate `expires_at` past now.
     let offer = seed_offer(&pool, &issuer, "vc-test").await;
@@ -239,7 +232,7 @@ async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer_a = insert_active_issuer(&pool, &tenant_id).await;
     let issuer_b = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer_a.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer_a.id).await;
     let credential = seed_credential(
         &pool,
         &issuer_a,
@@ -271,7 +264,7 @@ async fn get_is_tenant_scoped(pool: PgPool) {
     let tenant_a = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
     let issuer = insert_active_issuer(&pool, &tenant_a).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -327,7 +320,7 @@ async fn list_returns_credentials_newest_first(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
 
     let now = Utc::now();
     let mut credential_ids = Vec::new();
@@ -375,8 +368,8 @@ async fn list_returns_only_url_issuers_credentials(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer_a = insert_active_issuer(&pool, &tenant_id).await;
     let issuer_b = insert_active_issuer(&pool, &tenant_id).await;
-    let list_a = provision_status_list(&pool, &issuer_a.id).await;
-    let list_b = provision_status_list(&pool, &issuer_b.id).await;
+    let list_a = common::status_lists::provision(&pool, &issuer_a.id).await;
+    let list_b = common::status_lists::provision(&pool, &issuer_b.id).await;
     let cred_a = seed_credential(
         &pool,
         &issuer_a,
@@ -419,7 +412,7 @@ async fn list_filters_by_state(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     let active = seed_credential(
         &pool,
         &issuer,
@@ -466,7 +459,7 @@ async fn list_filters_by_vct(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     seed_credential(
         &pool,
         &issuer,
@@ -512,7 +505,7 @@ async fn list_paginates_with_cursor(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = insert_active_issuer(&pool, &tenant_id).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
 
     let now = Utc::now();
     for offset_minutes in 0..5 {
@@ -579,7 +572,7 @@ async fn list_for_other_tenants_issuer_returns_404(pool: PgPool) {
     let tenant_a = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
     let issuer = insert_active_issuer(&pool, &tenant_a).await;
-    let list_id = provision_status_list(&pool, &issuer.id).await;
+    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
     seed_credential(
         &pool,
         &issuer,
