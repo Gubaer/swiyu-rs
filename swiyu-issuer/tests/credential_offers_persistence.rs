@@ -10,7 +10,7 @@ use serde_json::json;
 use sqlx::PgPool;
 
 use swiyu_issuer::domain::{
-    CredentialOffer, CredentialOfferState, Issuer, IssuerId, PreAuthCode, TenantId,
+    CredentialOffer, CredentialOfferState, IssuerId, PreAuthCode, TenantId,
 };
 use swiyu_issuer::persistence::credential_offers;
 use swiyu_issuer::persistence::oidc::credential_offers as oidc_credential_offers;
@@ -18,15 +18,6 @@ use swiyu_issuer::persistence::oidc::credential_offers as oidc_credential_offers
 #[path = "common/mod.rs"]
 mod common;
 use common::tenants::insert_test_tenant;
-
-async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
-    let issuer = Issuer {
-        ..common::issuers::active_with_keys(tenant_id)
-    };
-    let id = issuer.id.clone();
-    common::issuers::insert(pool, &issuer).await;
-    id
-}
 
 /// Postgres `TIMESTAMPTZ` keeps microsecond precision. `Utc::now()`
 /// produces nanoseconds, which round-trip through the database as
@@ -53,7 +44,9 @@ fn pending_offer(tenant_id: &TenantId, issuer_id: &IssuerId) -> CredentialOffer 
 async fn cancel_all_pending_flips_only_pending_offers(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
 
     let mut conn = pool.acquire().await.unwrap();
 
@@ -119,7 +112,9 @@ async fn cancel_all_pending_flips_only_pending_offers(pool: PgPool) {
 async fn cancel_all_pending_is_idempotent_on_rerun(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
 
     let mut conn = pool.acquire().await.unwrap();
 
@@ -146,7 +141,9 @@ async fn cancel_all_pending_is_idempotent_on_rerun(pool: PgPool) {
 async fn cancel_all_pending_returns_zero_when_no_pending_offers(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
 
     let mut conn = pool.acquire().await.unwrap();
     let cancelled = credential_offers::cancel_all_pending_for_issuer(
@@ -166,8 +163,12 @@ async fn cancel_all_pending_does_not_touch_other_tenants(pool: PgPool) {
     let tenant_other = TenantId::generate();
     insert_test_tenant(&pool, &tenant_owner).await;
     insert_test_tenant(&pool, &tenant_other).await;
-    let issuer_owner = insert_test_issuer(&pool, &tenant_owner).await;
-    let issuer_other = insert_test_issuer(&pool, &tenant_other).await;
+    let issuer_owner = common::issuers::insert_active_with_keys(&pool, &tenant_owner)
+        .await
+        .id;
+    let issuer_other = common::issuers::insert_active_with_keys(&pool, &tenant_other)
+        .await
+        .id;
 
     let mut conn = pool.acquire().await.unwrap();
 
@@ -210,8 +211,12 @@ async fn cancel_all_pending_does_not_touch_other_tenants(pool: PgPool) {
 async fn cancel_all_pending_does_not_touch_other_issuers(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer_target = insert_test_issuer(&pool, &tenant_id).await;
-    let issuer_bystander = insert_test_issuer(&pool, &tenant_id).await;
+    let issuer_target = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
+    let issuer_bystander = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
 
     let mut conn = pool.acquire().await.unwrap();
 
@@ -256,7 +261,9 @@ async fn cancel_all_pending_does_not_touch_other_issuers(pool: PgPool) {
 async fn find_by_id_for_update_then_set_issued_state_marks_issued(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
 
     let offer = pending_offer(&tenant_id, &issuer_id);
     {
@@ -298,7 +305,9 @@ async fn find_by_id_for_update_blocks_concurrent_writer(pool: PgPool) {
     // release the first and confirm the second sees the new state.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
 
     let offer = pending_offer(&tenant_id, &issuer_id);
     {
