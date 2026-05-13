@@ -21,7 +21,9 @@
 //! 400 response bodies (`encryption key not found`,
 //! `cipher: message authentication failed`).
 
-use std::env;
+#[path = "common/mod.rs"]
+mod common;
+use common::vault::{vault_addr, vault_token};
 
 use reqwest::{Client, Url};
 use secrecy::SecretString;
@@ -32,17 +34,6 @@ use swiyu_issuer::domain::{
     Ciphertext, SecretEncryptionEngine, SecretEncryptionError, VaultSecretEncryptionEngine,
     VaultSecretEncryptionEngineConfig,
 };
-
-const DEFAULT_VAULT_ADDR: &str = "http://127.0.0.1:8200";
-const DEFAULT_VAULT_TOKEN: &str = "dev-only-root";
-
-fn vault_addr() -> String {
-    env::var("VAULT_ADDR").unwrap_or_else(|_| DEFAULT_VAULT_ADDR.to_string())
-}
-
-fn vault_token() -> String {
-    env::var("VAULT_TOKEN").unwrap_or_else(|_| DEFAULT_VAULT_TOKEN.to_string())
-}
 
 fn engine() -> VaultSecretEncryptionEngine {
     VaultSecretEncryptionEngine::new(VaultSecretEncryptionEngineConfig {

@@ -14,7 +14,9 @@
 //! match the dev compose so the tests run unmodified against the local
 //! container.
 
-use std::env;
+#[path = "common/mod.rs"]
+mod common;
+use common::vault::{vault_addr, vault_token};
 
 use ed25519_dalek::Signature as Ed25519Signature;
 use ed25519_dalek::Verifier;
@@ -30,15 +32,10 @@ use swiyu_issuer::domain::{
     VaultSigningEngineConfig,
 };
 
-const DEFAULT_VAULT_ADDR: &str = "http://127.0.0.1:8200";
-const DEFAULT_VAULT_TOKEN: &str = "dev-only-root";
-
 fn engine() -> VaultSigningEngine {
-    let address = env::var("VAULT_ADDR").unwrap_or_else(|_| DEFAULT_VAULT_ADDR.to_string());
-    let token = env::var("VAULT_TOKEN").unwrap_or_else(|_| DEFAULT_VAULT_TOKEN.to_string());
     VaultSigningEngine::new(VaultSigningEngineConfig {
-        address: Url::parse(&address).expect("VAULT_ADDR must be a valid URL"),
-        token: SecretString::from(token),
+        address: Url::parse(&vault_addr()).expect("VAULT_ADDR must be a valid URL"),
+        token: SecretString::from(vault_token()),
         transit_path: VaultSigningEngineConfig::DEFAULT_TRANSIT_PATH.to_string(),
         request_timeout: VaultSigningEngineConfig::DEFAULT_REQUEST_TIMEOUT,
     })
