@@ -18,7 +18,6 @@
 mod common;
 use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
 use common::rng::ConstantRng;
-use common::time::now_micros;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,12 +38,9 @@ use swiyu_issuer::worker::test_support::{
 /// `roles` is the wire form: lowercase snake-case role names or
 /// the sentinel `"all"`.
 fn rotate_task(tenant_id: &TenantId, issuer_id: IssuerId, roles: Vec<&str>) -> OperationTask {
-    let now = now_micros();
     OperationTask {
         input: json!({"roles": roles}),
         result_issuer_id: Some(issuer_id),
-        created_at: now,
-        updated_at: now,
         ..common::operation_tasks::pending(tenant_id, TaskType::RotateKeys)
     }
 }

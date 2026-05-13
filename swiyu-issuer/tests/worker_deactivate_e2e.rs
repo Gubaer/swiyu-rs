@@ -66,11 +66,8 @@ async fn insert_issued_offer(
 }
 
 fn deactivate_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
-    let now = now_micros();
     OperationTask {
         result_issuer_id: Some(issuer_id),
-        created_at: now,
-        updated_at: now,
         ..common::operation_tasks::pending(tenant_id, TaskType::DeactivateIssuer)
     }
 }

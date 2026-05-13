@@ -7,7 +7,6 @@
 mod common;
 use common::keypairs::fixture_kid;
 use common::rng::ConstantRng;
-use common::time::now_micros;
 
 use std::time::Duration;
 
@@ -72,15 +71,12 @@ fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
 }
 
 fn pending_create_issuer_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
-    let now = now_micros();
     OperationTask {
         input: json!({
             "description": common::issuers::SAMPLE_DESCRIPTION,
             "display_name": common::issuers::SAMPLE_DISPLAY_NAME,
         }),
         result_issuer_id: Some(issuer_id),
-        created_at: now,
-        updated_at: now,
         ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }

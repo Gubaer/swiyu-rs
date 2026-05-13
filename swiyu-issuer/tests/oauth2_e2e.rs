@@ -15,7 +15,6 @@
 #[path = "common/mod.rs"]
 mod common;
 use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
-use common::time::now_micros;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,15 +28,12 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use swiyu_issuer::domain::{IssuerId, OperationTask, TaskState, TaskType, TenantId};
 
 fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
-    let now = now_micros();
     OperationTask {
         input: json!({
             "description": "OAuth2 e2e test issuer",
             "display_name": "OAuth2-E2E",
         }),
         result_issuer_id: Some(issuer_id),
-        created_at: now,
-        updated_at: now,
         ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
