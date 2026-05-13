@@ -35,8 +35,7 @@ async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
         created_at: Utc::now(),
     };
     let id = issuer.id.clone();
-    let mut conn = pool.acquire().await.unwrap();
-    issuers::insert(&mut conn, &issuer).await.unwrap();
+    common::issuers::insert(pool, &issuer).await;
     id
 }
 

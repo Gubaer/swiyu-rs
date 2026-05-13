@@ -11,7 +11,6 @@ use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
-use swiyu_issuer::persistence;
 
 #[path = "common/mod.rs"]
 mod common;
@@ -43,10 +42,7 @@ async fn insert_target_shape_issuer(
         locale: None,
         created_at,
     };
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::issuers::insert(&mut conn, &issuer)
-        .await
-        .unwrap();
+    common::issuers::insert(pool, &issuer).await;
     issuer
 }
 
@@ -201,11 +197,7 @@ async fn legacy_issuer_is_filtered_out(pool: PgPool) {
         locale: None,
         created_at: Utc::now(),
     };
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::issuers::insert(&mut conn, &legacy)
-        .await
-        .unwrap();
-    drop(conn);
+    common::issuers::insert(&pool, &legacy).await;
 
     let app = router(build_state(pool));
     let response = app

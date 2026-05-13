@@ -11,7 +11,6 @@ use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{ApiTokenSecret, Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
-use swiyu_issuer::persistence;
 
 #[path = "common/mod.rs"]
 mod common;
@@ -37,20 +36,13 @@ fn target_shape_issuer(tenant_id: TenantId) -> Issuer {
     }
 }
 
-async fn insert_issuer(pool: &PgPool, issuer: &Issuer) {
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::issuers::insert(&mut conn, issuer)
-        .await
-        .unwrap();
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_returns_target_shape_dto(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer = target_shape_issuer(tenant_id.clone());
-    insert_issuer(&pool, &issuer).await;
+    common::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool.clone()));
     let response = app
@@ -108,7 +100,7 @@ async fn returns_404_for_cross_tenant_issuer(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_b).await;
     // Issuer belongs to tenant_a; the bearer token is tenant_b's.
     let issuer = target_shape_issuer(tenant_a);
-    insert_issuer(&pool, &issuer).await;
+    common::issuers::insert(&pool, &issuer).await;
     let secret = mint_test_token(&pool, &tenant_b).await;
 
     let app = router(build_state(pool));
@@ -146,7 +138,7 @@ async fn returns_404_for_legacy_issuer(pool: PgPool) {
         locale: None,
         created_at: Utc::now(),
     };
-    insert_issuer(&pool, &issuer).await;
+    common::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool));
     let response = app
@@ -187,7 +179,7 @@ async fn rejects_request_without_authorization(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let issuer = target_shape_issuer(tenant_id);
-    insert_issuer(&pool, &issuer).await;
+    common::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool));
     let response = app
@@ -205,7 +197,7 @@ async fn rejects_unknown_bearer_token(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let issuer = target_shape_issuer(tenant_id);
-    insert_issuer(&pool, &issuer).await;
+    common::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool));
     let bogus = ApiTokenSecret::generate();

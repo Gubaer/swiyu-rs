@@ -49,13 +49,6 @@ fn build_state(pool: PgPool) -> AppState {
 mod common;
 use common::tenants::insert_test_tenant;
 
-async fn insert_issuer(pool: &PgPool, issuer: &Issuer) {
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::issuers::insert(&mut conn, issuer)
-        .await
-        .unwrap();
-}
-
 /// Constructs a fully-onboarded issuer: a real assertion key stored
 /// in the DevSigningEngine's table, plus a status_lists row carrying
 /// fixture registry coordinates (entry id + public URL). Mirrors the
@@ -79,7 +72,7 @@ async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer 
         locale: None,
         created_at: Utc::now(),
     };
-    insert_issuer(pool, &issuer).await;
+    common::issuers::insert(pool, &issuer).await;
     provision_test_status_list(pool, &issuer).await;
     issuer
 }
@@ -284,7 +277,7 @@ async fn issuer_without_assertion_key_returns_invalid_request(pool: PgPool) {
         locale: None,
         created_at: Utc::now(),
     };
-    insert_issuer(&pool, &issuer).await;
+    common::issuers::insert(&pool, &issuer).await;
 
     let offer = create_pending_offer(&pool, &issuer, json!({})).await;
     let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;
@@ -444,7 +437,7 @@ async fn issuance_fails_when_issuer_has_no_status_list(pool: PgPool) {
         locale: None,
         created_at: Utc::now(),
     };
-    insert_issuer(&pool, &issuer).await;
+    common::issuers::insert(&pool, &issuer).await;
 
     let offer = create_pending_offer(&pool, &issuer, json!({})).await;
     let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;

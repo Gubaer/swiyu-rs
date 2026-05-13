@@ -157,8 +157,7 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> (Issuer, D
         locale: None,
         created_at: now_micros(),
     };
-    let mut conn = pool.acquire().await.unwrap();
-    issuers::insert(&mut conn, &issuer).await.unwrap();
+    common::issuers::insert(pool, &issuer).await;
     (issuer, engine)
 }
 
