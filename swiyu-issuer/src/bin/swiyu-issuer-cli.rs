@@ -177,8 +177,12 @@ enum ApiTokenCommand {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Logs go to stderr so callers can capture the CLI's stdout (e.g.
+    // `TENANT_ID=$(swiyu-issuer-cli tenant bootstrap-dev-from-env)` in
+    // the compose entrypoint) without sqlx / tracing output bleeding in.
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();
