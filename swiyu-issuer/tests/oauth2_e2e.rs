@@ -14,9 +14,8 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::fixtures::{
-    SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL,
-};
+use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
+use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -38,20 +37,6 @@ use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{CreateStatusListEntryCall, MockStatusRegistry};
 use swiyu_registries::identifier::IdentifierRegistryClient;
 use swiyu_registries::status::StatusListEntry;
-
-fn allocate_path() -> String {
-    format!("/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries")
-}
-
-fn publish_path() -> String {
-    format!(
-        "/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries/{SAMPLE_REGISTRY_UUID}"
-    )
-}
-
-fn registry_url_in_response() -> String {
-    format!("https://reg.test/api/v1/did/{SAMPLE_REGISTRY_UUID}/did.jsonl")
-}
 
 async fn insert_tenant_with_oauth(
     pool: &PgPool,

@@ -17,6 +17,7 @@
 #[path = "common/mod.rs"]
 mod common;
 use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
+use common::identifier_registry::{SAMPLE_SCID, fixture_did};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -38,12 +39,6 @@ use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
-
-const FIXTURE_SCID: &str = "Qm-fixture-scid";
-
-fn fixture_did() -> String {
-    format!("did:tdw:{FIXTURE_SCID}:reg.test:{SAMPLE_REGISTRY_UUID}")
-}
 
 async fn insert_test_tenant(
     pool: &PgPool,
@@ -86,7 +81,7 @@ fn fixture_genesis_entry() -> DIDLogEntry {
         "2026-04-01T00:00:00Z",
         {
             "method": "did:tdw:0.3",
-            "scid": FIXTURE_SCID,
+            "scid": SAMPLE_SCID,
             "updateKeys": ["z6Mk-old-fixture-authorized"],
             "portable": false,
         },

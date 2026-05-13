@@ -15,6 +15,7 @@ mod common;
 use common::fixtures::{
     SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL,
 };
+use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -42,22 +43,6 @@ fn status_registry_with_one_ok() -> MockStatusRegistry {
         registry_url: SAMPLE_STATUS_REGISTRY_URL.into(),
     }));
     r
-}
-
-fn allocate_path() -> String {
-    format!("/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries")
-}
-
-fn publish_path() -> String {
-    format!(
-        "/api/v1/identifier/business-entities/{SAMPLE_PARTNER_ID}/identifier-entries/{SAMPLE_REGISTRY_UUID}"
-    )
-}
-
-/// The URL the registry returns in the allocate response. Picked so
-/// didlog_builder's URL parser can derive a clean did:tdw host/path.
-fn registry_url_in_response() -> String {
-    format!("https://reg.test/api/v1/did/{SAMPLE_REGISTRY_UUID}/did.jsonl")
 }
 
 async fn insert_test_tenant(
