@@ -39,3 +39,29 @@ pub async fn insert(pool: &PgPool, task: &OperationTask) {
         .await
         .unwrap();
 }
+
+pub async fn wait_for_state(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    task_id: &TaskId,
+    target: TaskState,
+    timeout: std::time::Duration,
+) -> OperationTask {
+    let start = std::time::Instant::now();
+    loop {
+        let mut conn = pool.acquire().await.unwrap();
+        let task = persistence::operation_tasks::find_by_id(&mut conn, tenant_id, task_id)
+            .await
+            .unwrap();
+        if task.state == target {
+            return task;
+        }
+        if start.elapsed() >= timeout {
+            panic!(
+                "wait_for_state timed out after {:?}: target={:?}, last={:?}",
+                timeout, target, task.state,
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}

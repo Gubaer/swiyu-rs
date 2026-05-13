@@ -21,9 +21,9 @@ use swiyu_issuer::domain::signing_engine::test_support::{
 };
 use swiyu_issuer::domain::{
     GeneratedKeyPair, IssuerId, KeyAlgorithm, KeyPairId, OperationTask, ProviderRegistry,
-    RawPublicKey, Signature, TaskId, TaskState, TaskType, TenantId,
+    RawPublicKey, Signature, TaskState, TaskType, TenantId,
 };
-use swiyu_issuer::persistence::{issuers, operation_tasks};
+use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::{
     AllocateCall, MockRegistry, MockStatusRegistry, PublishCall,
@@ -130,32 +130,6 @@ fn pending_create_issuer_task(tenant_id: &TenantId, issuer_id: IssuerId) -> Oper
     }
 }
 
-async fn wait_for_task_state(
-    pool: &PgPool,
-    tenant_id: &TenantId,
-    task_id: &TaskId,
-    target: TaskState,
-    timeout: Duration,
-) -> OperationTask {
-    let start = std::time::Instant::now();
-    loop {
-        let mut conn = pool.acquire().await.unwrap();
-        let task = operation_tasks::find_by_id(&mut conn, tenant_id, task_id)
-            .await
-            .unwrap();
-        if task.state == target {
-            return task;
-        }
-        if start.elapsed() >= timeout {
-            panic!(
-                "wait_for_task_state timed out: target={:?}, last={:?}",
-                target, task.state,
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_drives_task_to_completion(pool: PgPool) {
     let secret_engine = common::oauth::test_engine();
@@ -187,7 +161,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     .with_poll_interval(Duration::from_millis(20));
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = wait_for_task_state(
+    let final_task = common::operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,

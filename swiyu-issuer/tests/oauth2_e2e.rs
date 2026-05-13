@@ -28,10 +28,9 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swiyu_issuer::domain::{
-    DevSigningEngine, IssuerId, OperationTask, ProviderRegistry, TaskId, TaskState, TaskType,
-    TenantId,
+    DevSigningEngine, IssuerId, OperationTask, ProviderRegistry, TaskState, TaskType, TenantId,
 };
-use swiyu_issuer::persistence::operation_tasks;
+
 use swiyu_issuer::worker::Worker;
 use swiyu_issuer::worker::test_support::MockStatusRegistry;
 use swiyu_registries::identifier::IdentifierRegistryClient;
@@ -47,32 +46,6 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
         created_at: now,
         updated_at: now,
         ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
-    }
-}
-
-async fn wait_for_task_state(
-    pool: &PgPool,
-    tenant_id: &TenantId,
-    task_id: &TaskId,
-    target: TaskState,
-    timeout: Duration,
-) -> OperationTask {
-    let start = std::time::Instant::now();
-    loop {
-        let mut conn = pool.acquire().await.unwrap();
-        let task = operation_tasks::find_by_id(&mut conn, tenant_id, task_id)
-            .await
-            .unwrap();
-        if task.state == target {
-            return task;
-        }
-        if start.elapsed() >= timeout {
-            panic!(
-                "wait_for_task_state timed out after {:?}: target={:?}, last={:?}",
-                timeout, target, task.state,
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
@@ -131,7 +104,7 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
     let worker = build_worker(pool.clone(), &registry_server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = wait_for_task_state(
+    let final_task = common::operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,
@@ -221,7 +194,7 @@ async fn registry_401_triggers_invalidate_and_retry(pool: PgPool) {
     let worker = build_worker(pool.clone(), &registry_server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = wait_for_task_state(
+    let final_task = common::operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,
