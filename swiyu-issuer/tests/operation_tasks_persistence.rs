@@ -5,18 +5,9 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
-use chrono::{DateTime, Duration, Timelike, Utc};
+use chrono::Duration;
 use serde_json::{Map, json};
 use sqlx::PgPool;
-
-// Postgres TIMESTAMPTZ stores microsecond precision; `Utc::now()` returns
-// nanoseconds. Test timestamps are truncated to microseconds so a roundtrip
-// through the DB compares equal.
-fn now_micros() -> DateTime<Utc> {
-    let t = Utc::now();
-    let nanos = t.nanosecond();
-    t.with_nanosecond(nanos - (nanos % 1_000)).unwrap()
-}
 
 use swiyu_issuer::domain::{IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence::{PersistenceError, operation_tasks};
@@ -24,6 +15,7 @@ use swiyu_issuer::persistence::{PersistenceError, operation_tasks};
 #[path = "common/mod.rs"]
 mod common;
 use common::tenants::insert_test_tenant;
+use common::time::now_micros;
 
 fn fixture_task(tenant_id: TenantId) -> OperationTask {
     let now = now_micros();

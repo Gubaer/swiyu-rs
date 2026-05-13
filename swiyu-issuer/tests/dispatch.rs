@@ -5,7 +5,7 @@
 //! by `sqlx::test`; requires `DATABASE_URL` to point to a Postgres
 //! instance whose user has `CREATEDB` privilege.
 
-use chrono::{DateTime, Duration, Timelike, Utc};
+use chrono::Duration;
 use rand_core::RngCore;
 use serde_json::{Map, json};
 use sqlx::PgPool;
@@ -13,14 +13,6 @@ use sqlx::PgPool;
 use swiyu_issuer::domain::{OperationTask, StepOutcome, StepResult, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence::operation_tasks;
 use swiyu_issuer::worker::outcome;
-
-// Postgres TIMESTAMPTZ stores microsecond precision; truncate so a
-// roundtrip through the DB compares equal to the value we passed in.
-fn now_micros() -> DateTime<Utc> {
-    let t = Utc::now();
-    let nanos = t.nanosecond();
-    t.with_nanosecond(nanos - (nanos % 1_000)).unwrap()
-}
 
 struct FixedRng(u64);
 
@@ -47,6 +39,7 @@ impl RngCore for FixedRng {
 #[path = "common/mod.rs"]
 mod common;
 use common::tenants::insert_test_tenant;
+use common::time::now_micros;
 
 fn task_with_age(tenant_id: &TenantId, age: Duration, attempts: u32) -> OperationTask {
     let created_at = now_micros() - age;

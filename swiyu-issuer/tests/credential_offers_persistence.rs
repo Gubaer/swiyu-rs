@@ -5,7 +5,7 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use serde_json::json;
 use sqlx::PgPool;
 
@@ -18,16 +18,7 @@ use swiyu_issuer::persistence::oidc::credential_offers as oidc_credential_offers
 #[path = "common/mod.rs"]
 mod common;
 use common::tenants::insert_test_tenant;
-
-/// Postgres `TIMESTAMPTZ` keeps microsecond precision. `Utc::now()`
-/// produces nanoseconds, which round-trip through the database as
-/// truncated values and break direct equality assertions on what the
-/// caller passed in. Tests round to microseconds up front so the
-/// asserted timestamp is exactly what the row will hold.
-fn now_with_postgres_precision() -> DateTime<Utc> {
-    let micros = Utc::now().timestamp_micros();
-    DateTime::from_timestamp_micros(micros).unwrap()
-}
+use common::time::now_micros;
 
 fn pending_offer(tenant_id: &TenantId, issuer_id: &IssuerId) -> CredentialOffer {
     CredentialOffer::new(
@@ -55,19 +46,19 @@ async fn cancel_all_pending_flips_only_pending_offers(pool: PgPool) {
 
     let mut already_issued = pending_offer(&tenant_id, &issuer_id);
     already_issued.state = CredentialOfferState::Issued;
-    already_issued.issued_at = Some(now_with_postgres_precision());
+    already_issued.issued_at = Some(now_micros());
     already_issued.pre_auth_code = None;
 
     let mut already_cancelled = pending_offer(&tenant_id, &issuer_id);
     already_cancelled.state = CredentialOfferState::Cancelled;
-    already_cancelled.cancelled_at = Some(now_with_postgres_precision());
+    already_cancelled.cancelled_at = Some(now_micros());
     already_cancelled.pre_auth_code = None;
 
     for offer in [&pending_a, &pending_b, &already_issued, &already_cancelled] {
         credential_offers::insert(&mut conn, offer).await.unwrap();
     }
 
-    let now = now_with_postgres_precision();
+    let now = now_micros();
     let cancelled =
         credential_offers::cancel_all_pending_for_issuer(&mut conn, &tenant_id, &issuer_id, now)
             .await
@@ -271,7 +262,7 @@ async fn find_by_id_for_update_then_set_issued_state_marks_issued(pool: PgPool) 
         credential_offers::insert(&mut conn, &offer).await.unwrap();
     }
 
-    let now = now_with_postgres_precision();
+    let now = now_micros();
     let mut tx = pool.begin().await.unwrap();
     let mut found =
         oidc_credential_offers::find_by_id_for_update(&mut tx, &tenant_id, &issuer_id, &offer.id)
@@ -315,7 +306,7 @@ async fn find_by_id_for_update_blocks_concurrent_writer(pool: PgPool) {
         credential_offers::insert(&mut conn, &offer).await.unwrap();
     }
 
-    let now = now_with_postgres_precision();
+    let now = now_micros();
 
     let mut tx_a = pool.begin().await.unwrap();
     let mut found_a =

@@ -5,10 +5,10 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::time::now_micros;
 
 use std::time::Duration;
 
-use chrono::{DateTime, Timelike, Utc};
 use rand_core::RngCore;
 use serde_json::json;
 use sqlx::PgPool;
@@ -40,14 +40,6 @@ fn status_registry_with_one_ok() -> MockStatusRegistry {
         registry_url: STATUS_REGISTRY_URL.into(),
     }));
     r
-}
-
-// Postgres TIMESTAMPTZ stores microseconds; truncate so a roundtrip
-// compares equal.
-fn now_micros() -> DateTime<Utc> {
-    let t = Utc::now();
-    let nanos = t.nanosecond();
-    t.with_nanosecond(nanos - (nanos % 1_000)).unwrap()
 }
 
 struct ConstantRng(u64);

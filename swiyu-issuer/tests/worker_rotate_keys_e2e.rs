@@ -16,11 +16,11 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::time::now_micros;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Timelike, Utc};
 use rand_core::RngCore;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -44,12 +44,6 @@ const FIXTURE_SCID: &str = "Qm-fixture-scid";
 
 fn fixture_did() -> String {
     format!("did:tdw:{FIXTURE_SCID}:reg.test:{REGISTRY_UUID}")
-}
-
-fn now_micros() -> DateTime<Utc> {
-    let t = Utc::now();
-    let nanos = t.nanosecond();
-    t.with_nanosecond(nanos - (nanos % 1_000)).unwrap()
 }
 
 struct ConstantRng(u64);

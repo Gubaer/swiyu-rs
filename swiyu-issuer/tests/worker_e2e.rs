@@ -12,10 +12,10 @@
 
 #[path = "common/mod.rs"]
 mod common;
+use common::time::now_micros;
 
 use std::time::Duration;
 
-use chrono::{DateTime, Timelike, Utc};
 use rand_core::RngCore;
 use serde_json::json;
 use sqlx::PgPool;
@@ -59,12 +59,6 @@ fn publish_path() -> String {
 /// didlog_builder's URL parser can derive a clean did:tdw host/path.
 fn registry_url_in_response() -> String {
     format!("https://reg.test/api/v1/did/{REGISTRY_UUID}/did.jsonl")
-}
-
-fn now_micros() -> DateTime<Utc> {
-    let t = Utc::now();
-    let nanos = t.nanosecond();
-    t.with_nanosecond(nanos - (nanos % 1_000)).unwrap()
 }
 
 struct ConstantRng(u64);

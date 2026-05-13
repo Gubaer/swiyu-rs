@@ -4,7 +4,7 @@
 //! migrations apply automatically. Requires `DATABASE_URL` to point
 //! to a Postgres instance whose user has `CREATEDB` privilege.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use serde_json::json;
 use sqlx::PgPool;
 
@@ -18,6 +18,7 @@ use swiyu_issuer::worker::deactivate_issuer::mark_deactivated::execute_mark_deac
 #[path = "common/mod.rs"]
 mod common;
 use common::tenants::insert_test_tenant;
+use common::time::now_micros;
 
 async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = common::issuers::active_with_keys(tenant_id);
@@ -37,14 +38,6 @@ fn pending_offer(tenant_id: &TenantId, issuer_id: &IssuerId) -> CredentialOffer 
     )
 }
 
-/// Postgres `TIMESTAMPTZ` keeps microsecond precision while
-/// `Utc::now()` produces nanoseconds, so direct equality on
-/// round-tripped timestamps fails. Round to micros up front.
-fn now_with_postgres_precision() -> DateTime<Utc> {
-    let micros = Utc::now().timestamp_micros();
-    DateTime::from_timestamp_micros(micros).unwrap()
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) {
     let tenant_id = TenantId::generate();
@@ -59,12 +52,12 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
 
     let mut target_issued = pending_offer(&tenant_id, &target_issuer);
     target_issued.state = CredentialOfferState::Issued;
-    target_issued.issued_at = Some(now_with_postgres_precision());
+    target_issued.issued_at = Some(now_micros());
     target_issued.pre_auth_code = None;
 
     let mut target_cancelled = pending_offer(&tenant_id, &target_issuer);
     target_cancelled.state = CredentialOfferState::Cancelled;
-    target_cancelled.cancelled_at = Some(now_with_postgres_precision());
+    target_cancelled.cancelled_at = Some(now_micros());
     target_cancelled.pre_auth_code = None;
 
     // Pending offer on a different issuer in the same tenant — must
@@ -81,7 +74,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
         credential_offers::insert(&mut conn, offer).await.unwrap();
     }
 
-    let now = now_with_postgres_precision();
+    let now = now_micros();
     let outcome = execute_mark_deactivated(&pool, &tenant_id, &target_issuer, now).await;
     match outcome {
         StepOutcome::Done(result) => assert!(result.state_data_patch.is_empty()),
@@ -150,17 +143,13 @@ async fn idempotent_rerun_after_already_deactivated(pool: PgPool) {
     let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
 
     // First run: flip the row.
-    let first =
-        execute_mark_deactivated(&pool, &tenant_id, &issuer_id, now_with_postgres_precision())
-            .await;
+    let first = execute_mark_deactivated(&pool, &tenant_id, &issuer_id, now_micros()).await;
     assert!(matches!(first, StepOutcome::Done(_)));
 
     // Second run on a row already in the desired state: still Done,
     // empty patch (the saga records nothing in state-data for this
     // step). Persistence layer's MarkOutcome::Already drives this.
-    let second =
-        execute_mark_deactivated(&pool, &tenant_id, &issuer_id, now_with_postgres_precision())
-            .await;
+    let second = execute_mark_deactivated(&pool, &tenant_id, &issuer_id, now_micros()).await;
     match second {
         StepOutcome::Done(result) => assert!(result.state_data_patch.is_empty()),
         other => panic!("expected Done on idempotent re-run, got {other:?}"),
@@ -173,13 +162,7 @@ async fn unknown_issuer_is_terminal(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let unknown_issuer = IssuerId::generate();
 
-    let outcome = execute_mark_deactivated(
-        &pool,
-        &tenant_id,
-        &unknown_issuer,
-        now_with_postgres_precision(),
-    )
-    .await;
+    let outcome = execute_mark_deactivated(&pool, &tenant_id, &unknown_issuer, now_micros()).await;
 
     match outcome {
         StepOutcome::Terminal { error_code, .. } => {
@@ -197,13 +180,7 @@ async fn cross_tenant_caller_is_terminal(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_other).await;
     let issuer_id = insert_test_issuer(&pool, &tenant_owner).await;
 
-    let outcome = execute_mark_deactivated(
-        &pool,
-        &tenant_other,
-        &issuer_id,
-        now_with_postgres_precision(),
-    )
-    .await;
+    let outcome = execute_mark_deactivated(&pool, &tenant_other, &issuer_id, now_micros()).await;
 
     match outcome {
         StepOutcome::Terminal { error_code, .. } => {
