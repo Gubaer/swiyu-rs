@@ -69,6 +69,8 @@ Write code for human readers first. A future engineer should be able to understa
 
 Write comments only when the *why* is not obvious from the code itself. Do not restate what the code does. Do not write module-level or function-level doc comments unless the item is part of a public API intended for external consumers.
 
+Test files (under `tests/` and `examples/`) may carry a module-level `//!` header that describes the test scope, setup, and what's mocked vs real — this is the file's only documentation surface for human readers orienting themselves. Keep it short and focused on context a newcomer needs (which middleware is exercised, which boundaries are mocked, what each test seeds). Do not write `///` doc comments on private test fixtures or helper fns.
+
 ## Testing
 
 - Write unit tests in a `#[cfg(test)]` module inside the same file as the code under test.
