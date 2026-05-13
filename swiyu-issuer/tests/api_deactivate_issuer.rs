@@ -10,7 +10,7 @@ use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
-    Issuer, IssuerId, IssuerState, KeyPairId, OperationTask, TaskId, TaskState, TaskType, TenantId,
+    Issuer, IssuerId, IssuerState, OperationTask, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence;
 
@@ -25,10 +25,7 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = Issuer {
         did: "did:tdw:scid:example.com:fixture-uuid".into(),
         description: Some("test issuer".into()),
-        authorized_key_id: Some(KeyPairId::generate()),
-        authentication_key_id: Some(KeyPairId::generate()),
-        assertion_key_id: Some(KeyPairId::generate()),
-        ..common::issuers::active(tenant_id)
+        ..common::issuers::active_with_keys(tenant_id)
     };
     let id = issuer.id.clone();
     common::issuers::insert(pool, &issuer).await;

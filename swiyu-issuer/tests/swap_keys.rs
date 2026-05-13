@@ -21,11 +21,8 @@ use common::tenants::insert_test_tenant;
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
     let issuer = Issuer {
         did: "did:tdw:scid:example.com:fixture".into(),
-        authorized_key_id: Some(KeyPairId::generate()),
-        authentication_key_id: Some(KeyPairId::generate()),
-        assertion_key_id: Some(KeyPairId::generate()),
         display_name: Some("Fixture issuer".into()),
-        ..common::issuers::active(tenant_id)
+        ..common::issuers::active_with_keys(tenant_id)
     };
     common::issuers::insert(pool, &issuer).await;
     issuer

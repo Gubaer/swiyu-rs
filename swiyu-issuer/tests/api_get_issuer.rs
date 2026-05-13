@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
-use swiyu_issuer::domain::{ApiTokenSecret, Issuer, IssuerId, KeyPairId, TenantId};
+use swiyu_issuer::domain::{ApiTokenSecret, Issuer, IssuerId, TenantId};
 
 #[path = "common/mod.rs"]
 mod common;
@@ -22,11 +22,8 @@ fn target_shape_issuer(tenant_id: &TenantId) -> Issuer {
     Issuer {
         did: "did:tdw:example.com:9hXq2vRtL8pK7f".into(),
         description: Some("Cantonal driver-licence issuer".into()),
-        authorized_key_id: Some(KeyPairId::generate()),
-        authentication_key_id: Some(KeyPairId::generate()),
-        assertion_key_id: Some(KeyPairId::generate()),
         display_name: Some("Canton Bern Verkehrsamt".into()),
-        ..common::issuers::active(tenant_id)
+        ..common::issuers::active_with_keys(tenant_id)
     }
 }
 

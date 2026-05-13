@@ -9,8 +9,8 @@ use serde_json::json;
 use sqlx::PgPool;
 
 use swiyu_issuer::domain::{
-    CredentialOffer, CredentialOfferState, Issuer, IssuerId, IssuerState, KeyPairId, PreAuthCode,
-    StepOutcome, TenantId,
+    CredentialOffer, CredentialOfferState, Issuer, IssuerId, IssuerState, PreAuthCode, StepOutcome,
+    TenantId,
 };
 use swiyu_issuer::persistence::{credential_offers, issuers};
 use swiyu_issuer::worker::deactivate_issuer::mark_deactivated::execute_mark_deactivated;
@@ -22,11 +22,8 @@ use common::tenants::insert_test_tenant;
 async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = Issuer {
         did: "did:tdw:scid:example.com:fixture".into(),
-        authorized_key_id: Some(KeyPairId::generate()),
-        authentication_key_id: Some(KeyPairId::generate()),
-        assertion_key_id: Some(KeyPairId::generate()),
         display_name: Some("Fixture issuer".into()),
-        ..common::issuers::active(tenant_id)
+        ..common::issuers::active_with_keys(tenant_id)
     };
     let id = issuer.id.clone();
     common::issuers::insert(pool, &issuer).await;

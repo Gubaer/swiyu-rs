@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
-use swiyu_issuer::domain::{Issuer, IssuerId, KeyPairId, TenantId};
+use swiyu_issuer::domain::{Issuer, IssuerId, TenantId};
 
 #[path = "common/mod.rs"]
 mod common;
@@ -31,12 +31,9 @@ async fn insert_target_shape_issuer(
     let issuer = Issuer {
         did: format!("did:tdw:{}:example.com", IssuerId::generate().bare()),
         description: Some(format!("{display_name} description")),
-        authorized_key_id: Some(KeyPairId::generate()),
-        authentication_key_id: Some(KeyPairId::generate()),
-        assertion_key_id: Some(KeyPairId::generate()),
         display_name: Some(display_name.into()),
         created_at,
-        ..common::issuers::active(tenant_id)
+        ..common::issuers::active_with_keys(tenant_id)
     };
     common::issuers::insert(pool, &issuer).await;
     issuer
