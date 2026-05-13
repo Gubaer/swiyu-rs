@@ -16,20 +16,6 @@ mod common;
 use common::fixtures::{SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL};
 use common::tenants::insert_test_tenant;
 
-async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId, issuer_id: &IssuerId) {
-    sqlx::query(
-        "INSERT INTO issuers (id, tenant_id, did, display_name) \
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(issuer_id.bare())
-    .bind(tenant_id.bare())
-    .bind(format!("did:tdw:dev.example.com:{}", issuer_id.bare()))
-    .bind("Test Issuer")
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
 fn fixture_state() -> CreateIssuerStateData {
     CreateIssuerStateData {
         status_list_registry_entry_id: Some(SAMPLE_STATUS_ENTRY_ID.into()),
@@ -43,7 +29,7 @@ async fn happy_path_provisions_row_and_repoints_pointer(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    insert_test_issuer(&pool, &tenant_id, &issuer_id).await;
+    common::issuers::insert_test_with_did(&pool, &tenant_id, &issuer_id).await;
 
     let outcome = execute_provision_status_list(&pool, &issuer_id, &fixture_state()).await;
     assert!(matches!(outcome, StepOutcome::Done(_)));
@@ -74,7 +60,7 @@ async fn idempotent_on_resume_when_pointer_already_set(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    insert_test_issuer(&pool, &tenant_id, &issuer_id).await;
+    common::issuers::insert_test_with_did(&pool, &tenant_id, &issuer_id).await;
 
     // First run provisions normally.
     let outcome = execute_provision_status_list(&pool, &issuer_id, &fixture_state()).await;
@@ -112,7 +98,7 @@ async fn missing_entry_id_is_terminal(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    insert_test_issuer(&pool, &tenant_id, &issuer_id).await;
+    common::issuers::insert_test_with_did(&pool, &tenant_id, &issuer_id).await;
 
     let state = CreateIssuerStateData {
         status_list_registry_entry_id: None,
@@ -131,7 +117,7 @@ async fn missing_registry_url_is_terminal(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    insert_test_issuer(&pool, &tenant_id, &issuer_id).await;
+    common::issuers::insert_test_with_did(&pool, &tenant_id, &issuer_id).await;
 
     let state = CreateIssuerStateData {
         status_list_registry_entry_id: Some(SAMPLE_STATUS_ENTRY_ID.into()),

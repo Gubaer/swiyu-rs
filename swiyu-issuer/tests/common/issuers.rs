@@ -64,3 +64,16 @@ pub async fn insert_active_with_keys(pool: &PgPool, tenant_id: &TenantId) -> Iss
     insert(pool, &issuer).await;
     issuer
 }
+
+/// Insert an Active issuer with a caller-supplied `IssuerId` and a
+/// derived `did:tdw:dev.example.com:{id}`. Used by tests that need to
+/// match the issuer id later via a stable handle.
+pub async fn insert_test_with_did(pool: &PgPool, tenant_id: &TenantId, issuer_id: &IssuerId) {
+    let issuer = Issuer {
+        id: issuer_id.clone(),
+        did: format!("did:tdw:dev.example.com:{}", issuer_id.bare()),
+        display_name: Some("Test Issuer".into()),
+        ..active(tenant_id)
+    };
+    insert(pool, &issuer).await;
+}
