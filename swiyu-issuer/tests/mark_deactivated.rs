@@ -15,19 +15,16 @@ mod common;
 use common::tenants::insert_test_tenant;
 use common::time::now_micros;
 
-async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
-    let issuer = common::issuers::active_with_keys(tenant_id);
-    let id = issuer.id.clone();
-    common::issuers::insert(pool, &issuer).await;
-    id
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let target_issuer = insert_test_issuer(&pool, &tenant_id).await;
-    let bystander_issuer = insert_test_issuer(&pool, &tenant_id).await;
+    let target_issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
+    let bystander_issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
 
     let mut conn = pool.acquire().await.unwrap();
 
@@ -124,7 +121,9 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
 async fn idempotent_rerun_after_already_deactivated(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer_id = insert_test_issuer(&pool, &tenant_id).await;
+    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+        .await
+        .id;
 
     // First run: flip the row.
     let first = execute_mark_deactivated(&pool, &tenant_id, &issuer_id, now_micros()).await;
@@ -162,7 +161,9 @@ async fn cross_tenant_caller_is_terminal(pool: PgPool) {
     let tenant_other = TenantId::generate();
     insert_test_tenant(&pool, &tenant_owner).await;
     insert_test_tenant(&pool, &tenant_other).await;
-    let issuer_id = insert_test_issuer(&pool, &tenant_owner).await;
+    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_owner)
+        .await
+        .id;
 
     let outcome = execute_mark_deactivated(&pool, &tenant_other, &issuer_id, now_micros()).await;
 
