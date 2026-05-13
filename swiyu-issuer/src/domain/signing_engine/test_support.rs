@@ -10,9 +10,33 @@ use std::future::Future;
 use std::sync::Mutex;
 
 use super::{
-    GeneratedKeyPair, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine,
+    GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine,
     SigningEngineError,
 };
+
+pub fn fixture_ed25519_pk() -> RawPublicKey {
+    RawPublicKey {
+        algorithm: KeyAlgorithm::Ed25519,
+        bytes: vec![0xab; 32],
+    }
+}
+
+pub fn fixture_p256_pk() -> RawPublicKey {
+    let mut bytes = vec![0x04];
+    bytes.extend_from_slice(&[0xcd; 32]);
+    bytes.extend_from_slice(&[0xef; 32]);
+    RawPublicKey {
+        algorithm: KeyAlgorithm::EcdsaP256,
+        bytes,
+    }
+}
+
+pub fn fixture_signature() -> Signature {
+    Signature {
+        algorithm: KeyAlgorithm::Ed25519,
+        bytes: vec![0x42; 64],
+    }
+}
 
 pub enum GenerateKeypairCall {
     Ok(GeneratedKeyPair),
@@ -57,6 +81,25 @@ impl MockSigningEngine {
 
     pub fn enqueue_sign(&self, call: SignCall) {
         self.sign_queue.lock().unwrap().push(call);
+    }
+
+    /// Pre-loads one didlog-step's engine calls: three public-key
+    /// reads (Ed25519 authorized, P-256 authentication, P-256
+    /// assertion) followed by one Ed25519 signature.
+    pub fn enqueue_happy_step(&self) {
+        self.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
+        self.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
+        self.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
+        self.enqueue_sign(SignCall::Ok(fixture_signature()));
+    }
+
+    /// Convenience: a fresh engine pre-loaded with exactly one happy
+    /// didlog-step. Matches the per-step worker tests that only need
+    /// to drive a single saga step.
+    pub fn for_happy_path() -> Self {
+        let engine = Self::new();
+        engine.enqueue_happy_step();
+        engine
     }
 }
 

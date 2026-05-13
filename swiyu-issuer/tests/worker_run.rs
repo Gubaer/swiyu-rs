@@ -5,7 +5,7 @@
 
 #[path = "common/mod.rs"]
 mod common;
-use common::keypairs::{fixture_ed25519_pk, fixture_kid, fixture_p256_pk, fixture_signature};
+use common::keypairs::fixture_kid;
 use common::rng::ConstantRng;
 use common::time::now_micros;
 
@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::MockServer;
 
 use swiyu_issuer::domain::signing_engine::test_support::{
-    GenerateKeypairCall, GetPublicKeyCall, MockSigningEngine, SignCall,
+    GenerateKeypairCall, MockSigningEngine, fixture_ed25519_pk, fixture_p256_pk,
 };
 use swiyu_issuer::domain::{
     GeneratedKeyPair, IssuerId, KeyAlgorithm, OperationTask, ProviderRegistry, TaskState, TaskType,
@@ -69,10 +69,7 @@ fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
     )));
 
     for _ in 0..3 {
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-        engine.enqueue_sign(SignCall::Ok(fixture_signature()));
+        engine.enqueue_happy_step();
     }
 }
 

@@ -40,9 +40,9 @@ mod tests {
     use uuid::Uuid;
 
     use crate::domain::signing_engine::test_support::{
-        GetPublicKeyCall, MockSigningEngine, SignCall,
+        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_p256_pk,
     };
-    use crate::domain::{KeyAlgorithm, KeyPairId, RawPublicKey, Signature};
+    use crate::domain::{KeyAlgorithm, KeyPairId, RawPublicKey};
     use crate::worker::create_issuer::KeyTriple;
 
     fn fixture_kid(byte: u8) -> KeyPairId {
@@ -67,46 +67,13 @@ mod tests {
         }
     }
 
-    fn fixture_ed25519_pk() -> RawPublicKey {
-        RawPublicKey {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0xab; 32],
-        }
-    }
-
-    fn fixture_p256_pk() -> RawPublicKey {
-        let mut bytes = vec![0x04];
-        bytes.extend_from_slice(&[0xcd; 32]);
-        bytes.extend_from_slice(&[0xef; 32]);
-        RawPublicKey {
-            algorithm: KeyAlgorithm::EcdsaP256,
-            bytes,
-        }
-    }
-
-    fn fixture_signature() -> Signature {
-        Signature {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0x42; 64],
-        }
-    }
-
     fn fixture_now() -> DateTime<Utc> {
         DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
     }
 
-    fn engine_for_happy_path() -> MockSigningEngine {
-        let engine = MockSigningEngine::new();
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-        engine.enqueue_sign(SignCall::Ok(fixture_signature()));
-        engine
-    }
-
     #[tokio::test]
     async fn happy_path_returns_done_with_empty_patch() {
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_happy_path();
 
         let outcome = execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
@@ -124,7 +91,7 @@ mod tests {
         // The eddsa-jcs-2022 cryptosuite hands Ed25519 a 64-byte
         // concatenation of two SHA-256 hashes. Verify the worker sends
         // the engine exactly that.
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_happy_path();
 
         execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 

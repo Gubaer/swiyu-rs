@@ -85,12 +85,8 @@ mod tests {
     use swiyu_registries::common::AccessToken;
     use uuid::Uuid;
 
-    use crate::domain::signing_engine::test_support::{
-        GetPublicKeyCall, MockSigningEngine, SignCall,
-    };
-    use crate::domain::{
-        KeyAlgorithm, KeyPairId, RawPublicKey, Signature, StaticTokenProvider, TenantId,
-    };
+    use crate::domain::signing_engine::test_support::{GetPublicKeyCall, MockSigningEngine};
+    use crate::domain::{KeyPairId, StaticTokenProvider, TenantId};
     use crate::worker::create_issuer::KeyTriple;
     use crate::worker::test_support::{AllocateCall, MockRegistry, PublishCall};
 
@@ -138,45 +134,12 @@ mod tests {
         StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
     }
 
-    fn fixture_ed25519_pk() -> RawPublicKey {
-        RawPublicKey {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0xab; 32],
-        }
-    }
-
-    fn fixture_p256_pk() -> RawPublicKey {
-        let mut bytes = vec![0x04];
-        bytes.extend_from_slice(&[0xcd; 32]);
-        bytes.extend_from_slice(&[0xef; 32]);
-        RawPublicKey {
-            algorithm: KeyAlgorithm::EcdsaP256,
-            bytes,
-        }
-    }
-
-    fn fixture_signature() -> Signature {
-        Signature {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![0x42; 64],
-        }
-    }
-
-    fn engine_for_happy_path() -> MockSigningEngine {
-        let engine = MockSigningEngine::new();
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-        engine.enqueue_sign(SignCall::Ok(fixture_signature()));
-        engine
-    }
-
     #[tokio::test]
     async fn happy_path_publishes_and_marks_didlog_published() {
         let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_publish(PublishCall::Ok);
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,
@@ -319,7 +282,7 @@ mod tests {
             status: 503,
             body: "service unavailable".into(),
         });
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,
@@ -347,7 +310,7 @@ mod tests {
             status: 400,
             body: "bad entry".into(),
         });
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,
@@ -378,7 +341,7 @@ mod tests {
             status: 500,
             body: "should never be consumed".into(),
         });
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,

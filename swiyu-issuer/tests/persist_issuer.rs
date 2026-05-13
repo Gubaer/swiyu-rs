@@ -6,9 +6,7 @@
 
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::signing_engine::test_support::{
-    GetPublicKeyCall, MockSigningEngine, SignCall,
-};
+use swiyu_issuer::domain::signing_engine::test_support::{GetPublicKeyCall, MockSigningEngine};
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, StepOutcome, TenantId};
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::worker::create_issuer::{
@@ -37,18 +35,9 @@ fn fixture_state() -> CreateIssuerStateData {
     }
 }
 
-fn engine_for_happy_path() -> MockSigningEngine {
-    let engine = MockSigningEngine::new();
-    engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-    engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-    engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-    engine.enqueue_sign(SignCall::Ok(fixture_signature()));
-    engine
-}
-
 #[path = "common/mod.rs"]
 mod common;
-use common::keypairs::{fixture_ed25519_pk, fixture_kid, fixture_p256_pk, fixture_signature};
+use common::keypairs::fixture_kid;
 use common::tenants::insert_test_tenant;
 use common::time::fixture_now;
 
@@ -57,7 +46,7 @@ async fn happy_path_inserts_issuer_row(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    let engine = engine_for_happy_path();
+    let engine = MockSigningEngine::for_happy_path();
 
     let outcome = execute_persist_issuer(
         &pool,
