@@ -88,7 +88,7 @@ mod tests {
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
     use crate::domain::signing_engine::test_support::{
-        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_signature,
+        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk,
     };
     use crate::domain::{Issuer, IssuerId, IssuerState, KeyAlgorithm, RawPublicKey, TenantId};
     use crate::worker::test_support::{
@@ -126,18 +126,11 @@ mod tests {
         )
     }
 
-    fn engine_for_happy_path() -> MockSigningEngine {
-        let engine = MockSigningEngine::new();
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-        engine.enqueue_sign(SignCall::Ok(fixture_signature()));
-        engine
-    }
-
     #[tokio::test]
     async fn happy_path_returns_done_with_empty_patch() {
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_deactivation_happy_path();
 
         let outcome =
             execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())

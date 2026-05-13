@@ -151,7 +151,7 @@ mod tests {
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
     use crate::domain::signing_engine::test_support::{
-        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_signature,
+        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk,
     };
     use crate::domain::{Issuer, IssuerId, IssuerState, TenantId};
     use crate::worker::test_support::{
@@ -201,20 +201,13 @@ mod tests {
         )
     }
 
-    fn engine_for_happy_path() -> MockSigningEngine {
-        let engine = MockSigningEngine::new();
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-        engine.enqueue_sign(SignCall::Ok(fixture_signature()));
-        engine
-    }
-
     #[tokio::test]
     async fn happy_path_publishes_and_marks_didlog_published() {
         let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
         registry.enqueue_publish(PublishCall::Ok);
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_deactivation_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,
@@ -459,7 +452,7 @@ mod tests {
             status: 503,
             body: "service unavailable".into(),
         });
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_deactivation_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,
@@ -489,7 +482,7 @@ mod tests {
             status: 400,
             body: "bad entry".into(),
         });
-        let engine = engine_for_happy_path();
+        let engine = MockSigningEngine::for_deactivation_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,

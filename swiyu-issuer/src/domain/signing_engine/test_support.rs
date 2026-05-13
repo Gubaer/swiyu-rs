@@ -101,6 +101,16 @@ impl MockSigningEngine {
         engine.enqueue_happy_step();
         engine
     }
+
+    /// Convenience: a fresh engine pre-loaded for a deactivation step
+    /// — one Authorized public-key read followed by one Ed25519
+    /// signature.
+    pub fn for_deactivation_happy_path() -> Self {
+        let engine = Self::new();
+        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
+        engine.enqueue_sign(SignCall::Ok(fixture_signature()));
+        engine
+    }
 }
 
 impl SigningEngine for MockSigningEngine {
