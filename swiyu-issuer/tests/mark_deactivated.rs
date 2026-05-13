@@ -9,7 +9,7 @@ use serde_json::json;
 use sqlx::PgPool;
 
 use swiyu_issuer::domain::{
-    CredentialOffer, CredentialOfferState, Issuer, IssuerId, IssuerState, PreAuthCode, StepOutcome,
+    CredentialOffer, CredentialOfferState, IssuerId, IssuerState, PreAuthCode, StepOutcome,
     TenantId,
 };
 use swiyu_issuer::persistence::{credential_offers, issuers};
@@ -20,10 +20,7 @@ mod common;
 use common::tenants::insert_test_tenant;
 
 async fn insert_test_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
-    let issuer = Issuer {
-        did: "did:tdw:scid:example.com:fixture".into(),
-        ..common::issuers::active_with_keys(tenant_id)
-    };
+    let issuer = common::issuers::active_with_keys(tenant_id);
     let id = issuer.id.clone();
     common::issuers::insert(pool, &issuer).await;
     id

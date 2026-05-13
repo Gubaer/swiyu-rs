@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
 use swiyu_issuer::persistence;
 
+pub const SAMPLE_DID: &str = "did:tdw:example.com:sample-issuer";
 pub const SAMPLE_DISPLAY_NAME: &str = "Sample Issuer";
 pub const SAMPLE_DESCRIPTION: &str = "Sample Issuer description";
 
@@ -25,7 +26,7 @@ pub fn active(tenant_id: &TenantId) -> Issuer {
     Issuer {
         id: IssuerId::generate(),
         tenant_id: tenant_id.clone(),
-        did: "did:tdw:fixture:example.com".into(),
+        did: SAMPLE_DID.into(),
         state: Some(IssuerState::Active),
         description: Some(SAMPLE_DESCRIPTION.into()),
         authorized_key_id: None,

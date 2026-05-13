@@ -18,19 +18,12 @@ use common::app_state::build_state;
 use common::http::{get_request, read_body};
 use common::tenants::insert_test_tenant;
 
-fn target_shape_issuer(tenant_id: &TenantId) -> Issuer {
-    Issuer {
-        did: "did:tdw:example.com:9hXq2vRtL8pK7f".into(),
-        ..common::issuers::active_with_keys(tenant_id)
-    }
-}
-
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_returns_target_shape_dto(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = target_shape_issuer(&tenant_id);
+    let issuer = common::issuers::active_with_keys(&tenant_id);
     common::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool.clone()));
@@ -88,7 +81,7 @@ async fn returns_404_for_cross_tenant_issuer(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_a).await;
     insert_test_tenant(&pool, &tenant_b).await;
     // Issuer belongs to tenant_a; the bearer token is tenant_b's.
-    let issuer = target_shape_issuer(&tenant_a);
+    let issuer = common::issuers::active_with_keys(&tenant_a);
     common::issuers::insert(&pool, &issuer).await;
     let secret = mint_test_token(&pool, &tenant_b).await;
 
@@ -158,7 +151,7 @@ async fn returns_400_for_malformed_issuer_id(pool: PgPool) {
 async fn rejects_request_without_authorization(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = target_shape_issuer(&tenant_id);
+    let issuer = common::issuers::active_with_keys(&tenant_id);
     common::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool));
@@ -176,7 +169,7 @@ async fn rejects_request_without_authorization(pool: PgPool) {
 async fn rejects_unknown_bearer_token(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = target_shape_issuer(&tenant_id);
+    let issuer = common::issuers::active_with_keys(&tenant_id);
     common::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool));

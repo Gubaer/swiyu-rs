@@ -29,10 +29,7 @@ use common::http::{get_request, read_body};
 use common::tenants::insert_test_tenant;
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
-    let issuer = Issuer {
-        did: "did:tdw:dev.example.com:test".into(),
-        ..common::issuers::active(tenant_id)
-    };
+    let issuer = common::issuers::active(tenant_id);
     common::issuers::insert(pool, &issuer).await;
     issuer
 }

@@ -22,10 +22,7 @@ use common::http::{post_request_json, read_body};
 use common::tenants::insert_test_tenant;
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
-    let issuer = Issuer {
-        did: "did:tdw:scid:example.com:fixture-uuid".into(),
-        ..common::issuers::active_with_keys(tenant_id)
-    };
+    let issuer = common::issuers::active_with_keys(tenant_id);
     let id = issuer.id.clone();
     common::issuers::insert(pool, &issuer).await;
     id

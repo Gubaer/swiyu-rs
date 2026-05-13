@@ -31,7 +31,6 @@ use swiyu_registries::status::StatusRegistryClient;
 
 const PARTNER_ID: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
-const FIXTURE_DID: &str = "did:tdw:dev.example.com:test";
 
 fn update_path() -> String {
     format!("/api/v1/status/business-entities/{PARTNER_ID}/status-list-entries/{STATUS_ENTRY_ID}")
@@ -100,7 +99,6 @@ async fn seeded_environment(
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
 
     let issuer = Issuer {
-        did: FIXTURE_DID.into(),
         assertion_key_id: Some(assertion.id),
         ..common::issuers::active(&tenant_id)
     };

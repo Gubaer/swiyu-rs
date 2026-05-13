@@ -80,7 +80,6 @@ async fn seeded_environment(
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
 
     let issuer = Issuer {
-        did: "did:tdw:dev.example.com:test".into(),
         assertion_key_id: Some(assertion.id),
         ..common::issuers::active(&tenant_id)
     };
