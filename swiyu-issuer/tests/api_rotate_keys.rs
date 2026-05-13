@@ -11,7 +11,7 @@ use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
-    Issuer, IssuerId, IssuerState, KeyPairId, OperationTask, TaskId, TaskState, TaskType, TenantId,
+    Issuer, IssuerId, KeyPairId, OperationTask, TaskId, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence;
 
@@ -24,18 +24,12 @@ use common::tenants::insert_test_tenant;
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> IssuerId {
     let issuer = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: "did:tdw:scid:example.com:fixture-uuid".into(),
-        state: Some(IssuerState::Active),
         description: Some("test issuer".into()),
         authorized_key_id: Some(KeyPairId::generate()),
         authentication_key_id: Some(KeyPairId::generate()),
         assertion_key_id: Some(KeyPairId::generate()),
-        display_name: Some("Test issuer".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(tenant_id)
     };
     let id = issuer.id.clone();
     common::issuers::insert(pool, &issuer).await;
@@ -328,18 +322,10 @@ async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let legacy = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: "did:tdw:example.com:legacy".into(),
         state: None,
-        description: None,
-        authorized_key_id: None,
-        authentication_key_id: None,
-        assertion_key_id: None,
         display_name: None,
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &legacy).await;
 

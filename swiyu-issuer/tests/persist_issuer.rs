@@ -146,17 +146,13 @@ async fn skips_when_issuer_row_already_exists(pool: PgPool) {
     let mut conn = pool.acquire().await.unwrap();
     let existing = Issuer {
         id: issuer_id.clone(),
-        tenant_id: tenant_id.clone(),
         did: "did:tdw:Qm-pre-existing:reg.example.com:api:v1:did:abc".into(),
-        state: Some(IssuerState::Active),
         description: Some("pre-existing".into()),
         authorized_key_id: Some(fixture_kid(0x11)),
         authentication_key_id: Some(fixture_kid(0x22)),
         assertion_key_id: Some(fixture_kid(0x33)),
         display_name: Some("pre-existing".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(&tenant_id)
     };
     issuers::insert(&mut conn, &existing).await.unwrap();
 

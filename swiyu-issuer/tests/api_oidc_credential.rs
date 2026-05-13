@@ -21,7 +21,7 @@ use tower::ServiceExt;
 use swiyu_issuer::api_oidc::{AppState, Config, router};
 use swiyu_issuer::domain::{
     AccessTokenSecret, AnySigningEngine, CredentialOffer, DevSigningEngine, Issuer, IssuerId,
-    IssuerState, KeyRole, NonceSecret, PreAuthCode, SigningEngine, TenantId,
+    KeyRole, NonceSecret, PreAuthCode, SigningEngine, TenantId,
 };
 use swiyu_issuer::persistence;
 
@@ -59,18 +59,11 @@ async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer 
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
 
     let issuer = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: FIXTURE_DID.into(),
-        state: Some(IssuerState::Active),
         description: Some("integration-test issuer".into()),
-        authorized_key_id: None,
-        authentication_key_id: None,
         assertion_key_id: Some(assertion.id),
         display_name: Some("Test Issuer".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(tenant_id)
     };
     common::issuers::insert(pool, &issuer).await;
     provision_test_status_list(pool, &issuer).await;
@@ -261,18 +254,10 @@ async fn issuer_without_assertion_key_returns_invalid_request(pool: PgPool) {
 
     // Mirror the seeded dev row's shape: no SigningEngine keys.
     let issuer = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: FIXTURE_DID.into(),
         state: None,
-        description: None,
-        authorized_key_id: None,
-        authentication_key_id: None,
-        assertion_key_id: None,
         display_name: None,
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &issuer).await;
 
@@ -421,18 +406,11 @@ async fn issuance_fails_when_issuer_has_no_status_list(pool: PgPool) {
     let engine = DevSigningEngine::new(pool.clone());
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
     let issuer = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: FIXTURE_DID.into(),
-        state: Some(IssuerState::Active),
         description: Some("issuer without status list".into()),
-        authorized_key_id: None,
-        authentication_key_id: None,
         assertion_key_id: Some(assertion.id),
         display_name: Some("Test Issuer".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &issuer).await;
 

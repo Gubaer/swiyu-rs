@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
-use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
+use swiyu_issuer::domain::{Issuer, IssuerId, KeyPairId, TenantId};
 
 #[path = "common/mod.rs"]
 mod common;
@@ -29,18 +29,14 @@ async fn insert_target_shape_issuer(
     created_at: chrono::DateTime<Utc>,
 ) -> Issuer {
     let issuer = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: format!("did:tdw:{}:example.com", IssuerId::generate().bare()),
-        state: Some(IssuerState::Active),
         description: Some(format!("{display_name} description")),
         authorized_key_id: Some(KeyPairId::generate()),
         authentication_key_id: Some(KeyPairId::generate()),
         assertion_key_id: Some(KeyPairId::generate()),
         display_name: Some(display_name.into()),
-        logo_uri: None,
-        locale: None,
         created_at,
+        ..common::issuers::active(tenant_id)
     };
     common::issuers::insert(pool, &issuer).await;
     issuer
@@ -184,18 +180,11 @@ async fn legacy_issuer_is_filtered_out(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
     let legacy = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: "did:tdw:example.com:legacy".into(),
         state: None,
         description: Some("Legacy fixture (no state, no key triple)".into()),
-        authorized_key_id: None,
-        authentication_key_id: None,
-        assertion_key_id: None,
         display_name: Some("Legacy".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(&tenant_id)
     };
     common::issuers::insert(&pool, &legacy).await;
 

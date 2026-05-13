@@ -15,8 +15,8 @@ use sqlx::PgPool;
 use wiremock::MockServer;
 
 use swiyu_issuer::domain::{
-    DevSigningEngine, Issuer, IssuerId, IssuerState, KeyRole, ProviderRegistry, SigningEngine,
-    StatusList, StatusListId, StatusListIndex, StatusValue, TenantId,
+    DevSigningEngine, Issuer, KeyRole, ProviderRegistry, SigningEngine, StatusList, StatusListId,
+    StatusListIndex, StatusValue, TenantId,
 };
 use swiyu_issuer::persistence::{self, status_lists};
 use swiyu_issuer::worker::StatusListPublisher;
@@ -80,18 +80,9 @@ async fn seeded_environment(
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
 
     let issuer = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: "did:tdw:dev.example.com:test".into(),
-        state: Some(IssuerState::Active),
-        description: None,
-        authorized_key_id: None,
-        authentication_key_id: None,
         assertion_key_id: Some(assertion.id),
-        display_name: Some("Test issuer".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(&tenant_id)
     };
     let mut conn = pool.acquire().await.unwrap();
     persistence::issuers::insert(&mut conn, &issuer)

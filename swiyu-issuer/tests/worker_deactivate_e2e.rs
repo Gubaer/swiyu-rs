@@ -140,18 +140,14 @@ async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> (IssuerId,
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
 
     let issuer = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: fixture_did(),
-        state: Some(IssuerState::Active),
         description: Some("e2e fixture".into()),
         authorized_key_id: Some(authorized.id),
         authentication_key_id: Some(authentication.id),
         assertion_key_id: Some(assertion.id),
         display_name: Some("E2E fixture".into()),
-        logo_uri: None,
-        locale: None,
         created_at: now_micros(),
+        ..common::issuers::active(tenant_id)
     };
     let id = issuer.id.clone();
     common::issuers::insert(pool, &issuer).await;

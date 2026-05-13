@@ -17,8 +17,7 @@ use swiyu_core::statuslist::{SWIYU_STATUS_LIST_BITS, StatusList as CoreStatusLis
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
     BITSTRING_BYTES, CredentialOffer, INTEGRITY_HASH_LEN, IssuedCredential, IssuedCredentialState,
-    Issuer, IssuerId, IssuerState, PreAuthCode, StatusListId, StatusListIndex, StatusValue,
-    TenantId,
+    Issuer, PreAuthCode, StatusListId, StatusListIndex, StatusValue, TenantId,
 };
 use swiyu_issuer::persistence;
 
@@ -31,18 +30,8 @@ use common::tenants::insert_test_tenant;
 
 async fn insert_active_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer {
     let issuer = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
         did: "did:tdw:dev.example.com:test".into(),
-        state: Some(IssuerState::Active),
-        description: None,
-        authorized_key_id: None,
-        authentication_key_id: None,
-        assertion_key_id: None,
-        display_name: Some("Test issuer".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..common::issuers::active(tenant_id)
     };
     common::issuers::insert(pool, &issuer).await;
     issuer
