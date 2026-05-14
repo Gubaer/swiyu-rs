@@ -14,8 +14,8 @@ use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{IssuerId, OperationTask, TaskId, TaskType, TenantId};
 use swiyu_issuer::persistence;
 
-use swiyu_issuer::test_support::api::build_state;
 use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::api::{authenticated_app_state, build_state};
 use swiyu_issuer::test_support::http::{get_request, read_body};
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
@@ -32,14 +32,12 @@ fn pending_task(tenant_id: &TenantId, result_issuer_id: Option<IssuerId>) -> Ope
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_returns_target_shape(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, Some(issuer_id.clone()));
     swiyu_issuer::test_support::persistence::operation_tasks::insert(&pool, &task).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/operation-tasks/{}", task.id.bare()),
@@ -73,9 +71,7 @@ async fn happy_path_returns_target_shape(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn completed_task_surfaces_terminal_state_and_completed_at(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = IssuerId::generate();
     let mut task = pending_task(&tenant_id, Some(issuer_id.clone()));
     swiyu_issuer::test_support::persistence::operation_tasks::insert(&pool, &task).await;
@@ -96,7 +92,7 @@ async fn completed_task_surfaces_terminal_state_and_completed_at(pool: PgPool) {
         .unwrap();
     drop(conn);
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/operation-tasks/{}", task.id.bare()),
@@ -116,11 +112,9 @@ async fn completed_task_surfaces_terminal_state_and_completed_at(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn returns_404_for_unknown_task(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let unknown = TaskId::generate();
     let response = app
         .oneshot(get_request(
@@ -160,11 +154,9 @@ async fn returns_404_for_cross_tenant_task(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn returns_400_for_malformed_task_id(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     // 'O' (capital o) is outside the bs58 alphabet.
     let response = app
         .oneshot(get_request(

@@ -12,8 +12,8 @@ use tower::ServiceExt;
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{Issuer, IssuerId, TenantId};
 
-use swiyu_issuer::test_support::api::build_state;
 use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::api::{authenticated_app_state, build_state};
 use swiyu_issuer::test_support::http::{get_request, read_body};
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
@@ -36,11 +36,9 @@ async fn insert_target_shape_issuer(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn empty_list_returns_no_items_and_no_cursor(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let response = app
         .oneshot(get_request("/api/v1/issuers", Some(&secret.as_wire())))
         .await
@@ -54,15 +52,13 @@ async fn empty_list_returns_no_items_and_no_cursor(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn single_page_returns_target_shape_dtos(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let now = Utc::now();
     let older =
         insert_target_shape_issuer(&pool, &tenant_id, "Older", now - Duration::seconds(10)).await;
     let newer = insert_target_shape_issuer(&pool, &tenant_id, "Newer", now).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let response = app
         .oneshot(get_request("/api/v1/issuers", Some(&secret.as_wire())))
         .await
@@ -91,9 +87,7 @@ async fn single_page_returns_target_shape_dtos(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn multi_page_advances_via_cursor(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
 
     // Three issuers with strictly decreasing display names so we can
     // assert ordering without depending on randomly generated ids.
@@ -104,7 +98,7 @@ async fn multi_page_advances_via_cursor(pool: PgPool) {
         insert_target_shape_issuer(&pool, &tenant_id, "B", now - Duration::seconds(10)).await;
     let newest = insert_target_shape_issuer(&pool, &tenant_id, "C", now).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
 
     // Page 1: limit=2 → newest + middle, with a forward cursor.
     let page1_response = app
@@ -168,9 +162,7 @@ async fn legacy_issuer_is_filtered_out(pool: PgPool) {
     // A row that carries `state IS NULL` and no key triple is
     // half-provisioned legacy data; the list endpoint must hide it
     // the same way the single-fetch endpoint 404s it.
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let legacy = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
@@ -178,7 +170,7 @@ async fn legacy_issuer_is_filtered_out(pool: PgPool) {
     };
     swiyu_issuer::test_support::persistence::issuers::insert(&pool, &legacy).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let response = app
         .oneshot(get_request("/api/v1/issuers", Some(&secret.as_wire())))
         .await
@@ -192,11 +184,9 @@ async fn legacy_issuer_is_filtered_out(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_out_of_range_limit(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             "/api/v1/issuers?limit=0",
@@ -211,11 +201,9 @@ async fn rejects_out_of_range_limit(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_malformed_cursor(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     // '0' is outside the bs58 alphabet.
     let response = app
         .oneshot(get_request(

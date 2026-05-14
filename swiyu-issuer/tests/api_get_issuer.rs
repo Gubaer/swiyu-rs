@@ -11,20 +11,18 @@ use tower::ServiceExt;
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{ApiTokenSecret, Issuer, IssuerId, TenantId};
 
-use swiyu_issuer::test_support::api::build_state;
 use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::api::{authenticated_app_state, build_state};
 use swiyu_issuer::test_support::http::{get_request, read_body};
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_returns_target_shape_dto(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer = swiyu_issuer::test_support::persistence::issuers::active_with_keys(&tenant_id);
     swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}", issuer.id.bare()),
@@ -63,11 +61,9 @@ async fn happy_path_returns_target_shape_dto(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn returns_404_for_unknown_issuer(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let unknown = IssuerId::generate();
     let response = app
         .oneshot(get_request(
@@ -110,9 +106,7 @@ async fn returns_404_for_legacy_issuer(pool: PgPool) {
     // A row that lacks state and the SigningEngine key triple
     // represents a half-provisioned issuer; the handler hides such
     // rows from the v1 surface.
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
@@ -120,7 +114,7 @@ async fn returns_404_for_legacy_issuer(pool: PgPool) {
     };
     swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}", issuer.id.bare()),
@@ -135,11 +129,9 @@ async fn returns_404_for_legacy_issuer(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn returns_400_for_malformed_issuer_id(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
 
-    let app = router(build_state(pool));
+    let app = router(state);
     // 'O' (capital o) is outside the bs58 alphabet, so the bare
     // id fails validation in the handler.
     let response = app

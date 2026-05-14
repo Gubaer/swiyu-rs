@@ -21,8 +21,8 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-use swiyu_issuer::test_support::api::build_state;
 use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::api::{authenticated_app_state, build_state};
 use swiyu_issuer::test_support::fixtures::SAMPLE_HOLDER_KEY_JKT;
 use swiyu_issuer::test_support::http::{get_request, read_body};
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
@@ -85,9 +85,7 @@ async fn seed_credential(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_returns_credential_with_full_shape(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -103,7 +101,7 @@ async fn get_returns_credential_with_full_shape(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!(
@@ -130,9 +128,7 @@ async fn get_returns_credential_with_full_shape(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_marks_past_expires_at_as_expired(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -159,7 +155,7 @@ async fn get_marks_past_expires_at_as_expired(pool: PgPool) {
         .await
         .unwrap();
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!(
@@ -182,14 +178,12 @@ async fn get_marks_past_expires_at_as_expired(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_returns_404_for_unknown_id(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!(
@@ -209,9 +203,7 @@ async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
     // The credential exists for the tenant but under issuer A; the
     // request names issuer B (also owned by the tenant). Must
     // collapse to NotFound.
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_a =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let issuer_b =
@@ -229,7 +221,7 @@ async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!(
@@ -284,7 +276,7 @@ async fn get_is_tenant_scoped(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_missing_bearer_returns_401(pool: PgPool) {
-    let app = router(build_state(pool.clone()));
+    let app = router(build_state(pool));
     let issuer_id = IssuerId::generate();
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
@@ -303,9 +295,7 @@ async fn get_missing_bearer_returns_401(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_returns_credentials_newest_first(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -327,7 +317,7 @@ async fn list_returns_credentials_newest_first(pool: PgPool) {
         credential_ids.push(credential.id.bare().to_string());
     }
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials", issuer.id.bare()),
@@ -352,9 +342,7 @@ async fn list_returns_only_url_issuers_credentials(pool: PgPool) {
     // request for issuer A's credentials must not include rows
     // belonging to issuer B, even when both issuers are owned by
     // the same tenant.
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_a =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let issuer_b =
@@ -384,7 +372,7 @@ async fn list_returns_only_url_issuers_credentials(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials", issuer_a.id.bare()),
@@ -401,9 +389,7 @@ async fn list_returns_only_url_issuers_credentials(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_filters_by_state(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -429,7 +415,7 @@ async fn list_filters_by_state(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!(
@@ -450,9 +436,7 @@ async fn list_filters_by_state(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_filters_by_vct(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -478,7 +462,7 @@ async fn list_filters_by_vct(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!(
@@ -498,9 +482,7 @@ async fn list_filters_by_vct(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_paginates_with_cursor(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -520,7 +502,7 @@ async fn list_paginates_with_cursor(pool: PgPool) {
         .await;
     }
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let first = app
         .clone()
         .oneshot(get_request(
@@ -602,12 +584,10 @@ async fn list_for_other_tenants_issuer_returns_404(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_for_unknown_issuer_returns_404(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
     let unknown_issuer = IssuerId::generate();
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials", unknown_issuer.bare()),
@@ -620,13 +600,11 @@ async fn list_for_unknown_issuer_returns_404(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_rejects_invalid_state_filter(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!(
@@ -642,13 +620,11 @@ async fn list_rejects_invalid_state_filter(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_rejects_out_of_range_limit(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(get_request(
             &format!("/api/v1/issuers/{}/credentials?limit=0", issuer.id.bare()),

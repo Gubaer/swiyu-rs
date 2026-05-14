@@ -20,8 +20,8 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-use swiyu_issuer::test_support::api::build_state;
 use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::api::{authenticated_app_state, build_state};
 use swiyu_issuer::test_support::fixtures::SAMPLE_HOLDER_KEY_JKT;
 use swiyu_issuer::test_support::http::{post_request_empty, read_body};
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
@@ -132,9 +132,7 @@ fn lifecycle_uri(credential: &IssuedCredential, action: &str) -> String {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn suspend_active_flips_state_and_status_bit(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -150,7 +148,7 @@ async fn suspend_active_flips_state_and_status_bit(pool: PgPool) {
     .await;
     let baseline_version = fetch_committed_version(&pool, &list_id).await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "suspend"),
@@ -177,9 +175,7 @@ async fn suspend_active_flips_state_and_status_bit(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn unsuspend_restores_active_and_clears_status_bit(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -194,7 +190,7 @@ async fn unsuspend_restores_active_and_clears_status_bit(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "unsuspend"),
@@ -215,9 +211,7 @@ async fn unsuspend_restores_active_and_clears_status_bit(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn revoke_active_flips_state_and_status_bit(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -232,7 +226,7 @@ async fn revoke_active_flips_state_and_status_bit(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "revoke"),
@@ -253,9 +247,7 @@ async fn revoke_active_flips_state_and_status_bit(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn revoke_suspended_succeeds(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -270,7 +262,7 @@ async fn revoke_suspended_succeeds(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "revoke"),
@@ -284,9 +276,7 @@ async fn revoke_suspended_succeeds(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn suspend_already_suspended_returns_409(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -301,7 +291,7 @@ async fn suspend_already_suspended_returns_409(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "suspend"),
@@ -318,9 +308,7 @@ async fn suspend_already_suspended_returns_409(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn unsuspend_active_returns_409(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -335,7 +323,7 @@ async fn unsuspend_active_returns_409(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "unsuspend"),
@@ -348,9 +336,7 @@ async fn unsuspend_active_returns_409(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn revoke_already_revoked_returns_409(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
@@ -365,7 +351,7 @@ async fn revoke_already_revoked_returns_409(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &lifecycle_uri(&credential, "revoke"),
@@ -416,13 +402,11 @@ async fn lifecycle_op_against_other_tenant_returns_404(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn unknown_credential_returns_404(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
         .oneshot(post_request_empty(
@@ -443,9 +427,7 @@ async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
     // The credential exists for the tenant but under issuer A; the
     // request names issuer B (also owned by the tenant). Must
     // collapse to NotFound without applying the transition.
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_a =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let issuer_b =
@@ -462,7 +444,7 @@ async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
     )
     .await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &format!(
@@ -482,7 +464,7 @@ async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn missing_bearer_returns_401(pool: PgPool) {
-    let app = router(build_state(pool.clone()));
+    let app = router(build_state(pool));
     let issuer_id = swiyu_issuer::domain::IssuerId::generate();
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
     let response = app
@@ -501,13 +483,11 @@ async fn missing_bearer_returns_401(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn malformed_credential_id_returns_400(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer =
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             &format!(
@@ -525,11 +505,9 @@ async fn malformed_credential_id_returns_400(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn malformed_issuer_id_returns_400(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_empty(
             "/api/v1/issuers/notValid0/credentials/9hXq2vRtL8pK7f/suspend",

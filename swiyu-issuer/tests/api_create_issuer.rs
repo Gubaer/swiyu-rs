@@ -10,20 +10,16 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
-use swiyu_issuer::domain::{ApiTokenSecret, IssuerId, TaskId, TaskState, TenantId};
+use swiyu_issuer::domain::{ApiTokenSecret, IssuerId, TaskId, TaskState};
 use swiyu_issuer::persistence;
 
-use swiyu_issuer::test_support::api::build_state;
-use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::api::authenticated_app_state;
 use swiyu_issuer::test_support::http::{post_request_json, read_body};
-use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool.clone()));
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     let body = json!({
         "description": swiyu_issuer::test_support::fixtures::SAMPLE_DESCRIPTION,
@@ -67,10 +63,8 @@ async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn trims_whitespace_in_input_fields(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool.clone()));
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     let body = json!({
         "description": "  Padded description \n",
@@ -98,10 +92,8 @@ async fn trims_whitespace_in_input_fields(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn missing_fields_apply_defaults(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool.clone()));
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     // Empty body — both description and display_name omitted.
     let body = json!({});
@@ -133,10 +125,8 @@ async fn missing_fields_apply_defaults(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn blank_fields_apply_defaults(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool.clone()));
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     // Both fields present but trim to empty — same as omitted.
     let body = json!({ "description": "  ", "display_name": "\t\n" });
@@ -167,10 +157,8 @@ async fn blank_fields_apply_defaults(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_oversized_display_name(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool));
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     let oversized = "a".repeat(256);
     let body = json!({ "description": "ok", "display_name": oversized });
@@ -193,10 +181,8 @@ async fn rejects_oversized_display_name(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_oversized_description(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool));
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     let oversized = "a".repeat(256);
     let body = json!({ "description": oversized, "display_name": "ok" });
@@ -219,10 +205,8 @@ async fn rejects_oversized_description(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_unknown_field(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
-    let app = router(build_state(pool));
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     let body = json!({
         "description": "ok",
@@ -245,9 +229,8 @@ async fn rejects_unknown_field(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_request_without_authorization(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let app = router(build_state(pool));
+    let (state, _tenant_id, _secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     let body = json!({ "description": "ok", "display_name": "ok" });
     let response = app
@@ -259,9 +242,8 @@ async fn rejects_request_without_authorization(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn rejects_unknown_bearer_token(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let app = router(build_state(pool));
+    let (state, _tenant_id, _secret) = authenticated_app_state(&pool).await;
+    let app = router(state);
 
     let bogus = ApiTokenSecret::generate();
     let body = json!({ "description": "ok", "display_name": "ok" });

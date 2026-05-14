@@ -14,8 +14,8 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-use swiyu_issuer::test_support::api::build_state;
 use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::api::{authenticated_app_state, build_state};
 use swiyu_issuer::test_support::http::{post_request_json, read_body};
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
@@ -41,15 +41,13 @@ async fn insert_rotate_task(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn fresh_rotation_returns_201_and_inserts_task(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
         &pool, &tenant_id,
     )
     .await
     .id;
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -84,15 +82,13 @@ async fn all_sentinel_expands_server_side(pool: PgPool) {
     // Wire `["all"]` becomes the explicit three-role set in the
     // persisted task input. The sentinel does not survive the
     // boundary.
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
         &pool, &tenant_id,
     )
     .await
     .id;
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -120,16 +116,14 @@ async fn all_sentinel_expands_server_side(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn in_flight_task_returns_200_and_same_task_id(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
         &pool, &tenant_id,
     )
     .await
     .id;
     let existing_task = insert_rotate_task(&pool, &tenant_id, &issuer_id, TaskState::Pending).await;
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -150,16 +144,14 @@ async fn in_flight_task_returns_200_and_same_task_id(pool: PgPool) {
 async fn prior_completed_task_falls_through_to_fresh_201(pool: PgPool) {
     // Rotation is repeatable: a prior completed task does NOT
     // block a new submission.
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
         &pool, &tenant_id,
     )
     .await
     .id;
     let prior_task = insert_rotate_task(&pool, &tenant_id, &issuer_id, TaskState::Completed).await;
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -179,9 +171,7 @@ async fn prior_completed_task_falls_through_to_fresh_201(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn deactivated_issuer_returns_409(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
         &pool, &tenant_id,
     )
@@ -194,7 +184,7 @@ async fn deactivated_issuer_returns_409(pool: PgPool) {
         .await
         .unwrap();
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -212,15 +202,13 @@ async fn deactivated_issuer_returns_409(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn empty_roles_returns_400(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
         &pool, &tenant_id,
     )
     .await
     .id;
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -235,15 +223,13 @@ async fn empty_roles_returns_400(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn unknown_role_returns_400(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
         &pool, &tenant_id,
     )
     .await
     .id;
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -258,15 +244,13 @@ async fn unknown_role_returns_400(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn all_mixed_with_concrete_role_returns_400(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
         &pool, &tenant_id,
     )
     .await
     .id;
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -307,11 +291,9 @@ async fn cross_tenant_issuer_returns_404(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn unknown_issuer_returns_404(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
     let unknown = IssuerId::generate();
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
 
     let response = app
         .oneshot(post_request_json(
@@ -326,9 +308,7 @@ async fn unknown_issuer_returns_404(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
-    let tenant_id = TenantId::generate();
-    insert_test_tenant(&pool, &tenant_id).await;
-    let secret = mint_test_token(&pool, &tenant_id).await;
+    let (state, tenant_id, secret) = authenticated_app_state(&pool).await;
     let legacy = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
@@ -336,7 +316,7 @@ async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
     };
     swiyu_issuer::test_support::persistence::issuers::insert(&pool, &legacy).await;
 
-    let app = router(build_state(pool.clone()));
+    let app = router(state);
     let response = app
         .oneshot(post_request_json(
             &format!("/api/v1/issuers/{}/rotate-keys", legacy.id.bare()),
