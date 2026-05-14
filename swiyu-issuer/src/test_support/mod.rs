@@ -5,7 +5,15 @@ use uuid::Uuid;
 
 use crate::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
 
+pub mod api;
 pub mod domain;
+pub mod env;
+pub mod fixtures;
+pub mod http;
+pub mod oauth;
+pub mod persistence;
+pub mod registry;
+pub mod time;
 pub mod worker;
 
 pub fn fixture_kid(byte: u8) -> KeyPairId {
