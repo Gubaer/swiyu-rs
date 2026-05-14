@@ -61,6 +61,23 @@ pub async fn provision(pool: &PgPool, issuer_id: &IssuerId) -> StatusListId {
         .unwrap()
 }
 
+pub async fn provision_with_registry(
+    pool: &PgPool,
+    issuer_id: &IssuerId,
+    entry_id: &str,
+    registry_url: &str,
+) -> StatusListId {
+    let mut conn = pool.acquire().await.unwrap();
+    persistence::status_lists::provision_for_issuer(
+        &mut conn,
+        issuer_id,
+        Some(entry_id),
+        Some(registry_url),
+    )
+    .await
+    .unwrap()
+}
+
 pub async fn seed_dirty_environment(
     pool: &PgPool,
     secret_engine: &AnySecretEncryptionEngine,

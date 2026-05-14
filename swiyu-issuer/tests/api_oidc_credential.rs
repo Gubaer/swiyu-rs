@@ -25,9 +25,6 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-const FIXTURE_STATUS_REGISTRY_URL: &str =
-    "https://registry.example.invalid/api/v1/statuslist/11111111-2222-3333-4444-555555555555.jwt";
-
 fn build_state(pool: PgPool) -> AppState {
     let engine = AnySigningEngine::Dev(DevSigningEngine::new(pool.clone()));
     AppState::new(
@@ -41,7 +38,10 @@ fn build_state(pool: PgPool) -> AppState {
     )
 }
 
-use swiyu_issuer::test_support::fixtures::{SAMPLE_BASE_URL, SAMPLE_STATUS_ENTRY_ID};
+use swiyu_issuer::test_support::fixtures::{
+    SAMPLE_BASE_URL, SAMPLE_STATUS_ENTRY_ID, SAMPLE_STATUS_REGISTRY_URL,
+};
+use swiyu_issuer::test_support::persistence::status_lists::provision_with_registry;
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 // Mirrors the shape the create_issuer worker leaves behind once both
@@ -55,20 +55,14 @@ async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer 
         ..swiyu_issuer::test_support::persistence::issuers::active(tenant_id)
     };
     swiyu_issuer::test_support::persistence::issuers::insert(pool, &issuer).await;
-    provision_test_status_list(pool, &issuer).await;
-    issuer
-}
-
-async fn provision_test_status_list(pool: &PgPool, issuer: &Issuer) {
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::status_lists::provision_for_issuer(
-        &mut conn,
+    provision_with_registry(
+        pool,
         &issuer.id,
-        Some(SAMPLE_STATUS_ENTRY_ID),
-        Some(FIXTURE_STATUS_REGISTRY_URL),
+        SAMPLE_STATUS_ENTRY_ID,
+        SAMPLE_STATUS_REGISTRY_URL,
     )
-    .await
-    .unwrap();
+    .await;
+    issuer
 }
 
 async fn create_pending_offer(pool: &PgPool, issuer: &Issuer, claims: Value) -> CredentialOffer {
@@ -449,7 +443,7 @@ async fn credential_payload_carries_status_claim(pool: PgPool) {
     assert_eq!(status["idx"], 0);
     let uri = status["uri"].as_str().expect("status_list.uri is a string");
     assert_eq!(
-        uri, FIXTURE_STATUS_REGISTRY_URL,
+        uri, SAMPLE_STATUS_REGISTRY_URL,
         "status uri must be the persisted registry_url verbatim",
     );
     assert!(
