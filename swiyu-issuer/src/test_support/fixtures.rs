@@ -4,3 +4,6 @@ pub const SAMPLE_STATUS_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
 pub const SAMPLE_STATUS_REGISTRY_URL: &str = "https://status-reg.test/lists/abc.jwt";
 pub const SAMPLE_HOLDER_KEY_JKT: &str = "abcDEF0123456789abcDEF0123456789abcDEF01234";
 pub const SAMPLE_BASE_URL: &str = "http://localhost:8080";
+pub const SAMPLE_DID: &str = "did:tdw:example.com:sample-issuer";
+pub const SAMPLE_DISPLAY_NAME: &str = "Sample Issuer";
+pub const SAMPLE_DESCRIPTION: &str = "Sample Issuer description";

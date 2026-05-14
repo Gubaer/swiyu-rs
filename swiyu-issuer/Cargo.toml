@@ -9,7 +9,10 @@ license = "MIT"
 # Unit tests inside this crate get the module automatically via `cfg(test)`;
 # this feature is the escape hatch for integration tests or workspace
 # consumers that need to share the same fixtures.
-test-support = []
+# `wiremock` is pulled in here because `test_support::oauth` and
+# `test_support::registry::identifier` mount mock HTTP servers; the dev-deps
+# entry stays so test binaries that import `wiremock` directly keep working.
+test-support = ["dep:wiremock"]
 
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
@@ -48,6 +51,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+wiremock = { version = "0.6", optional = true }
 
 [dev-dependencies]
 # Self-dependency with the `test-support` feature so integration tests under
