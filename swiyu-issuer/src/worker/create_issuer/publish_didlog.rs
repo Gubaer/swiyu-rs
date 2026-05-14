@@ -83,26 +83,11 @@ mod tests {
     use super::*;
 
     use crate::test_support::domain::signing_engine::{GetPublicKeyCall, MockSigningEngine};
+    use crate::test_support::worker::create_issuer::fixture_state;
     use crate::test_support::worker::{
-        AllocateCall, MockRegistry, PublishCall, fixture_kid, fixture_now, fixture_tenant,
+        AllocateCall, MockRegistry, PublishCall, fixture_now, fixture_tenant,
         fixture_token_provider,
     };
-    use crate::worker::create_issuer::KeyTriple;
-
-    fn fixture_state(didlog_published: bool) -> CreateIssuerStateData {
-        CreateIssuerStateData {
-            assigned_did_url: Some("https://reg.example.com/api/v1/did/abc/did.jsonl".into()),
-            assigned_identifier: Some("abc".into()),
-            key_ids: Some(KeyTriple {
-                authorized: fixture_kid(0x11),
-                authentication: fixture_kid(0x22),
-                assertion: fixture_kid(0x33),
-            }),
-            didlog_published,
-            status_list_registry_entry_id: None,
-            status_list_registry_url: None,
-        }
-    }
 
     #[tokio::test]
     async fn happy_path_publishes_and_marks_didlog_published() {

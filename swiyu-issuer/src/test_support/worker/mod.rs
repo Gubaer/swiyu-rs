@@ -28,6 +28,7 @@ use crate::domain::{
 use crate::worker::create_issuer::KeyTriple;
 use crate::worker::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 
+pub mod create_issuer;
 pub mod rotate_keys;
 
 // Back-compat re-exports of helpers lifted to the crate-level `test_support`

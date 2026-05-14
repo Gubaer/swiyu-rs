@@ -42,21 +42,9 @@ mod tests {
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_p256_pk,
     };
     use crate::test_support::worker::{fixture_kid, fixture_now};
-    use crate::worker::create_issuer::KeyTriple;
 
     fn fixture_state() -> CreateIssuerStateData {
-        CreateIssuerStateData {
-            assigned_did_url: Some("https://reg.example.com/api/v1/did/abc/did.jsonl".into()),
-            assigned_identifier: Some("abc".into()),
-            key_ids: Some(KeyTriple {
-                authorized: fixture_kid(0x11),
-                authentication: fixture_kid(0x22),
-                assertion: fixture_kid(0x33),
-            }),
-            didlog_published: false,
-            status_list_registry_entry_id: None,
-            status_list_registry_url: None,
-        }
+        crate::test_support::worker::create_issuer::fixture_state(false)
     }
 
     #[tokio::test]
