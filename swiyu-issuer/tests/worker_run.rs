@@ -14,13 +14,13 @@ use serde_json::json;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
-use swiyu_issuer::domain::signing_engine::test_support::{
-    GenerateKeypairCall, MockSigningEngine, fixture_ed25519_pk, fixture_p256_pk,
-};
 use swiyu_issuer::domain::{
     GeneratedKeyPair, IssuerId, KeyAlgorithm, OperationTask, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::issuers;
+use swiyu_issuer::test_support::domain::signing_engine::{
+    GenerateKeypairCall, MockSigningEngine, fixture_ed25519_pk, fixture_p256_pk,
+};
 use swiyu_issuer::test_support::worker::{
     AllocateCall, MockRegistry, MockStatusRegistry, PublishCall,
 };

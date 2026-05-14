@@ -104,8 +104,8 @@ mod tests {
 
     use chrono::Utc;
 
-    use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
     use crate::domain::{IssuerId, IssuerState, KeyAlgorithm, TenantId};
+    use crate::test_support::domain::signing_engine::{GenerateKeypairCall, MockSigningEngine};
     use crate::test_support::worker::{fixture_keypair, fixture_kid};
 
     fn fixture_issuer() -> Issuer {

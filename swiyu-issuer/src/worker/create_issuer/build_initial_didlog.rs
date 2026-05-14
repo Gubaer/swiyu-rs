@@ -37,10 +37,10 @@ pub async fn execute_build_initial_didlog<S: SigningEngine>(
 mod tests {
     use super::*;
 
-    use crate::domain::signing_engine::test_support::{
+    use crate::domain::{KeyAlgorithm, RawPublicKey};
+    use crate::test_support::domain::signing_engine::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_p256_pk,
     };
-    use crate::domain::{KeyAlgorithm, RawPublicKey};
     use crate::test_support::worker::{fixture_kid, fixture_now};
     use crate::worker::create_issuer::KeyTriple;
 

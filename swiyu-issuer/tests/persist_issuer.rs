@@ -6,9 +6,9 @@
 
 use sqlx::PgPool;
 
-use swiyu_issuer::domain::signing_engine::test_support::{GetPublicKeyCall, MockSigningEngine};
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, StepOutcome, TenantId};
 use swiyu_issuer::persistence::issuers;
+use swiyu_issuer::test_support::domain::signing_engine::{GetPublicKeyCall, MockSigningEngine};
 use swiyu_issuer::worker::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, KeyTriple, execute_persist_issuer,
 };

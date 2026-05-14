@@ -617,7 +617,7 @@ fn invalid_proof_structure() -> OAuthError {
 /// the 32-byte prehash, so we compute it here.
 ///
 /// Generic over the engine so unit tests can drive the function with
-/// a [`MockSigningEngine`][crate::domain::signing_engine::test_support::MockSigningEngine];
+/// a [`MockSigningEngine`][crate::test_support::domain::signing_engine::MockSigningEngine];
 /// production passes `&`[`AnySigningEngine`][crate::domain::AnySigningEngine].
 #[allow(clippy::too_many_arguments)]
 async fn build_sd_jwt_vc<S: SigningEngine>(
@@ -837,10 +837,10 @@ mod tests {
 
         use chrono::Duration;
 
-        use crate::domain::signing_engine::test_support::{MockSigningEngine, SignCall};
         use crate::domain::{
             CredentialOffer, Issuer, IssuerState, KeyAlgorithm, PreAuthCode, Signature, TenantId,
         };
+        use crate::test_support::domain::signing_engine::{MockSigningEngine, SignCall};
 
         const FIXTURE_DID: &str =
             "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d";

@@ -151,7 +151,7 @@ mod tests {
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
     use crate::domain::IssuerState;
-    use crate::domain::signing_engine::test_support::{
+    use crate::test_support::domain::signing_engine::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk,
     };
     use crate::test_support::worker::{

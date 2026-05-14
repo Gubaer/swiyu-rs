@@ -9,7 +9,7 @@
 use std::future::Future;
 use std::sync::Mutex;
 
-use super::{
+use crate::domain::signing_engine::{
     GeneratedKeyPair, KeyAlgorithm, KeyPairId, KeyRole, RawPublicKey, Signature, SigningEngine,
     SigningEngineError,
 };

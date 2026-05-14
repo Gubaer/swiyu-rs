@@ -7,7 +7,7 @@
 //! queue of outcomes; tests fail loudly on under- or over-call.
 //!
 //! The matching `MockSigningEngine` lives in
-//! [`crate::domain::signing_engine::test_support`] so the
+//! [`crate::test_support::domain::signing_engine`] so the
 //! domain → worker dependency direction stays clean.
 
 use std::future::Future;

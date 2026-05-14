@@ -89,11 +89,11 @@ mod tests {
     use serde_json::Value;
     use uuid::Uuid;
 
-    use crate::domain::signing_engine::test_support::{MockSigningEngine, SignCall};
     use crate::domain::{
         IssuerId, IssuerState, KeyAlgorithm, KeyPairId, Signature, SigningEngineError,
         StatusListId, TenantId,
     };
+    use crate::test_support::domain::signing_engine::{MockSigningEngine, SignCall};
 
     const FIXTURE_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
     const FIXTURE_REGISTRY_URL: &str = "https://status-reg.test/lists/abc.jwt";

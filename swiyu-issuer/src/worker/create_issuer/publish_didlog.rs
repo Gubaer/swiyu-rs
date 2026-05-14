@@ -82,7 +82,7 @@ pub async fn execute_publish_didlog<R: RegistryFacade, S: SigningEngine>(
 mod tests {
     use super::*;
 
-    use crate::domain::signing_engine::test_support::{GetPublicKeyCall, MockSigningEngine};
+    use crate::test_support::domain::signing_engine::{GetPublicKeyCall, MockSigningEngine};
     use crate::test_support::worker::{
         AllocateCall, MockRegistry, PublishCall, fixture_kid, fixture_now, fixture_tenant,
         fixture_token_provider,

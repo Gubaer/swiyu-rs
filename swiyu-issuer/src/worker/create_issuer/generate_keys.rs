@@ -75,8 +75,8 @@ fn outcome_for_engine_error(error_code: &str, e: SigningEngineError) -> StepOutc
 mod tests {
     use super::*;
 
-    use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
     use crate::domain::{KeyAlgorithm, KeyPairId};
+    use crate::test_support::domain::signing_engine::{GenerateKeypairCall, MockSigningEngine};
     use crate::test_support::worker::fixture_keypair;
 
     #[tokio::test]

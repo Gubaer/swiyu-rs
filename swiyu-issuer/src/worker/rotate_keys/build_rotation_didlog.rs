@@ -95,10 +95,10 @@ mod tests {
 
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
-    use crate::domain::signing_engine::test_support::{
+    use crate::domain::{IssuerState, KeyAlgorithm, RawPublicKey};
+    use crate::test_support::domain::signing_engine::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
     };
-    use crate::domain::{IssuerState, KeyAlgorithm, RawPublicKey};
     use crate::test_support::worker::{
         FetchLogCall, MockRegistry, fixture_did, fixture_issuer, fixture_kid, fixture_now,
         fixture_p256, fixture_rotated_triple,

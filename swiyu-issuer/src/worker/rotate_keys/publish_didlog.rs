@@ -158,10 +158,10 @@ mod tests {
 
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
-    use crate::domain::signing_engine::test_support::{
+    use crate::domain::{KeyAlgorithm, RawPublicKey};
+    use crate::test_support::domain::signing_engine::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
     };
-    use crate::domain::{KeyAlgorithm, RawPublicKey};
     use crate::test_support::worker::{
         FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
         fixture_issuer, fixture_now, fixture_p256, fixture_rotated_triple, fixture_tenant,
