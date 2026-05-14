@@ -107,14 +107,7 @@ mod tests {
     // Stand-in for the registry tail before the rotation we're about to publish:
     // the genesis entry's `updateKeys` references an "old" authorized multikey distinct from any new one.
     fn fixture_genesis_entry() -> DIDLogEntry {
-        DIDLogEntry::new_genesis(
-            &LogEntryFormat::TDW03,
-            "z6Mk-old-authorized",
-            fixture_did(),
-            &fixture_p256(),
-            &fixture_p256(),
-            "2026-05-04T12:00:00Z",
-        )
+        crate::test_support::worker::fixture_genesis_entry("z6Mk-old-authorized")
     }
 
     fn fixture_ed25519_pk(seed: u8) -> RawPublicKey {

@@ -96,18 +96,11 @@ mod tests {
         fixture_p256,
     };
 
+    // A genesis entry whose did_doc_state is `Value` and whose
+    // parameters do not carry `deactivated: true`. Stand-in for
+    // the registry tail when the issuer is still active.
     fn fixture_genesis_entry() -> DIDLogEntry {
-        // A genesis entry whose did_doc_state is `Value` and whose
-        // parameters do not carry `deactivated: true`. Stand-in for
-        // the registry tail when the issuer is still active.
-        DIDLogEntry::new_genesis(
-            &LogEntryFormat::TDW03,
-            "z6Mk-authorized-fixture",
-            fixture_did(),
-            &fixture_p256(),
-            &fixture_p256(),
-            "2026-05-04T12:00:00Z",
-        )
+        crate::test_support::worker::fixture_genesis_entry("z6Mk-authorized-fixture")
     }
 
     #[tokio::test]

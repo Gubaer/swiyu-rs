@@ -17,7 +17,7 @@ use rand_core::RngCore;
 use serde_json::Value;
 use swiyu_core::did::DID;
 use swiyu_core::diddoc::public_keys::P256PublicKey;
-use swiyu_core::didlog::DIDLogEntry;
+use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 use swiyu_registries::common::{AccessToken, RegistryError};
 use swiyu_registries::identifier::Allocation;
 use swiyu_registries::status::StatusListEntry;
@@ -80,6 +80,24 @@ pub fn fixture_p256() -> P256PublicKey {
         x: [1u8; 32],
         y: [2u8; 32],
     }
+}
+
+/// Builds a genesis [`DIDLogEntry`] for the registry-tail in worker tests.
+///
+/// `multikey` is the only thing that varies between saga test suites
+/// (rotate uses `"z6Mk-old-authorized"`; deactivate uses
+/// `"z6Mk-authorized-fixture"`), so it stays a parameter. Other inputs
+/// — DID, P-256 keys, timestamp — are pinned to the standard fixtures
+/// so the resulting entry is bit-for-bit stable across tests.
+pub fn fixture_genesis_entry(multikey: &str) -> DIDLogEntry {
+    DIDLogEntry::new_genesis(
+        &LogEntryFormat::TDW03,
+        multikey,
+        fixture_did(),
+        &fixture_p256(),
+        &fixture_p256(),
+        "2026-05-04T12:00:00Z",
+    )
 }
 
 pub struct ConstantRng(pub u64);

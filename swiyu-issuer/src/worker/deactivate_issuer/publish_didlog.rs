@@ -165,14 +165,7 @@ mod tests {
     }
 
     fn fixture_genesis_entry() -> DIDLogEntry {
-        DIDLogEntry::new_genesis(
-            &LogEntryFormat::TDW03,
-            "z6Mk-authorized-fixture",
-            fixture_did(),
-            &fixture_p256(),
-            &fixture_p256(),
-            "2026-05-04T12:00:00Z",
-        )
+        crate::test_support::worker::fixture_genesis_entry("z6Mk-authorized-fixture")
     }
 
     fn fixture_deactivation_entry() -> DIDLogEntry {
