@@ -11,8 +11,8 @@ use uuid::Uuid;
 use swiyu_issuer::domain::TenantId;
 use swiyu_issuer::persistence::PersistenceError;
 use swiyu_issuer::persistence::tenants::{self, UpdateOutcome};
+use swiyu_issuer::test_support::fixtures::SAMPLE_PARTNER_ID;
 
-const TEST_PARTNER: &str = "4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef";
 const ALT_PARTNER: &str = "11111111-2222-3333-4444-555555555555";
 
 async fn insert_test_tenant(pool: &PgPool, tenant_id: &TenantId, partner_id: Uuid) {
@@ -53,7 +53,7 @@ async fn find_by_id_returns_none_for_unknown_tenant(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn insert_writes_all_columns(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let partner_id: Uuid = TEST_PARTNER.parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     tenants::insert(
@@ -82,7 +82,7 @@ async fn insert_writes_all_columns(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn insert_with_null_metadata_leaves_those_columns_null(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let partner_id: Uuid = TEST_PARTNER.parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     tenants::insert(&mut conn, &tenant_id, partner_id, None, None)
@@ -101,7 +101,7 @@ async fn insert_with_null_metadata_leaves_those_columns_null(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn insert_with_colliding_id_returns_unique_violation(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let partner_id: Uuid = TEST_PARTNER.parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
     tenants::insert(&mut conn, &tenant_id, partner_id, None, None)
@@ -117,7 +117,7 @@ async fn insert_with_colliding_id_returns_unique_violation(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn insert_with_duplicate_partner_id_returns_unique_violation(pool: PgPool) {
-    let partner_id: Uuid = TEST_PARTNER.parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
     let first_id = TenantId::generate();
     let second_id = TenantId::generate();
 
@@ -138,7 +138,7 @@ async fn insert_with_duplicate_partner_id_returns_unique_violation(pool: PgPool)
 #[sqlx::test(migrations = "./migrations")]
 async fn update_metadata_partial_display_name_only(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let partner_id: Uuid = TEST_PARTNER.parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
     let mut conn = pool.acquire().await.unwrap();
     tenants::insert(
         &mut conn,
@@ -167,7 +167,7 @@ async fn update_metadata_partial_display_name_only(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn update_metadata_partial_partner_id_only(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let original_partner: Uuid = TEST_PARTNER.parse().unwrap();
+    let original_partner: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
     let new_partner: Uuid = ALT_PARTNER.parse().unwrap();
     let mut conn = pool.acquire().await.unwrap();
     tenants::insert(
@@ -208,7 +208,7 @@ async fn update_metadata_returns_not_found_for_unknown_tenant(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn update_metadata_with_all_none_touches_nothing(pool: PgPool) {
     let tenant_id = TenantId::generate();
-    let partner_id: Uuid = TEST_PARTNER.parse().unwrap();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
     let mut conn = pool.acquire().await.unwrap();
     tenants::insert(
         &mut conn,

@@ -11,29 +11,15 @@ use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::test_support::domain::signing_engine::{GetPublicKeyCall, MockSigningEngine};
 use swiyu_issuer::test_support::fixtures::{SAMPLE_DESCRIPTION, SAMPLE_DISPLAY_NAME};
 use swiyu_issuer::test_support::persistence::issuers as test_issuers;
+use swiyu_issuer::test_support::worker::create_issuer::fixture_state;
 use swiyu_issuer::worker::create_issuer::{
-    CreateIssuerInput, CreateIssuerStateData, KeyTriple, execute_persist_issuer,
+    CreateIssuerInput, CreateIssuerStateData, execute_persist_issuer,
 };
 
 fn fixture_input() -> CreateIssuerInput {
     CreateIssuerInput {
         description: SAMPLE_DESCRIPTION.into(),
         display_name: SAMPLE_DISPLAY_NAME.into(),
-    }
-}
-
-fn fixture_state() -> CreateIssuerStateData {
-    CreateIssuerStateData {
-        assigned_did_url: Some("https://reg.example.com/api/v1/did/abc/did.jsonl".into()),
-        assigned_identifier: Some("abc".into()),
-        key_ids: Some(KeyTriple {
-            authorized: fixture_kid(0x11),
-            authentication: fixture_kid(0x22),
-            assertion: fixture_kid(0x33),
-        }),
-        didlog_published: true,
-        status_list_registry_entry_id: None,
-        status_list_registry_url: None,
     }
 }
 
@@ -53,7 +39,7 @@ async fn happy_path_inserts_issuer_row(pool: PgPool) {
         &tenant_id,
         &issuer_id,
         &fixture_input(),
-        &fixture_state(),
+        &fixture_state(true),
         &engine,
         fixture_now(),
     )
@@ -109,7 +95,7 @@ async fn skips_when_issuer_row_already_exists(pool: PgPool) {
         &tenant_id,
         &issuer_id,
         &fixture_input(),
-        &fixture_state(),
+        &fixture_state(true),
         &engine,
         fixture_now(),
     )
@@ -137,7 +123,7 @@ async fn missing_key_ids_is_terminal(pool: PgPool) {
     let engine = MockSigningEngine::new();
     let state = CreateIssuerStateData {
         key_ids: None,
-        ..fixture_state()
+        ..fixture_state(true)
     };
 
     let outcome = execute_persist_issuer(
@@ -167,7 +153,7 @@ async fn invalid_url_is_terminal(pool: PgPool) {
     let engine = MockSigningEngine::new();
     let state = CreateIssuerStateData {
         assigned_did_url: Some("ftp://bad.example/did.jsonl".into()),
-        ..fixture_state()
+        ..fixture_state(true)
     };
 
     let outcome = execute_persist_issuer(
@@ -202,7 +188,7 @@ async fn engine_backend_error_is_retryable(pool: PgPool) {
         &tenant_id,
         &issuer_id,
         &fixture_input(),
-        &fixture_state(),
+        &fixture_state(true),
         &engine,
         fixture_now(),
     )
