@@ -1,7 +1,29 @@
 //! Test fixtures specific to the create-issuer saga step tests.
 
+use crate::test_support::domain::signing_engine::{
+    GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_p256_pk,
+    fixture_signature,
+};
 use crate::test_support::fixture_kid;
 use crate::worker::create_issuer::{CreateIssuerStateData, KeyTriple};
+
+/// Pre-loads one create-issuer didlog step's engine calls: three
+/// `get_public_key` calls (Ed25519 authorized, P-256 authentication,
+/// P-256 assertion) followed by one Ed25519 signature.
+pub fn enqueue_happy_step(engine: &MockSigningEngine) {
+    engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
+    engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
+    engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
+    engine.enqueue_sign(SignCall::Ok(fixture_signature()));
+}
+
+/// Fresh engine pre-loaded with exactly one happy-path
+/// create-issuer didlog step.
+pub fn engine_for_happy_path() -> MockSigningEngine {
+    let engine = MockSigningEngine::new();
+    enqueue_happy_step(&engine);
+    engine
+}
 
 /// Saga state populated as if all preceding steps already ran:
 /// the registry returned an allocation, three keys have been

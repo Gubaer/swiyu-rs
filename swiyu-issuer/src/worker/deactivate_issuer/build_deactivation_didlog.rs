@@ -91,6 +91,7 @@ mod tests {
     use crate::test_support::domain::signing_engine::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk,
     };
+    use crate::test_support::worker::deactivate_issuer::engine_for_happy_path;
     use crate::test_support::worker::{
         FetchLogCall, MockRegistry, fixture_did, fixture_issuer, fixture_kid, fixture_now,
         fixture_p256,
@@ -107,7 +108,7 @@ mod tests {
     async fn happy_path_returns_done_with_empty_patch() {
         let registry = MockRegistry::new();
         registry.enqueue_fetch_log(FetchLogCall::Ok(vec![fixture_genesis_entry()]));
-        let engine = MockSigningEngine::for_deactivation_happy_path();
+        let engine = engine_for_happy_path();
 
         let outcome =
             execute_build_deactivation_didlog(&fixture_issuer(), &registry, &engine, fixture_now())

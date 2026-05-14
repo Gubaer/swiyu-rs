@@ -82,35 +82,6 @@ impl MockSigningEngine {
     pub fn enqueue_sign(&self, call: SignCall) {
         self.sign_queue.lock().unwrap().push(call);
     }
-
-    /// Pre-loads one didlog-step's engine calls: three public-key
-    /// reads (Ed25519 authorized, P-256 authentication, P-256
-    /// assertion) followed by one Ed25519 signature.
-    pub fn enqueue_happy_step(&self) {
-        self.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-        self.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-        self.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk()));
-        self.enqueue_sign(SignCall::Ok(fixture_signature()));
-    }
-
-    /// Convenience: a fresh engine pre-loaded with exactly one happy
-    /// didlog-step. Matches the per-step worker tests that only need
-    /// to drive a single saga step.
-    pub fn for_happy_path() -> Self {
-        let engine = Self::new();
-        engine.enqueue_happy_step();
-        engine
-    }
-
-    /// Convenience: a fresh engine pre-loaded for a deactivation step
-    /// — one Authorized public-key read followed by one Ed25519
-    /// signature.
-    pub fn for_deactivation_happy_path() -> Self {
-        let engine = Self::new();
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk()));
-        engine.enqueue_sign(SignCall::Ok(fixture_signature()));
-        engine
-    }
 }
 
 impl SigningEngine for MockSigningEngine {

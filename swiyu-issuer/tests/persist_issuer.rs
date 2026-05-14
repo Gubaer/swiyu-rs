@@ -11,7 +11,7 @@ use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::test_support::domain::signing_engine::{GetPublicKeyCall, MockSigningEngine};
 use swiyu_issuer::test_support::fixtures::{SAMPLE_DESCRIPTION, SAMPLE_DISPLAY_NAME};
 use swiyu_issuer::test_support::persistence::issuers as test_issuers;
-use swiyu_issuer::test_support::worker::create_issuer::fixture_state;
+use swiyu_issuer::test_support::worker::create_issuer::{engine_for_happy_path, fixture_state};
 use swiyu_issuer::worker::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, execute_persist_issuer,
 };
@@ -32,7 +32,7 @@ async fn happy_path_inserts_issuer_row(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
-    let engine = MockSigningEngine::for_happy_path();
+    let engine = engine_for_happy_path();
 
     let outcome = execute_persist_issuer(
         &pool,

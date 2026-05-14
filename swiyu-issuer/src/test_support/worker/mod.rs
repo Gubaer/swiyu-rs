@@ -29,6 +29,7 @@ use crate::worker::create_issuer::KeyTriple;
 use crate::worker::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 
 pub mod create_issuer;
+pub mod deactivate_issuer;
 pub mod e2e;
 pub mod rotate_keys;
 

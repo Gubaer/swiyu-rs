@@ -83,7 +83,7 @@ mod tests {
     use super::*;
 
     use crate::test_support::domain::signing_engine::{GetPublicKeyCall, MockSigningEngine};
-    use crate::test_support::worker::create_issuer::fixture_state;
+    use crate::test_support::worker::create_issuer::{engine_for_happy_path, fixture_state};
     use crate::test_support::worker::{
         AllocateCall, MockRegistry, PublishCall, fixture_now, fixture_tenant,
         fixture_token_provider,
@@ -94,7 +94,7 @@ mod tests {
         let tenant = fixture_tenant("4e1a7d46-b6dc-48fe-a2fd-56cbb68e7eef");
         let registry = MockRegistry::new();
         registry.enqueue_publish(PublishCall::Ok);
-        let engine = MockSigningEngine::for_happy_path();
+        let engine = engine_for_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,
@@ -237,7 +237,7 @@ mod tests {
             status: 503,
             body: "service unavailable".into(),
         });
-        let engine = MockSigningEngine::for_happy_path();
+        let engine = engine_for_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,
@@ -265,7 +265,7 @@ mod tests {
             status: 400,
             body: "bad entry".into(),
         });
-        let engine = MockSigningEngine::for_happy_path();
+        let engine = engine_for_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,
@@ -296,7 +296,7 @@ mod tests {
             status: 500,
             body: "should never be consumed".into(),
         });
-        let engine = MockSigningEngine::for_happy_path();
+        let engine = engine_for_happy_path();
 
         let outcome = execute_publish_didlog(
             &tenant,

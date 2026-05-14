@@ -41,6 +41,7 @@ mod tests {
     use crate::test_support::domain::signing_engine::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_p256_pk,
     };
+    use crate::test_support::worker::create_issuer::engine_for_happy_path;
     use crate::test_support::worker::{fixture_kid, fixture_now};
 
     fn fixture_state() -> CreateIssuerStateData {
@@ -49,7 +50,7 @@ mod tests {
 
     #[tokio::test]
     async fn happy_path_returns_done_with_empty_patch() {
-        let engine = MockSigningEngine::for_happy_path();
+        let engine = engine_for_happy_path();
 
         let outcome = execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 
@@ -67,7 +68,7 @@ mod tests {
         // The eddsa-jcs-2022 cryptosuite hands Ed25519 a 64-byte
         // concatenation of two SHA-256 hashes. Verify the worker sends
         // the engine exactly that.
-        let engine = MockSigningEngine::for_happy_path();
+        let engine = engine_for_happy_path();
 
         execute_build_initial_didlog(&fixture_state(), &engine, fixture_now()).await;
 

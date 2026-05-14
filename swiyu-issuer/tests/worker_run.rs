@@ -23,6 +23,7 @@ use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::test_support::domain::signing_engine::{
     GenerateKeypairCall, MockSigningEngine, fixture_ed25519_pk, fixture_p256_pk,
 };
+use swiyu_issuer::test_support::worker::create_issuer::enqueue_happy_step;
 use swiyu_issuer::test_support::worker::{
     AllocateCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
@@ -65,7 +66,7 @@ fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
     )));
 
     for _ in 0..3 {
-        engine.enqueue_happy_step();
+        enqueue_happy_step(engine);
     }
 }
 
