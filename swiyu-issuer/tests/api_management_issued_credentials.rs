@@ -13,44 +13,16 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
-use swiyu_issuer::domain::{
-    BITSTRING_BYTES, IssuedCredential, IssuedCredentialState, StatusListId, StatusValue, TenantId,
-};
+use swiyu_issuer::domain::{IssuedCredential, IssuedCredentialState, StatusValue, TenantId};
 
 use swiyu_issuer::test_support::api::tokens::mint_test_token;
 use swiyu_issuer::test_support::api::{authenticated_app_state, build_state};
 use swiyu_issuer::test_support::http::{post_request_empty, read_body};
-use swiyu_issuer::test_support::persistence::issued_credentials::CredentialSeed;
+use swiyu_issuer::test_support::persistence::issued_credentials::{
+    CredentialSeed, fetch_state, fetch_status_bit,
+};
+use swiyu_issuer::test_support::persistence::status_lists::fetch_committed_version;
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
-
-async fn fetch_state(pool: &PgPool, credential: &IssuedCredential) -> String {
-    sqlx::query_scalar("SELECT state FROM issued_credentials WHERE id = $1")
-        .bind(credential.id.bare())
-        .fetch_one(pool)
-        .await
-        .unwrap()
-}
-
-async fn fetch_status_bit(pool: &PgPool, credential: &IssuedCredential) -> StatusValue {
-    let bitstring: Vec<u8> = sqlx::query_scalar("SELECT bitstring FROM status_lists WHERE id = $1")
-        .bind(credential.status_list_id.bare())
-        .fetch_one(pool)
-        .await
-        .unwrap();
-    assert_eq!(bitstring.len(), BITSTRING_BYTES);
-    swiyu_issuer::test_support::persistence::status_lists::read_slot(
-        &bitstring,
-        credential.status_list_index,
-    )
-}
-
-async fn fetch_committed_version(pool: &PgPool, list_id: &StatusListId) -> i64 {
-    sqlx::query_scalar("SELECT committed_version FROM status_lists WHERE id = $1")
-        .bind(list_id.bare())
-        .fetch_one(pool)
-        .await
-        .unwrap()
-}
 
 fn lifecycle_uri(credential: &IssuedCredential, action: &str) -> String {
     format!(

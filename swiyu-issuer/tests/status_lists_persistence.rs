@@ -17,6 +17,9 @@ use sqlx::PgPool;
 use swiyu_core::statuslist::SWIYU_STATUS_LIST_CAPACITY;
 use swiyu_issuer::test_support::fixtures::SAMPLE_STATUS_ENTRY_ID;
 use swiyu_issuer::test_support::persistence::status_lists as test_status_lists;
+use swiyu_issuer::test_support::persistence::status_lists::{
+    fetch_allocated_count, fetch_bitstring, fetch_committed_version,
+};
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant as insert_tenant;
 
 use swiyu_issuer::domain::{
@@ -253,30 +256,6 @@ async fn seeded_issuer(pool: &PgPool) -> IssuerId {
     let issuer_id = IssuerId::generate();
     insert_issuer(pool, &tenant_id, issuer_id.bare()).await;
     issuer_id
-}
-
-async fn fetch_committed_version(pool: &PgPool, list_id: &StatusListId) -> i64 {
-    sqlx::query_scalar("SELECT committed_version FROM status_lists WHERE id = $1")
-        .bind(list_id.bare())
-        .fetch_one(pool)
-        .await
-        .unwrap()
-}
-
-async fn fetch_allocated_count(pool: &PgPool, list_id: &StatusListId) -> i32 {
-    sqlx::query_scalar("SELECT allocated_count FROM status_lists WHERE id = $1")
-        .bind(list_id.bare())
-        .fetch_one(pool)
-        .await
-        .unwrap()
-}
-
-async fn fetch_bitstring(pool: &PgPool, list_id: &StatusListId) -> Vec<u8> {
-    sqlx::query_scalar("SELECT bitstring FROM status_lists WHERE id = $1")
-        .bind(list_id.bare())
-        .fetch_one(pool)
-        .await
-        .unwrap()
 }
 
 #[sqlx::test(migrations = "./migrations")]

@@ -30,6 +30,30 @@ pub async fn fetch_publish_state(pool: &PgPool, list_id: &StatusListId) -> (i64,
     .unwrap()
 }
 
+pub async fn fetch_committed_version(pool: &PgPool, list_id: &StatusListId) -> i64 {
+    sqlx::query_scalar("SELECT committed_version FROM status_lists WHERE id = $1")
+        .bind(list_id.bare())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+pub async fn fetch_allocated_count(pool: &PgPool, list_id: &StatusListId) -> i32 {
+    sqlx::query_scalar("SELECT allocated_count FROM status_lists WHERE id = $1")
+        .bind(list_id.bare())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+pub async fn fetch_bitstring(pool: &PgPool, list_id: &StatusListId) -> Vec<u8> {
+    sqlx::query_scalar("SELECT bitstring FROM status_lists WHERE id = $1")
+        .bind(list_id.bare())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 pub async fn provision(pool: &PgPool, issuer_id: &IssuerId) -> StatusListId {
     let mut conn = pool.acquire().await.unwrap();
     persistence::status_lists::provision_for_issuer(&mut conn, issuer_id, None, None)

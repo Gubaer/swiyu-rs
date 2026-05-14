@@ -2,12 +2,31 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
 use crate::domain::{
-    CredentialOffer, INTEGRITY_HASH_LEN, IssuedCredential, IssuedCredentialState, Issuer,
-    PreAuthCode, StatusListId, StatusListIndex, StatusValue,
+    BITSTRING_BYTES, CredentialOffer, INTEGRITY_HASH_LEN, IssuedCredential, IssuedCredentialState,
+    Issuer, PreAuthCode, StatusListId, StatusListIndex, StatusValue,
 };
 use crate::persistence;
 use crate::test_support::fixtures::SAMPLE_HOLDER_KEY_JKT;
 use crate::test_support::persistence::credential_offers;
+use crate::test_support::persistence::status_lists::read_slot;
+
+pub async fn fetch_state(pool: &PgPool, credential: &IssuedCredential) -> String {
+    sqlx::query_scalar("SELECT state FROM issued_credentials WHERE id = $1")
+        .bind(credential.id.bare())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+pub async fn fetch_status_bit(pool: &PgPool, credential: &IssuedCredential) -> StatusValue {
+    let bitstring: Vec<u8> = sqlx::query_scalar("SELECT bitstring FROM status_lists WHERE id = $1")
+        .bind(credential.status_list_id.bare())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(bitstring.len(), BITSTRING_BYTES);
+    read_slot(&bitstring, credential.status_list_index)
+}
 
 pub async fn seed_offer(pool: &PgPool, issuer: &Issuer, vct: &str) -> CredentialOffer {
     let offer = CredentialOffer::new(
