@@ -87,45 +87,18 @@ mod tests {
     use p256::ecdsa::signature::Verifier as _;
     use p256::ecdsa::signature::hazmat::PrehashSigner as _;
     use serde_json::Value;
-    use uuid::Uuid;
 
-    use crate::domain::{
-        IssuerId, IssuerState, KeyAlgorithm, KeyPairId, Signature, SigningEngineError,
-        StatusListId, TenantId,
-    };
+    use crate::domain::{IssuerId, KeyAlgorithm, Signature, SigningEngineError, StatusListId};
     use crate::test_support::domain::signing_engine::{MockSigningEngine, SignCall};
+    use crate::test_support::{fixture_issuer, fixture_now};
 
     const FIXTURE_ENTRY_ID: &str = "11111111-2222-3333-4444-555555555555";
     const FIXTURE_REGISTRY_URL: &str = "https://status-reg.test/lists/abc.jwt";
-    const FIXTURE_DID: &str = "did:tdw:dev.example.com:test";
-
-    fn fixture_kid(byte: u8) -> KeyPairId {
-        let mut bytes = [byte; 16];
-        bytes[6] = (bytes[6] & 0x0F) | 0x40;
-        bytes[8] = (bytes[8] & 0x3F) | 0x80;
-        KeyPairId::from(Uuid::from_bytes(bytes))
-    }
-
-    fn fixture_now() -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
-    }
-
-    fn fixture_issuer() -> Issuer {
-        Issuer {
-            id: IssuerId::generate(),
-            tenant_id: TenantId::generate(),
-            did: FIXTURE_DID.into(),
-            state: Some(IssuerState::Active),
-            description: None,
-            authorized_key_id: Some(fixture_kid(0x11)),
-            authentication_key_id: Some(fixture_kid(0x22)),
-            assertion_key_id: Some(fixture_kid(0x33)),
-            display_name: Some("Test issuer".into()),
-            logo_uri: None,
-            locale: None,
-            created_at: fixture_now(),
-        }
-    }
+    // Mirrors `crate::test_support::fixture_did()` so test assertions can
+    // interpolate the expected DID without calling the function in every
+    // `format!`.
+    const FIXTURE_DID: &str =
+        "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d";
 
     fn fixture_list() -> StatusList {
         StatusList {

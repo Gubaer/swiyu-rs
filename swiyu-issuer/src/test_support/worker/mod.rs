@@ -13,7 +13,6 @@
 use std::future::Future;
 use std::sync::Mutex;
 
-use chrono::{DateTime, Utc};
 use rand_core::RngCore;
 use serde_json::Value;
 use swiyu_core::did::DID;
@@ -22,33 +21,16 @@ use swiyu_core::didlog::DIDLogEntry;
 use swiyu_registries::common::{AccessToken, RegistryError};
 use swiyu_registries::identifier::Allocation;
 use swiyu_registries::status::StatusListEntry;
-use uuid::Uuid;
 
 use crate::domain::{
-    GeneratedKeyPair, Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey,
-    StaticTokenProvider, Tenant, TenantId,
+    GeneratedKeyPair, KeyAlgorithm, RawPublicKey, StaticTokenProvider, Tenant, TenantId,
 };
 use crate::worker::create_issuer::KeyTriple;
 use crate::worker::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 
-pub fn fixture_kid(byte: u8) -> KeyPairId {
-    let mut bytes = [byte; 16];
-    // Force the UUIDv4 version/variant bits so the value parses as a valid UUID.
-    bytes[6] = (bytes[6] & 0x0F) | 0x40;
-    bytes[8] = (bytes[8] & 0x3F) | 0x80;
-    KeyPairId::from(Uuid::from_bytes(bytes))
-}
-
-// 1_768_982_400 = 2026-01-21T12:00:00Z.
-pub fn fixture_now() -> DateTime<Utc> {
-    DateTime::<Utc>::from_timestamp(1_768_982_400, 0).unwrap()
-}
-
-pub const FIXTURE_DID_REGISTRY_UUID: &str = "fce949f2-32c4-4915-8b60-0ee2f705231d";
-
-pub fn fixture_did() -> &'static str {
-    "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d"
-}
+// Back-compat re-exports of helpers lifted to the crate-level `test_support`
+// module. Worker test files keep importing these from `crate::test_support::worker`.
+pub use super::{FIXTURE_DID_REGISTRY_UUID, fixture_did, fixture_issuer, fixture_kid, fixture_now};
 
 pub fn fixture_rotated_triple() -> KeyTriple {
     KeyTriple {
@@ -77,23 +59,6 @@ pub fn fixture_allocation() -> Allocation {
 
 pub fn fixture_token_provider() -> StaticTokenProvider {
     StaticTokenProvider::new(AccessToken::new("test-token".to_string()))
-}
-
-pub fn fixture_issuer() -> Issuer {
-    Issuer {
-        id: IssuerId::generate(),
-        tenant_id: TenantId::generate(),
-        did: fixture_did().into(),
-        state: Some(IssuerState::Active),
-        description: Some("fixture".into()),
-        authorized_key_id: Some(fixture_kid(0x11)),
-        authentication_key_id: Some(fixture_kid(0x22)),
-        assertion_key_id: Some(fixture_kid(0x33)),
-        display_name: Some("Fixture".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
-    }
 }
 
 pub fn fixture_tenant(partner_id: &str) -> Tenant {

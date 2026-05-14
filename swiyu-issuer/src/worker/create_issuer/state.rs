@@ -196,11 +196,13 @@ mod tests {
         let Value::Object(obj) = value else {
             panic!("expected object");
         };
-        assert_eq!(obj["authorized"], "11111111-1111-4111-8111-111111111111");
+        // `fixture_kid(b)` masks bytes[8] as `(b & 0x3F) | 0x80`, so the
+        // variant nibble follows the input byte: 0x11→9, 0x22→a, 0x33→b.
+        assert_eq!(obj["authorized"], "11111111-1111-4111-9111-111111111111");
         assert_eq!(
             obj["authentication"],
-            "22222222-2222-4222-8222-222222222222"
+            "22222222-2222-4222-a222-222222222222"
         );
-        assert_eq!(obj["assertion"], "33333333-3333-4333-8333-333333333333");
+        assert_eq!(obj["assertion"], "33333333-3333-4333-b333-333333333333");
     }
 }

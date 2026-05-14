@@ -157,22 +157,7 @@ impl Issuer {
 mod tests {
     use super::*;
 
-    fn fixture_issuer() -> Issuer {
-        Issuer {
-            id: IssuerId::generate(),
-            tenant_id: TenantId::generate(),
-            did: "did:tdw:9hXq2vRtL8pK7f:example.com".into(),
-            state: None,
-            description: None,
-            authorized_key_id: None,
-            authentication_key_id: None,
-            assertion_key_id: None,
-            display_name: None,
-            logo_uri: None,
-            locale: None,
-            created_at: Utc::now(),
-        }
-    }
+    use crate::test_support::fixture_issuer_minimal as fixture_issuer;
 
     #[test]
     fn issuer_state_round_trips_through_strings() {

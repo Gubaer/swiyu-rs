@@ -102,28 +102,9 @@ fn outcome_for_engine_error(error_code: &str, e: SigningEngineError) -> StepOutc
 mod tests {
     use super::*;
 
-    use chrono::Utc;
-
-    use crate::domain::{IssuerId, IssuerState, KeyAlgorithm, TenantId};
+    use crate::domain::KeyAlgorithm;
     use crate::test_support::domain::signing_engine::{GenerateKeypairCall, MockSigningEngine};
-    use crate::test_support::worker::{fixture_keypair, fixture_kid};
-
-    fn fixture_issuer() -> Issuer {
-        Issuer {
-            id: IssuerId::generate(),
-            tenant_id: TenantId::generate(),
-            did: "did:tdw:scid:reg.example.com:fixture-uuid".into(),
-            state: Some(IssuerState::Active),
-            description: Some("fixture".into()),
-            authorized_key_id: Some(fixture_kid(0x01)),
-            authentication_key_id: Some(fixture_kid(0x02)),
-            assertion_key_id: Some(fixture_kid(0x03)),
-            display_name: Some("Fixture".into()),
-            logo_uri: None,
-            locale: None,
-            created_at: Utc::now(),
-        }
-    }
+    use crate::test_support::worker::{fixture_issuer, fixture_keypair, fixture_kid};
 
     #[tokio::test]
     async fn happy_path_single_role_rotates_only_authorized() {
@@ -146,8 +127,8 @@ mod tests {
             StepOutcome::Done(result) => {
                 let triple = &result.state_data_patch["new_key_triple"];
                 assert_eq!(triple["authorized"], json!(fixture_kid(0xAA)));
-                assert_eq!(triple["authentication"], json!(fixture_kid(0x02)));
-                assert_eq!(triple["assertion"], json!(fixture_kid(0x03)));
+                assert_eq!(triple["authentication"], json!(fixture_kid(0x22)));
+                assert_eq!(triple["assertion"], json!(fixture_kid(0x33)));
             }
             other => panic!("expected Done, got {other:?}"),
         }

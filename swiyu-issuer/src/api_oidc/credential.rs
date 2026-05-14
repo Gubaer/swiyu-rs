@@ -838,7 +838,7 @@ mod tests {
         use chrono::Duration;
 
         use crate::domain::{
-            CredentialOffer, Issuer, IssuerState, KeyAlgorithm, PreAuthCode, Signature, TenantId,
+            CredentialOffer, Issuer, KeyAlgorithm, PreAuthCode, Signature, TenantId,
         };
         use crate::test_support::domain::signing_engine::{MockSigningEngine, SignCall};
 
@@ -846,20 +846,9 @@ mod tests {
             "did:tdw:scid-placeholder:reg.example.com:fce949f2-32c4-4915-8b60-0ee2f705231d";
 
         fn fixture_issuer(assertion_key_id: KeyPairId) -> Issuer {
-            Issuer {
-                id: IssuerId::generate(),
-                tenant_id: TenantId::generate(),
-                did: FIXTURE_DID.into(),
-                state: Some(IssuerState::Active),
-                description: None,
-                authorized_key_id: None,
-                authentication_key_id: None,
-                assertion_key_id: Some(assertion_key_id),
-                display_name: None,
-                logo_uri: None,
-                locale: None,
-                created_at: Utc::now(),
-            }
+            let mut issuer = crate::test_support::fixture_issuer();
+            issuer.assertion_key_id = Some(assertion_key_id);
+            issuer
         }
 
         fn fixture_offer(claims: Value) -> CredentialOffer {
