@@ -4,6 +4,13 @@ version = "0.1.12"
 edition = "2024"
 license = "MIT"
 
+[features]
+# Exposes the crate-internal `test_support` module to dependents.
+# Unit tests inside this crate get the module automatically via `cfg(test)`;
+# this feature is the escape hatch for integration tests or workspace
+# consumers that need to share the same fixtures.
+test-support = []
+
 [dependencies]
 swiyu-core = { path = "../swiyu-core" }
 swiyu-registries = { path = "../swiyu-registries", features = ["status"] }
