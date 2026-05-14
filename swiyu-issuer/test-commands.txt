@@ -210,9 +210,9 @@ http --form POST :8081/i/$ISSUER/token \
 #                       public key, payload.aud = ISSUER_BASE_URL/i/<issuer-id>,
 #                       payload.iat within +/- 5 minutes, payload.nonce =
 #                       the c_nonce returned by /token.
-# v0.1.x does NOT verify the JWT signature — claims are checked but the
-# signature is ignored. The issued credential is signed with an EPHEMERAL
-# fixture key generated at swiyu-issuer-oidcapi startup.
+# The proof JWT signature is verified against the embedded `jwk` (ES256
+# or EdDSA). The issued credential is signed with the issuer's assertion
+# key via the configured SIGNING_ENGINE (dev: DB-backed; vault: HashiCorp).
 http POST :8081/i/$ISSUER/credential \
   "Authorization:Bearer <access-token>" \
   format=vc+sd-jwt \
