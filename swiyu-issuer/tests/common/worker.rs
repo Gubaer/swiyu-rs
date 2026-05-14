@@ -7,8 +7,8 @@ use sqlx::PgPool;
 use wiremock::MockServer;
 
 use swiyu_issuer::domain::{DevSigningEngine, ProviderRegistry};
+use swiyu_issuer::test_support::worker::MockStatusRegistry;
 use swiyu_issuer::worker::Worker;
-use swiyu_issuer::worker::test_support::MockStatusRegistry;
 use swiyu_registries::identifier::IdentifierRegistryClient;
 
 use super::rng::ConstantRng;

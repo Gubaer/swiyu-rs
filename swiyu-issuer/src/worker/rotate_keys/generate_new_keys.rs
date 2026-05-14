@@ -106,7 +106,7 @@ mod tests {
 
     use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
     use crate::domain::{IssuerId, IssuerState, KeyAlgorithm, TenantId};
-    use crate::worker::test_support::{fixture_keypair, fixture_kid};
+    use crate::test_support::worker::{fixture_keypair, fixture_kid};
 
     fn fixture_issuer() -> Issuer {
         Issuer {

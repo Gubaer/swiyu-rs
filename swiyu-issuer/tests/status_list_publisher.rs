@@ -14,10 +14,10 @@ use std::sync::Arc;
 use chrono::Utc;
 use sqlx::PgPool;
 
-use swiyu_issuer::worker::StatusListPublisher;
-use swiyu_issuer::worker::test_support::{
+use swiyu_issuer::test_support::worker::{
     CreateStatusListEntryCall, MockStatusRegistry, UpdateStatusListEntryCall,
 };
+use swiyu_issuer::worker::StatusListPublisher;
 use swiyu_registries::status::StatusListEntry;
 
 #[sqlx::test(migrations = "./migrations")]

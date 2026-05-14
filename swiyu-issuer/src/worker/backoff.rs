@@ -38,7 +38,7 @@ pub fn backoff_delay<R: RngCore + ?Sized>(attempts: u32, rng: &mut R) -> Duratio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::test_support::ConstantRng;
+    use crate::test_support::worker::ConstantRng;
 
     #[test]
     fn first_attempt_caps_at_one_minute() {

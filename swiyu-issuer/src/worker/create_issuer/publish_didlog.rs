@@ -83,11 +83,11 @@ mod tests {
     use super::*;
 
     use crate::domain::signing_engine::test_support::{GetPublicKeyCall, MockSigningEngine};
-    use crate::worker::create_issuer::KeyTriple;
-    use crate::worker::test_support::{
+    use crate::test_support::worker::{
         AllocateCall, MockRegistry, PublishCall, fixture_kid, fixture_now, fixture_tenant,
         fixture_token_provider,
     };
+    use crate::worker::create_issuer::KeyTriple;
 
     fn fixture_state(didlog_published: bool) -> CreateIssuerStateData {
         CreateIssuerStateData {

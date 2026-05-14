@@ -41,8 +41,8 @@ mod tests {
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk, fixture_p256_pk,
     };
     use crate::domain::{KeyAlgorithm, RawPublicKey};
+    use crate::test_support::worker::{fixture_kid, fixture_now};
     use crate::worker::create_issuer::KeyTriple;
-    use crate::worker::test_support::{fixture_kid, fixture_now};
 
     fn fixture_state() -> CreateIssuerStateData {
         CreateIssuerStateData {

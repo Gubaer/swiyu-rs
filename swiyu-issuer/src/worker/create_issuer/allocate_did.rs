@@ -47,7 +47,7 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::worker::test_support::{
+    use crate::test_support::worker::{
         AllocateCall, MockRegistry, fixture_allocation, fixture_tenant, fixture_token_provider,
     };
 

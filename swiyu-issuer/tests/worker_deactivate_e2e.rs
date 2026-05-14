@@ -30,10 +30,10 @@ use swiyu_issuer::domain::{
     TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::{credential_offers, issuers};
-use swiyu_issuer::worker::Worker;
-use swiyu_issuer::worker::test_support::{
+use swiyu_issuer::test_support::worker::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
+use swiyu_issuer::worker::Worker;
 
 async fn insert_pending_offer(
     pool: &PgPool,

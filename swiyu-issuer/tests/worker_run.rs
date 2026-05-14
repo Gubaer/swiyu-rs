@@ -1,7 +1,7 @@
 //! Integration tests for `worker::Worker::run`.
 //!
 //! Exercises the dispatch loop end-to-end against a real Postgres pool
-//! (`sqlx::test`) and the in-memory mocks from `worker::test_support`.
+//! (`sqlx::test`) and the in-memory mocks from `test_support::worker`.
 
 #[path = "common/mod.rs"]
 mod common;
@@ -21,10 +21,10 @@ use swiyu_issuer::domain::{
     GeneratedKeyPair, IssuerId, KeyAlgorithm, OperationTask, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::issuers;
-use swiyu_issuer::worker::Worker;
-use swiyu_issuer::worker::test_support::{
+use swiyu_issuer::test_support::worker::{
     AllocateCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
+use swiyu_issuer::worker::Worker;
 
 fn fixture_keypair(byte: u8, algorithm: KeyAlgorithm) -> GeneratedKeyPair {
     GeneratedKeyPair {

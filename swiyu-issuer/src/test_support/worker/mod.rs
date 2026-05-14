@@ -24,12 +24,12 @@ use swiyu_registries::identifier::Allocation;
 use swiyu_registries::status::StatusListEntry;
 use uuid::Uuid;
 
-use super::create_issuer::KeyTriple;
-use super::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 use crate::domain::{
     GeneratedKeyPair, Issuer, IssuerId, IssuerState, KeyAlgorithm, KeyPairId, RawPublicKey,
     StaticTokenProvider, Tenant, TenantId,
 };
+use crate::worker::create_issuer::KeyTriple;
+use crate::worker::registry_facades::{FetchedLog, RegistryFacade, StatusRegistryFacade};
 
 pub fn fixture_kid(byte: u8) -> KeyPairId {
     let mut bytes = [byte; 16];

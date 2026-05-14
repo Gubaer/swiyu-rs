@@ -77,7 +77,7 @@ mod tests {
 
     use crate::domain::signing_engine::test_support::{GenerateKeypairCall, MockSigningEngine};
     use crate::domain::{KeyAlgorithm, KeyPairId};
-    use crate::worker::test_support::fixture_keypair;
+    use crate::test_support::worker::fixture_keypair;
 
     #[tokio::test]
     async fn happy_path_generates_three_keys_in_order() {

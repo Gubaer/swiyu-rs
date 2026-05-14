@@ -401,7 +401,7 @@ mod with_refresh_tests {
     use std::sync::Mutex;
 
     use crate::domain::oauth2::TokenProviderError;
-    use crate::worker::test_support::{AllocateCall, MockRegistry, fixture_allocation};
+    use crate::test_support::worker::{AllocateCall, MockRegistry, fixture_allocation};
 
     /// In-test `TokenProvider` that records every call and either
     /// returns a fresh access token or a configured failure.

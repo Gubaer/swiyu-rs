@@ -90,7 +90,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use crate::worker::test_support::fixture_kid;
+    use crate::test_support::worker::fixture_kid;
 
     fn fixture_key_triple() -> KeyTriple {
         KeyTriple {

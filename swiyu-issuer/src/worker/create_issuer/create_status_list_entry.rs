@@ -54,7 +54,7 @@ mod tests {
     use serde_json::Value;
     use swiyu_registries::status::StatusListEntry;
 
-    use crate::worker::test_support::{
+    use crate::test_support::worker::{
         CreateStatusListEntryCall, MockStatusRegistry, fixture_tenant, fixture_token_provider,
     };
 

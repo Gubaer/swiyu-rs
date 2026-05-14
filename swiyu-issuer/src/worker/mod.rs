@@ -39,6 +39,9 @@ pub(crate) fn registry_identifier(did: &swiyu_core::did::DID) -> Option<String> 
         .map(str::to_string)
 }
 
+pub use runner::{Worker, WorkerError};
+pub use status_list_publisher::{PublisherConfig, StatusListPublisher};
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -77,15 +80,3 @@ mod tests {
         assert!(registry_identifier(&did).is_none());
     }
 }
-
-pub use runner::{Worker, WorkerError};
-pub use status_list_publisher::{PublisherConfig, StatusListPublisher};
-
-// `test_support` is hand-rolled mocks for `RegistryFacade` and
-// `SigningEngine`, used by both inline executor tests and integration
-// tests under `tests/`. It is always compiled (rather than gated on
-// `cfg(test)`) so integration tests — which see the library without
-// `cfg(test)` — can access it. `#[doc(hidden)]` keeps it out of the
-// public API surface.
-#[doc(hidden)]
-pub mod test_support;

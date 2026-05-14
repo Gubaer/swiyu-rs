@@ -154,7 +154,7 @@ mod tests {
     use crate::domain::signing_engine::test_support::{
         GetPublicKeyCall, MockSigningEngine, SignCall, fixture_ed25519_pk,
     };
-    use crate::worker::test_support::{
+    use crate::test_support::worker::{
         FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
         fixture_issuer, fixture_kid, fixture_now, fixture_p256, fixture_tenant,
         fixture_token_provider,

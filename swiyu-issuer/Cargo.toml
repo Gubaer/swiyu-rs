@@ -50,6 +50,11 @@ urlencoding = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
+# Self-dependency with the `test-support` feature so integration tests under
+# `tests/` see the `crate::test_support` module. Inside the crate itself the
+# module is already visible via `cfg(test)`; integration tests link against the
+# library as an external consumer and need the feature to be enabled.
+swiyu-issuer = { path = ".", features = ["test-support"] }
 serde_urlencoded = "0.7"
 wiremock = "0.6"
 

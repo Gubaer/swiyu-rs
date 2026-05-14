@@ -30,10 +30,10 @@ use swiyu_issuer::domain::{
     IssuerId, IssuerState, KeyPairId, OperationTask, TaskState, TaskType, TenantId,
 };
 use swiyu_issuer::persistence::issuers;
-use swiyu_issuer::worker::Worker;
-use swiyu_issuer::worker::test_support::{
+use swiyu_issuer::test_support::worker::{
     FetchLogCall, MockRegistry, MockStatusRegistry, PublishCall,
 };
+use swiyu_issuer::worker::Worker;
 
 // `roles` is the wire form: lowercase snake-case role names or the sentinel "all".
 fn rotate_task(tenant_id: &TenantId, issuer_id: IssuerId, roles: Vec<&str>) -> OperationTask {

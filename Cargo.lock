@@ -3274,6 +3274,7 @@ dependencies = [
  "sha2 0.11.0",
  "sqlx",
  "swiyu-core",
+ "swiyu-issuer",
  "swiyu-registries",
  "thiserror 2.0.18",
  "tokio",
