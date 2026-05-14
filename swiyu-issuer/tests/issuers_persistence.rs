@@ -5,46 +5,19 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
-use chrono::Utc;
 use sqlx::PgPool;
 
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, KeyPairId, TenantId};
 use swiyu_issuer::persistence::PersistenceError;
 use swiyu_issuer::persistence::issuers::{self, SwapOutcome};
 
+use swiyu_issuer::test_support::persistence::issuers as test_issuers;
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
-fn legacy_shaped_issuer(tenant_id: TenantId) -> Issuer {
+fn legacy_shaped_issuer(tenant_id: &TenantId) -> Issuer {
     Issuer {
-        id: IssuerId::generate(),
-        tenant_id,
-        did: "did:tdw:legacy:example.com".into(),
         state: None,
-        description: None,
-        authorized_key_id: None,
-        authentication_key_id: None,
-        assertion_key_id: None,
-        display_name: Some("Legacy Issuer".into()),
-        logo_uri: Some("https://example.com/legacy-logo.png".into()),
-        locale: Some("en".into()),
-        created_at: Utc::now(),
-    }
-}
-
-fn signing_engine_shaped_issuer(tenant_id: TenantId) -> Issuer {
-    Issuer {
-        id: IssuerId::generate(),
-        tenant_id,
-        did: "did:tdw:new:example.com".into(),
-        state: Some(IssuerState::Active),
-        description: Some("Issuer authority for residence certificates".into()),
-        authorized_key_id: Some(KeyPairId::generate()),
-        authentication_key_id: Some(KeyPairId::generate()),
-        assertion_key_id: Some(KeyPairId::generate()),
-        display_name: Some("Gemeinde Buchs — Einwohnerverwaltung".into()),
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
+        ..test_issuers::active(tenant_id)
     }
 }
 
@@ -52,7 +25,7 @@ fn signing_engine_shaped_issuer(tenant_id: TenantId) -> Issuer {
 async fn legacy_shaped_row_round_trips(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = legacy_shaped_issuer(tenant_id);
+    let issuer = legacy_shaped_issuer(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -66,18 +39,18 @@ async fn legacy_shaped_row_round_trips(pool: PgPool) {
     assert_eq!(loaded.tenant_id, issuer.tenant_id);
     assert_eq!(loaded.did, issuer.did);
     assert_eq!(loaded.state, None);
-    assert_eq!(loaded.description, None);
+    assert_eq!(loaded.description, issuer.description);
     assert_eq!(loaded.authorized_key_id, None);
     assert_eq!(loaded.authentication_key_id, None);
     assert_eq!(loaded.assertion_key_id, None);
-    assert_eq!(loaded.display_name.as_deref(), Some("Legacy Issuer"));
+    assert_eq!(loaded.display_name, issuer.display_name);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn signing_engine_shaped_row_round_trips(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = signing_engine_shaped_issuer(tenant_id);
+    let issuer = test_issuers::active_with_keys(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -89,10 +62,7 @@ async fn signing_engine_shaped_row_round_trips(pool: PgPool) {
 
     assert_eq!(loaded.id, issuer.id);
     assert_eq!(loaded.state, Some(IssuerState::Active));
-    assert_eq!(
-        loaded.description.as_deref(),
-        Some("Issuer authority for residence certificates")
-    );
+    assert_eq!(loaded.description, issuer.description);
     assert_eq!(loaded.authorized_key_id, issuer.authorized_key_id);
     assert_eq!(loaded.authentication_key_id, issuer.authentication_key_id);
     assert_eq!(loaded.assertion_key_id, issuer.assertion_key_id);
@@ -105,20 +75,7 @@ async fn legacy_row_reads_with_no_signing_keys(pool: PgPool) {
     // `Some(Issuer)` with `Option` fields set to `None`.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let legacy = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
-        did: "did:tdw:example.com:legacy".into(),
-        state: None,
-        description: None,
-        authorized_key_id: None,
-        authentication_key_id: None,
-        assertion_key_id: None,
-        display_name: None,
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
-    };
+    let legacy = legacy_shaped_issuer(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &legacy).await.unwrap();
@@ -137,7 +94,7 @@ async fn legacy_row_reads_with_no_signing_keys(pool: PgPool) {
 async fn find_by_id_for_update_for_tenant_returns_active_issuer(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+    let issuer = test_issuers::active_with_keys(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -156,7 +113,7 @@ async fn find_by_id_for_update_for_tenant_returns_none_for_cross_tenant(pool: Pg
     let tenant_other = TenantId::generate();
     insert_test_tenant(&pool, &tenant_owner).await;
     insert_test_tenant(&pool, &tenant_other).await;
-    let issuer = signing_engine_shaped_issuer(tenant_owner.clone());
+    let issuer = test_issuers::active_with_keys(&tenant_owner);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -181,7 +138,7 @@ async fn find_by_id_for_update_for_tenant_returns_none_for_unknown_issuer(pool: 
 async fn set_state_persists_deactivated_for_existing_row(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+    let issuer = test_issuers::active_with_keys(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -215,7 +172,7 @@ async fn exists_for_tenant_is_tenant_scoped(pool: PgPool) {
     let tenant_b = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
     insert_test_tenant(&pool, &tenant_b).await;
-    let issuer = legacy_shaped_issuer(tenant_a.clone());
+    let issuer = legacy_shaped_issuer(&tenant_a);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -236,7 +193,7 @@ async fn exists_for_tenant_is_tenant_scoped(pool: PgPool) {
 async fn swap_key_triple_swaps_active_issuer(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+    let issuer = test_issuers::active_with_keys(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -271,7 +228,7 @@ async fn swap_key_triple_swaps_active_issuer(pool: PgPool) {
 async fn swap_key_triple_is_idempotent_when_already_installed(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+    let issuer = test_issuers::active_with_keys(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -297,7 +254,7 @@ async fn swap_key_triple_rejects_cross_tenant_caller(pool: PgPool) {
     let tenant_other = TenantId::generate();
     insert_test_tenant(&pool, &tenant_owner).await;
     insert_test_tenant(&pool, &tenant_other).await;
-    let issuer = signing_engine_shaped_issuer(tenant_owner.clone());
+    let issuer = test_issuers::active_with_keys(&tenant_owner);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -327,7 +284,7 @@ async fn swap_key_triple_rejects_cross_tenant_caller(pool: PgPool) {
 async fn swap_key_triple_rejects_deactivated_issuer(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+    let issuer = test_issuers::active_with_keys(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -354,20 +311,7 @@ async fn swap_key_triple_rejects_legacy_state_null_row(pool: PgPool) {
     // the rotate-keys saga must refuse to swap its keys.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let legacy = Issuer {
-        id: IssuerId::generate(),
-        tenant_id: tenant_id.clone(),
-        did: "did:tdw:example.com:legacy".into(),
-        state: None,
-        description: None,
-        authorized_key_id: None,
-        authentication_key_id: None,
-        assertion_key_id: None,
-        display_name: None,
-        logo_uri: None,
-        locale: None,
-        created_at: Utc::now(),
-    };
+    let legacy = legacy_shaped_issuer(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &legacy).await.unwrap();
@@ -410,7 +354,7 @@ async fn swap_key_triple_swaps_only_one_role(pool: PgPool) {
     // requested even when only one column actually changes.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = signing_engine_shaped_issuer(tenant_id.clone());
+    let issuer = test_issuers::active_with_keys(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
@@ -445,7 +389,7 @@ async fn fresh_issuer_has_null_current_status_list_id(pool: PgPool) {
     // issuer is what provisions the list and re-points the column.
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = signing_engine_shaped_issuer(tenant_id);
+    let issuer = test_issuers::active_with_keys(&tenant_id);
 
     let mut conn = pool.acquire().await.unwrap();
     issuers::insert(&mut conn, &issuer).await.unwrap();
