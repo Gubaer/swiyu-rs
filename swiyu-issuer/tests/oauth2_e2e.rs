@@ -12,9 +12,12 @@
 //! - 401 from the identifier registry triggers exactly one
 //!   invalidate-driven retry; second registry call succeeds
 
-#[path = "common/mod.rs"]
-mod common;
-use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
+use swiyu_issuer::test_support::oauth;
+use swiyu_issuer::test_support::persistence::operation_tasks as test_operation_tasks;
+use swiyu_issuer::test_support::registry::identifier::{
+    allocate_path, publish_path, registry_url_in_response,
+};
+use swiyu_issuer::test_support::worker::e2e;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,15 +37,15 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
             "display_name": "OAuth2-E2E",
         }),
         result_issuer_id: Some(issuer_id),
-        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
+        ..test_operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(pool: PgPool) {
-    let token_server = common::oauth::mock_token_endpoint().await;
-    let secret_engine = common::oauth::test_engine();
-    let providers = common::oauth::build_provider_registry(
+    let token_server = oauth::mock_token_endpoint().await;
+    let secret_engine = oauth::test_engine();
+    let providers = oauth::build_provider_registry(
         pool.clone(),
         token_server.uri(),
         Arc::clone(&secret_engine),
@@ -66,18 +69,18 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
         .await;
 
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let shutdown = CancellationToken::new();
-    let worker = common::worker::build_real(pool.clone(), &registry_server, providers);
+    let worker = e2e::build_real(pool.clone(), &registry_server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = common::operation_tasks::wait_for_state(
+    let final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,
@@ -93,7 +96,7 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
     // The wiremock token stub returned `rotated-refresh`; the
     // OAuth2TokenProvider should have written it back to the row.
     assert_eq!(
-        common::oauth::read_refresh_token(&pool, &tenant_id, &secret_engine)
+        oauth::read_refresh_token(&pool, &tenant_id, &secret_engine)
             .await
             .as_deref(),
         Some("rotated-refresh"),
@@ -120,9 +123,9 @@ async fn cold_start_grants_token_calls_registry_with_bearer_and_rotates_refresh(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn registry_401_triggers_invalidate_and_retry(pool: PgPool) {
-    let token_server = common::oauth::mock_token_endpoint().await;
-    let secret_engine = common::oauth::test_engine();
-    let providers = common::oauth::build_provider_registry(
+    let token_server = oauth::mock_token_endpoint().await;
+    let secret_engine = oauth::test_engine();
+    let providers = oauth::build_provider_registry(
         pool.clone(),
         token_server.uri(),
         Arc::clone(&secret_engine),
@@ -156,18 +159,18 @@ async fn registry_401_triggers_invalidate_and_retry(pool: PgPool) {
         .await;
 
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let shutdown = CancellationToken::new();
-    let worker = common::worker::build_real(pool.clone(), &registry_server, providers);
+    let worker = e2e::build_real(pool.clone(), &registry_server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = common::operation_tasks::wait_for_state(
+    let final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,

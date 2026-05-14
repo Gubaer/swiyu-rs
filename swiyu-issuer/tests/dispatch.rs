@@ -11,13 +11,11 @@ use sqlx::PgPool;
 
 use swiyu_issuer::domain::{OperationTask, StepOutcome, StepResult, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence::operation_tasks;
+use swiyu_issuer::test_support::persistence::operation_tasks as test_operation_tasks;
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::time::now_micros;
+use swiyu_issuer::test_support::worker::ConstantRng;
 use swiyu_issuer::worker::outcome;
-
-#[path = "common/mod.rs"]
-mod common;
-use common::rng::ConstantRng;
-use common::tenants::insert_test_tenant;
-use common::time::now_micros;
 
 fn task_with_age(tenant_id: &TenantId, age: Duration, attempts: u32) -> OperationTask {
     let created_at = now_micros() - age;
@@ -28,7 +26,7 @@ fn task_with_age(tenant_id: &TenantId, age: Duration, attempts: u32) -> Operatio
         input: json!({"description": "x", "display_name": "X"}),
         created_at,
         updated_at: created_at,
-        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
+        ..test_operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
 
@@ -37,7 +35,7 @@ async fn done_advances_step_and_merges_patch(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let mut task = task_with_age(&tenant_id, Duration::seconds(10), 0);
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let mut patch = Map::new();
     patch.insert(
@@ -81,7 +79,7 @@ async fn retry_within_cap_schedules_next_attempt_without_bumping_attempts(pool: 
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let mut task = task_with_age(&tenant_id, Duration::hours(1), 2);
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
@@ -121,7 +119,7 @@ async fn retry_past_cap_marks_failed(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let mut task = task_with_age(&tenant_id, Duration::hours(25), 17);
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();
@@ -155,7 +153,7 @@ async fn terminal_marks_failed_immediately(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let mut task = task_with_age(&tenant_id, Duration::seconds(10), 0);
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let now = now_micros();
     let mut conn = pool.acquire().await.unwrap();

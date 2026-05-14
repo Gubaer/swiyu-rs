@@ -11,9 +11,8 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::fixtures::SAMPLE_HOLDER_KEY_JKT;
+use swiyu_issuer::test_support::fixtures::SAMPLE_HOLDER_KEY_JKT;
+use swiyu_issuer::test_support::persistence::tenants as test_tenants;
 
 use chrono::{Duration, Utc};
 use sqlx::PgPool;
@@ -484,7 +483,7 @@ async fn find_is_tenant_scoped(pool: PgPool) {
     // wrong-tenant case collapses to the same `Ok(None)` as
     // unknown-id so callers cannot probe across tenants.
     let other_tenant = TenantId::generate();
-    common::tenants::insert_test_tenant(&pool, &other_tenant).await;
+    test_tenants::insert_test_tenant(&pool, &other_tenant).await;
 
     let list_id = StatusListId::generate();
     insert_status_list(&pool, &list_id, TEST_ISSUER).await;
@@ -568,7 +567,7 @@ async fn set_state_is_tenant_scoped(pool: PgPool) {
     // as `find`. Defence against a stolen credential id leaking
     // mutations across tenants.
     let other_tenant = TenantId::generate();
-    common::tenants::insert_test_tenant(&pool, &other_tenant).await;
+    test_tenants::insert_test_tenant(&pool, &other_tenant).await;
 
     let list_id = StatusListId::generate();
     insert_status_list(&pool, &list_id, TEST_ISSUER).await;
@@ -703,7 +702,7 @@ async fn list_filters_by_state(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn list_is_tenant_scoped(pool: PgPool) {
     let other_tenant = TenantId::generate();
-    common::tenants::insert_test_tenant(&pool, &other_tenant).await;
+    test_tenants::insert_test_tenant(&pool, &other_tenant).await;
 
     let list_id = StatusListId::generate();
     insert_status_list(&pool, &list_id, TEST_ISSUER).await;

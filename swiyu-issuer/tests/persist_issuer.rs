@@ -9,14 +9,16 @@ use sqlx::PgPool;
 use swiyu_issuer::domain::{Issuer, IssuerId, IssuerState, StepOutcome, TenantId};
 use swiyu_issuer::persistence::issuers;
 use swiyu_issuer::test_support::domain::signing_engine::{GetPublicKeyCall, MockSigningEngine};
+use swiyu_issuer::test_support::fixtures::{SAMPLE_DESCRIPTION, SAMPLE_DISPLAY_NAME};
+use swiyu_issuer::test_support::persistence::issuers as test_issuers;
 use swiyu_issuer::worker::create_issuer::{
     CreateIssuerInput, CreateIssuerStateData, KeyTriple, execute_persist_issuer,
 };
 
 fn fixture_input() -> CreateIssuerInput {
     CreateIssuerInput {
-        description: common::issuers::SAMPLE_DESCRIPTION.into(),
-        display_name: common::issuers::SAMPLE_DISPLAY_NAME.into(),
+        description: SAMPLE_DESCRIPTION.into(),
+        display_name: SAMPLE_DISPLAY_NAME.into(),
     }
 }
 
@@ -35,11 +37,9 @@ fn fixture_state() -> CreateIssuerStateData {
     }
 }
 
-#[path = "common/mod.rs"]
-mod common;
-use common::keypairs::fixture_kid;
-use common::tenants::insert_test_tenant;
-use common::time::fixture_now;
+use swiyu_issuer::test_support::fixture_kid;
+use swiyu_issuer::test_support::fixture_now;
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_inserts_issuer_row(pool: PgPool) {
@@ -73,14 +73,8 @@ async fn happy_path_inserts_issuer_row(pool: PgPool) {
     assert_eq!(loaded.tenant_id, tenant_id);
     assert!(loaded.did.starts_with("did:tdw:"));
     assert_eq!(loaded.state, Some(IssuerState::Active));
-    assert_eq!(
-        loaded.description.as_deref(),
-        Some(common::issuers::SAMPLE_DESCRIPTION)
-    );
-    assert_eq!(
-        loaded.display_name.as_deref(),
-        Some(common::issuers::SAMPLE_DISPLAY_NAME)
-    );
+    assert_eq!(loaded.description.as_deref(), Some(SAMPLE_DESCRIPTION));
+    assert_eq!(loaded.display_name.as_deref(), Some(SAMPLE_DISPLAY_NAME));
     assert_eq!(loaded.authorized_key_id, Some(fixture_kid(0x11)));
     assert_eq!(loaded.authentication_key_id, Some(fixture_kid(0x22)));
     assert_eq!(loaded.assertion_key_id, Some(fixture_kid(0x33)));
@@ -103,7 +97,7 @@ async fn skips_when_issuer_row_already_exists(pool: PgPool) {
         authentication_key_id: Some(fixture_kid(0x22)),
         assertion_key_id: Some(fixture_kid(0x33)),
         display_name: Some("pre-existing".into()),
-        ..common::issuers::active(&tenant_id)
+        ..test_issuers::active(&tenant_id)
     };
     issuers::insert(&mut conn, &existing).await.unwrap();
 

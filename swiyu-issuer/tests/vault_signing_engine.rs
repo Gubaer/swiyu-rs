@@ -14,9 +14,7 @@
 //! match the dev compose so the tests run unmodified against the local
 //! container.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::vault::{vault_addr, vault_token};
+use swiyu_issuer::test_support::env::{vault_addr, vault_token};
 
 use ed25519_dalek::Signature as Ed25519Signature;
 use ed25519_dalek::Verifier;

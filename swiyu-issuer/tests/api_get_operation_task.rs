@@ -14,18 +14,19 @@ use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{IssuerId, OperationTask, TaskId, TaskType, TenantId};
 use swiyu_issuer::persistence;
 
-#[path = "common/mod.rs"]
-mod common;
-use common::api_tokens::mint_test_token;
-use common::app_state::build_state;
-use common::http::{get_request, read_body};
-use common::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::api::build_state;
+use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::http::{get_request, read_body};
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 fn pending_task(tenant_id: &TenantId, result_issuer_id: Option<IssuerId>) -> OperationTask {
     OperationTask {
         input: json!({"description": "x", "display_name": "y"}),
         result_issuer_id,
-        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
+        ..swiyu_issuer::test_support::persistence::operation_tasks::pending(
+            tenant_id,
+            TaskType::CreateIssuer,
+        )
     }
 }
 
@@ -36,7 +37,7 @@ async fn happy_path_returns_target_shape(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, Some(issuer_id.clone()));
-    common::operation_tasks::insert(&pool, &task).await;
+    swiyu_issuer::test_support::persistence::operation_tasks::insert(&pool, &task).await;
 
     let app = router(build_state(pool));
     let response = app
@@ -77,7 +78,7 @@ async fn completed_task_surfaces_terminal_state_and_completed_at(pool: PgPool) {
     let secret = mint_test_token(&pool, &tenant_id).await;
     let issuer_id = IssuerId::generate();
     let mut task = pending_task(&tenant_id, Some(issuer_id.clone()));
-    common::operation_tasks::insert(&pool, &task).await;
+    swiyu_issuer::test_support::persistence::operation_tasks::insert(&pool, &task).await;
 
     // Drive the task to Completed by mirroring the in-memory mutation
     // `OperationTask::try_complete` performs in the worker, then
@@ -141,7 +142,7 @@ async fn returns_404_for_cross_tenant_task(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_b).await;
     // Task belongs to tenant_a; the bearer token is tenant_b's.
     let task = pending_task(&tenant_a, Some(IssuerId::generate()));
-    common::operation_tasks::insert(&pool, &task).await;
+    swiyu_issuer::test_support::persistence::operation_tasks::insert(&pool, &task).await;
     let secret = mint_test_token(&pool, &tenant_b).await;
 
     let app = router(build_state(pool));
@@ -182,7 +183,7 @@ async fn rejects_request_without_authorization(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let task = pending_task(&tenant_id, Some(IssuerId::generate()));
-    common::operation_tasks::insert(&pool, &task).await;
+    swiyu_issuer::test_support::persistence::operation_tasks::insert(&pool, &task).await;
 
     let app = router(build_state(pool));
     let response = app

@@ -4,10 +4,10 @@
 //! and the real `DevSigningEngine`, with `MockStatusRegistry` standing
 //! in for the SWIYU Status Registry.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::fixtures::SAMPLE_STATUS_REGISTRY_URL;
-use common::rng::ConstantRng;
+use swiyu_issuer::test_support::fixtures::SAMPLE_STATUS_REGISTRY_URL;
+use swiyu_issuer::test_support::oauth;
+use swiyu_issuer::test_support::persistence::status_lists as test_status_lists;
+use swiyu_issuer::test_support::worker::ConstantRng;
 
 use std::sync::Arc;
 
@@ -22,8 +22,8 @@ use swiyu_registries::status::StatusListEntry;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
-    let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+    let secret_engine = oauth::test_engine();
+    let (_issuer, list, engine) = test_status_lists::seed_dirty_environment(
         &pool,
         &secret_engine,
         SAMPLE_STATUS_REGISTRY_URL,
@@ -36,7 +36,7 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -47,7 +47,7 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
     publisher.run_round(list).await.unwrap();
 
     let (published, committed, attempts) =
-        common::status_lists::fetch_publish_state(&pool, &list_id).await;
+        test_status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published as u64, target);
     assert_eq!(committed as u64, target);
     assert_eq!(attempts, 0);
@@ -62,8 +62,8 @@ async fn happy_path_bumps_published_version_and_clears_state(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool) {
-    let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+    let secret_engine = oauth::test_engine();
+    let (_issuer, list, engine) = test_status_lists::seed_dirty_environment(
         &pool,
         &secret_engine,
         SAMPLE_STATUS_REGISTRY_URL,
@@ -78,7 +78,7 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
     });
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -90,7 +90,7 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
     assert!(format!("{err}").contains("503"));
 
     let (published, _committed, attempts) =
-        common::status_lists::fetch_publish_state(&pool, &list_id).await;
+        test_status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published, 0, "published_version stays put on failure");
     assert_eq!(attempts, 1);
     let last_error: Option<String> =
@@ -115,8 +115,8 @@ async fn retryable_failure_increments_attempts_and_schedules_retry(pool: PgPool)
 
 #[sqlx::test(migrations = "./migrations")]
 async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
-    let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+    let secret_engine = oauth::test_engine();
+    let (_issuer, list, engine) = test_status_lists::seed_dirty_environment(
         &pool,
         &secret_engine,
         SAMPLE_STATUS_REGISTRY_URL,
@@ -131,7 +131,7 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
     });
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -143,7 +143,7 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
     assert!(format!("{err}").contains("403"));
 
     let (published, _committed, attempts) =
-        common::status_lists::fetch_publish_state(&pool, &list_id).await;
+        test_status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published, 0);
     assert_eq!(attempts, 1);
     let next: Option<chrono::DateTime<Utc>> =
@@ -160,8 +160,8 @@ async fn terminal_failure_records_error_and_long_retry(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool) {
-    let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+    let secret_engine = oauth::test_engine();
+    let (_issuer, list, engine) = test_status_lists::seed_dirty_environment(
         &pool,
         &secret_engine,
         SAMPLE_STATUS_REGISTRY_URL,
@@ -184,7 +184,7 @@ async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool)
     registry.enqueue_update(UpdateStatusListEntryCall::Ok);
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -197,7 +197,7 @@ async fn conditional_update_no_ops_when_concurrent_worker_is_ahead(pool: PgPool)
     publisher.run_round(list).await.unwrap();
 
     let (published, _committed, _attempts) =
-        common::status_lists::fetch_publish_state(&pool, &list_id).await;
+        test_status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(
         published,
         (target as i64) + 5,

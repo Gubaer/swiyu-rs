@@ -10,10 +10,13 @@
 //! real. Complements the in-memory mock-based tests in
 //! `tests/worker_run.rs`.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::fixtures::SAMPLE_REGISTRY_UUID;
-use common::identifier_registry::{allocate_path, publish_path, registry_url_in_response};
+use swiyu_issuer::test_support::fixtures::SAMPLE_REGISTRY_UUID;
+use swiyu_issuer::test_support::oauth;
+use swiyu_issuer::test_support::persistence::operation_tasks as test_operation_tasks;
+use swiyu_issuer::test_support::registry::identifier::{
+    allocate_path, publish_path, registry_url_in_response,
+};
+use swiyu_issuer::test_support::worker::e2e;
 
 use std::time::Duration;
 
@@ -33,7 +36,7 @@ fn pending_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
             "display_name": "E2E",
         }),
         result_issuer_id: Some(issuer_id),
-        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
+        ..test_operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
 
@@ -58,22 +61,22 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
+        oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
-    let worker = common::worker::build_real(pool.clone(), &server, providers);
+    let worker = e2e::build_real(pool.clone(), &server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = common::operation_tasks::wait_for_state(
+    let final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,
@@ -141,24 +144,24 @@ async fn registry_503_on_publish_is_retried_until_success(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
+        oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
     // ConstantRng(0) → backoff_delay returns 0ms, so the retry fires on
     // the very next poll without waiting on real exponential backoff.
-    let worker = common::worker::build_real(pool.clone(), &server, providers);
+    let worker = e2e::build_real(pool.clone(), &server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = common::operation_tasks::wait_for_state(
+    let final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,
@@ -200,9 +203,9 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &engine).await;
 
     // Pre-populate state_data with allocate_did's output, simulating a
     // crash that occurred after allocate_did succeeded but before
@@ -214,15 +217,15 @@ async fn resume_after_crash_skips_allocate_did(pool: PgPool) {
         "assigned_identifier": SAMPLE_REGISTRY_UUID,
     });
     let task_id = task.id.clone();
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
+        oauth::build_provider_setup(&pool, std::sync::Arc::clone(&engine)).await;
     let shutdown = CancellationToken::new();
-    let worker = common::worker::build_real(pool.clone(), &server, providers);
+    let worker = e2e::build_real(pool.clone(), &server, providers);
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = common::operation_tasks::wait_for_state(
+    let final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,

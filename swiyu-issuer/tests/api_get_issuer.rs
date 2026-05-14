@@ -11,20 +11,18 @@ use tower::ServiceExt;
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{ApiTokenSecret, Issuer, IssuerId, TenantId};
 
-#[path = "common/mod.rs"]
-mod common;
-use common::api_tokens::mint_test_token;
-use common::app_state::build_state;
-use common::http::{get_request, read_body};
-use common::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::api::build_state;
+use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::http::{get_request, read_body};
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_returns_target_shape_dto(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::active_with_keys(&tenant_id);
-    common::issuers::insert(&pool, &issuer).await;
+    let issuer = swiyu_issuer::test_support::persistence::issuers::active_with_keys(&tenant_id);
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool.clone()));
     let response = app
@@ -38,10 +36,19 @@ async fn happy_path_returns_target_shape_dto(pool: PgPool) {
 
     let body = read_body(response).await;
     assert_eq!(body["id"], issuer.id.bare());
-    assert_eq!(body["did"], common::issuers::SAMPLE_DID);
+    assert_eq!(
+        body["did"],
+        swiyu_issuer::test_support::fixtures::SAMPLE_DID
+    );
     assert_eq!(body["state"], "active");
-    assert_eq!(body["description"], common::issuers::SAMPLE_DESCRIPTION);
-    assert_eq!(body["display_name"], common::issuers::SAMPLE_DISPLAY_NAME);
+    assert_eq!(
+        body["description"],
+        swiyu_issuer::test_support::fixtures::SAMPLE_DESCRIPTION
+    );
+    assert_eq!(
+        body["display_name"],
+        swiyu_issuer::test_support::fixtures::SAMPLE_DISPLAY_NAME
+    );
     // tenant_id and the three SigningEngine key-pair handles are
     // deliberately not exposed on the wire.
     assert!(body.get("tenant_id").is_none());
@@ -81,8 +88,8 @@ async fn returns_404_for_cross_tenant_issuer(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_a).await;
     insert_test_tenant(&pool, &tenant_b).await;
     // Issuer belongs to tenant_a; the bearer token is tenant_b's.
-    let issuer = common::issuers::active_with_keys(&tenant_a);
-    common::issuers::insert(&pool, &issuer).await;
+    let issuer = swiyu_issuer::test_support::persistence::issuers::active_with_keys(&tenant_a);
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
     let secret = mint_test_token(&pool, &tenant_b).await;
 
     let app = router(build_state(pool));
@@ -109,9 +116,9 @@ async fn returns_404_for_legacy_issuer(pool: PgPool) {
     let issuer = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
-        ..common::issuers::active(&tenant_id)
+        ..swiyu_issuer::test_support::persistence::issuers::active(&tenant_id)
     };
-    common::issuers::insert(&pool, &issuer).await;
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool));
     let response = app
@@ -151,8 +158,8 @@ async fn returns_400_for_malformed_issuer_id(pool: PgPool) {
 async fn rejects_request_without_authorization(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = common::issuers::active_with_keys(&tenant_id);
-    common::issuers::insert(&pool, &issuer).await;
+    let issuer = swiyu_issuer::test_support::persistence::issuers::active_with_keys(&tenant_id);
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool));
     let response = app
@@ -169,8 +176,8 @@ async fn rejects_request_without_authorization(pool: PgPool) {
 async fn rejects_unknown_bearer_token(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer = common::issuers::active_with_keys(&tenant_id);
-    common::issuers::insert(&pool, &issuer).await;
+    let issuer = swiyu_issuer::test_support::persistence::issuers::active_with_keys(&tenant_id);
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
 
     let app = router(build_state(pool));
     let bogus = ApiTokenSecret::generate();

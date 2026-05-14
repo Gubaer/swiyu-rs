@@ -14,12 +14,10 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-#[path = "common/mod.rs"]
-mod common;
-use common::api_tokens::mint_test_token;
-use common::app_state::build_state;
-use common::http::{post_request_json, read_body};
-use common::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::api::build_state;
+use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::http::{post_request_json, read_body};
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 async fn insert_rotate_task(
     pool: &PgPool,
@@ -31,10 +29,13 @@ async fn insert_rotate_task(
         state,
         input: json!({"roles": ["authorized"]}),
         result_issuer_id: Some(issuer_id.clone()),
-        ..common::operation_tasks::pending(tenant_id, TaskType::RotateKeys)
+        ..swiyu_issuer::test_support::persistence::operation_tasks::pending(
+            tenant_id,
+            TaskType::RotateKeys,
+        )
     };
     let id = task.id.clone();
-    common::operation_tasks::insert(pool, &task).await;
+    swiyu_issuer::test_support::persistence::operation_tasks::insert(pool, &task).await;
     id
 }
 
@@ -43,9 +44,11 @@ async fn fresh_rotation_returns_201_and_inserts_task(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app
@@ -84,9 +87,11 @@ async fn all_sentinel_expands_server_side(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app
@@ -118,9 +123,11 @@ async fn in_flight_task_returns_200_and_same_task_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let existing_task = insert_rotate_task(&pool, &tenant_id, &issuer_id, TaskState::Pending).await;
     let app = router(build_state(pool.clone()));
 
@@ -146,9 +153,11 @@ async fn prior_completed_task_falls_through_to_fresh_201(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let prior_task = insert_rotate_task(&pool, &tenant_id, &issuer_id, TaskState::Completed).await;
     let app = router(build_state(pool.clone()));
 
@@ -173,9 +182,11 @@ async fn deactivated_issuer_returns_409(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
 
     sqlx::query("UPDATE issuers SET state = 'deactivated' WHERE id = $1")
         .bind(issuer_id.bare())
@@ -204,9 +215,11 @@ async fn empty_roles_returns_400(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app
@@ -225,9 +238,11 @@ async fn unknown_role_returns_400(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app
@@ -246,9 +261,11 @@ async fn all_mixed_with_concrete_role_returns_400(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app
@@ -269,9 +286,12 @@ async fn cross_tenant_issuer_returns_404(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_owner).await;
     insert_test_tenant(&pool, &tenant_other).await;
     let secret_other = mint_test_token(&pool, &tenant_other).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_owner)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool,
+        &tenant_owner,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app
@@ -312,9 +332,9 @@ async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
     let legacy = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
-        ..common::issuers::active(&tenant_id)
+        ..swiyu_issuer::test_support::persistence::issuers::active(&tenant_id)
     };
-    common::issuers::insert(&pool, &legacy).await;
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &legacy).await;
 
     let app = router(build_state(pool.clone()));
     let response = app

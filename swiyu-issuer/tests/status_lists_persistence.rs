@@ -12,14 +12,12 @@
 //! `DATABASE_URL` to point to a Postgres instance whose user has
 //! `CREATEDB` privilege.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::fixtures::SAMPLE_STATUS_ENTRY_ID;
-
 use chrono::{Duration, Utc};
-use common::tenants::insert_test_tenant as insert_tenant;
 use sqlx::PgPool;
 use swiyu_core::statuslist::SWIYU_STATUS_LIST_CAPACITY;
+use swiyu_issuer::test_support::fixtures::SAMPLE_STATUS_ENTRY_ID;
+use swiyu_issuer::test_support::persistence::status_lists as test_status_lists;
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant as insert_tenant;
 
 use swiyu_issuer::domain::{
     BITSTRING_BYTES, IssuerId, StatusListId, StatusListIndex, StatusValue, TenantId,
@@ -511,14 +509,14 @@ async fn write_bit_flips_target_slot(pool: PgPool) {
 
     let bitstring = fetch_bitstring(&pool, &list_id).await;
     assert_eq!(
-        common::status_lists::read_slot(&bitstring, target),
+        test_status_lists::read_slot(&bitstring, target),
         StatusValue::Revoked
     );
     // Neighbouring slots stay zero (Valid).
     for other in [0u32, 1, 2, 3, 4, 5, 6, 8, 9] {
         let idx = StatusListIndex::try_from(other).unwrap();
         assert_eq!(
-            common::status_lists::read_slot(&bitstring, idx),
+            test_status_lists::read_slot(&bitstring, idx),
             StatusValue::Valid
         );
     }
@@ -542,7 +540,7 @@ async fn write_bit_round_trips_each_value(pool: PgPool) {
             .await
             .unwrap();
         let bitstring = fetch_bitstring(&pool, &list_id).await;
-        assert_eq!(common::status_lists::read_slot(&bitstring, target), value);
+        assert_eq!(test_status_lists::read_slot(&bitstring, target), value);
     }
 }
 

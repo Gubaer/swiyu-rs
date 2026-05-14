@@ -14,12 +14,10 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-#[path = "common/mod.rs"]
-mod common;
-use common::api_tokens::mint_test_token;
-use common::app_state::build_state;
-use common::http::{post_request_empty, post_request_json, read_body};
-use common::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::api::build_state;
+use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::http::{post_request_empty, post_request_json, read_body};
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 async fn insert_deactivate_task(
     pool: &PgPool,
@@ -30,10 +28,13 @@ async fn insert_deactivate_task(
     let task = OperationTask {
         state,
         result_issuer_id: Some(issuer_id.clone()),
-        ..common::operation_tasks::pending(tenant_id, TaskType::DeactivateIssuer)
+        ..swiyu_issuer::test_support::persistence::operation_tasks::pending(
+            tenant_id,
+            TaskType::DeactivateIssuer,
+        )
     };
     let id = task.id.clone();
-    common::operation_tasks::insert(pool, &task).await;
+    swiyu_issuer::test_support::persistence::operation_tasks::insert(pool, &task).await;
     id
 }
 
@@ -42,9 +43,11 @@ async fn fresh_deactivation_returns_201_and_inserts_task(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app
@@ -79,9 +82,11 @@ async fn already_pending_returns_200_and_same_task_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let existing_task =
         insert_deactivate_task(&pool, &tenant_id, &issuer_id, TaskState::Pending).await;
     let app = router(build_state(pool.clone()));
@@ -105,9 +110,11 @@ async fn already_in_progress_returns_200_and_same_task_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let existing_task =
         insert_deactivate_task(&pool, &tenant_id, &issuer_id, TaskState::InProgress).await;
     let app = router(build_state(pool.clone()));
@@ -130,9 +137,11 @@ async fn already_deactivated_with_traceable_task_returns_200_and_completed_task_
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let completed_task =
         insert_deactivate_task(&pool, &tenant_id, &issuer_id, TaskState::Completed).await;
 
@@ -165,9 +174,11 @@ async fn already_deactivated_without_task_returns_200_and_null_task_id(pool: PgP
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
 
     // Bypass the saga: directly UPDATE the issuer row to Deactivated.
     // No task row was ever inserted, so the handler should respond
@@ -201,9 +212,12 @@ async fn cross_tenant_issuer_returns_404(pool: PgPool) {
     insert_test_tenant(&pool, &tenant_owner).await;
     insert_test_tenant(&pool, &tenant_other).await;
     let secret_other = mint_test_token(&pool, &tenant_other).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_owner)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool,
+        &tenant_owner,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app
@@ -254,9 +268,9 @@ async fn legacy_state_null_issuer_returns_404(pool: PgPool) {
     let legacy = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
-        ..common::issuers::active(&tenant_id)
+        ..swiyu_issuer::test_support::persistence::issuers::active(&tenant_id)
     };
-    common::issuers::insert(&pool, &legacy).await;
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &legacy).await;
 
     let app = router(build_state(pool.clone()));
     let response = app
@@ -277,9 +291,11 @@ async fn empty_json_body_is_accepted(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
-        .await
-        .id;
+    let issuer_id = swiyu_issuer::test_support::persistence::issuers::insert_active_with_keys(
+        &pool, &tenant_id,
+    )
+    .await
+    .id;
     let app = router(build_state(pool.clone()));
 
     let response = app

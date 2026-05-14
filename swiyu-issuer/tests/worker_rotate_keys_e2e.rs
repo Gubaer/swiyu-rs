@@ -14,10 +14,12 @@
 //! verify the predecessor signature, so a minimal but well-formed
 //! TDW 0.3 entry is enough to drive the saga.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
-use common::rng::ConstantRng;
+use swiyu_issuer::test_support::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
+use swiyu_issuer::test_support::oauth;
+use swiyu_issuer::test_support::persistence::issuers as test_issuers;
+use swiyu_issuer::test_support::persistence::operation_tasks as test_operation_tasks;
+use swiyu_issuer::test_support::registry::identifier as test_identifier_registry;
+use swiyu_issuer::test_support::worker::ConstantRng;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,7 +42,7 @@ fn rotate_task(tenant_id: &TenantId, issuer_id: IssuerId, roles: Vec<&str>) -> O
     OperationTask {
         input: json!({"roles": roles}),
         result_issuer_id: Some(issuer_id),
-        ..common::operation_tasks::pending(tenant_id, TaskType::RotateKeys)
+        ..test_operation_tasks::pending(tenant_id, TaskType::RotateKeys)
     }
 }
 
@@ -49,24 +51,24 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     let registry = Arc::new(MockRegistry::new());
     // Two fetch_log calls: build_rotation_didlog + publish_didlog.
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
-        common::identifier_registry::fixture_genesis_entry(&["z6Mk-old-fixture-authorized"]),
+        test_identifier_registry::fixture_genesis_entry(&["z6Mk-old-fixture-authorized"]),
     ]));
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
-        common::identifier_registry::fixture_genesis_entry(&["z6Mk-old-fixture-authorized"]),
+        test_identifier_registry::fixture_genesis_entry(&["z6Mk-old-fixture-authorized"]),
     ]));
     registry.enqueue_publish(PublishCall::Ok);
 
-    let secret_engine = common::oauth::test_engine();
+    let secret_engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
-    let (issuer, engine) = common::issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
+    let (issuer, engine) = test_issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
 
     let task = rotate_task(&tenant_id, issuer.id.clone(), vec!["all"]);
     let task_id = task.id.clone();
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
@@ -79,7 +81,7 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
     .with_poll_interval(Duration::from_millis(20));
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = common::operation_tasks::wait_for_state(
+    let final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,
@@ -143,26 +145,26 @@ async fn happy_path_rotates_all_three_keys(pool: PgPool) {
 async fn rotates_only_authentication(pool: PgPool) {
     let registry = Arc::new(MockRegistry::new());
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
-        common::identifier_registry::fixture_genesis_entry(&["z6Mk-old-fixture-authorized"]),
+        test_identifier_registry::fixture_genesis_entry(&["z6Mk-old-fixture-authorized"]),
     ]));
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
-        common::identifier_registry::fixture_genesis_entry(&["z6Mk-old-fixture-authorized"]),
+        test_identifier_registry::fixture_genesis_entry(&["z6Mk-old-fixture-authorized"]),
     ]));
     registry.enqueue_publish(PublishCall::Ok);
 
-    let secret_engine = common::oauth::test_engine();
+    let secret_engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
-    let (issuer, engine) = common::issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
+    let (issuer, engine) = test_issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
     let original_authorized: KeyPairId = issuer.authorized_key_id.unwrap();
     let original_assertion: KeyPairId = issuer.assertion_key_id.unwrap();
 
     let task = rotate_task(&tenant_id, issuer.id.clone(), vec!["authentication"]);
     let task_id = task.id.clone();
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
@@ -175,7 +177,7 @@ async fn rotates_only_authentication(pool: PgPool) {
     .with_poll_interval(Duration::from_millis(20));
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let _final_task = common::operation_tasks::wait_for_state(
+    let _final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,

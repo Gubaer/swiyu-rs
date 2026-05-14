@@ -3,10 +3,12 @@
 //! Exercises the dispatch loop end-to-end against a real Postgres pool
 //! (`sqlx::test`) and the in-memory mocks from `test_support::worker`.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::keypairs::fixture_kid;
-use common::rng::ConstantRng;
+use swiyu_issuer::test_support::fixture_kid;
+use swiyu_issuer::test_support::fixtures::{SAMPLE_DESCRIPTION, SAMPLE_DISPLAY_NAME};
+use swiyu_issuer::test_support::oauth;
+use swiyu_issuer::test_support::persistence::operation_tasks as test_operation_tasks;
+use swiyu_issuer::test_support::registry::status as test_status_registry;
+use swiyu_issuer::test_support::worker::ConstantRng;
 
 use std::time::Duration;
 
@@ -70,33 +72,33 @@ fn load_happy_path_mocks(registry: &MockRegistry, engine: &MockSigningEngine) {
 fn pending_create_issuer_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     OperationTask {
         input: json!({
-            "description": common::issuers::SAMPLE_DESCRIPTION,
-            "display_name": common::issuers::SAMPLE_DISPLAY_NAME,
+            "description": SAMPLE_DESCRIPTION,
+            "display_name": SAMPLE_DISPLAY_NAME,
         }),
         result_issuer_id: Some(issuer_id),
-        ..common::operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
+        ..test_operation_tasks::pending(tenant_id, TaskType::CreateIssuer)
     }
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_drives_task_to_completion(pool: PgPool) {
-    let secret_engine = common::oauth::test_engine();
+    let secret_engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
 
     let issuer_id = IssuerId::generate();
     let task = pending_create_issuer_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
 
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let registry = MockRegistry::new();
     let engine = MockSigningEngine::new();
     load_happy_path_mocks(&registry, &engine);
-    let status_registry = common::status_registry::with_one_ok();
+    let status_registry = test_status_registry::with_one_ok();
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, std::sync::Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, std::sync::Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
@@ -109,7 +111,7 @@ async fn happy_path_drives_task_to_completion(pool: PgPool) {
     .with_poll_interval(Duration::from_millis(20));
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = common::operation_tasks::wait_for_state(
+    let final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,
@@ -143,9 +145,8 @@ async fn shutdown_exits_idle_loop(pool: PgPool) {
     let registry = MockRegistry::new();
     let engine = MockSigningEngine::new();
     let status_registry = MockStatusRegistry::new();
-    let secret_engine = common::oauth::test_engine();
-    let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, secret_engine).await;
+    let secret_engine = oauth::test_engine();
+    let (_token_server, providers) = oauth::build_provider_setup(&pool, secret_engine).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),

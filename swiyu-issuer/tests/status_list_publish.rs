@@ -8,10 +8,10 @@
 //! Complements the in-memory mock-based tests in
 //! `tests/status_list_publisher.rs`.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_STATUS_ENTRY_ID};
-use common::rng::ConstantRng;
+use swiyu_issuer::test_support::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_STATUS_ENTRY_ID};
+use swiyu_issuer::test_support::oauth;
+use swiyu_issuer::test_support::persistence::status_lists as test_status_lists;
+use swiyu_issuer::test_support::worker::ConstantRng;
 
 use std::sync::Arc;
 
@@ -53,8 +53,8 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let secret_engine = common::oauth::test_engine();
-    let (issuer, list, engine) = common::status_lists::seed_dirty_environment(
+    let secret_engine = oauth::test_engine();
+    let (issuer, list, engine) = test_status_lists::seed_dirty_environment(
         &pool,
         &secret_engine,
         &registry_url_for(&server),
@@ -64,7 +64,7 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
     let target = list.committed_version;
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -75,7 +75,7 @@ async fn happy_path_publishes_and_advances_published_version(pool: PgPool) {
     publisher.run_round(list).await.unwrap();
 
     let (published, _committed, attempts) =
-        common::status_lists::fetch_publish_state(&pool, &list_id).await;
+        test_status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published as u64, target);
     assert_eq!(attempts, 0);
 
@@ -129,8 +129,8 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+    let secret_engine = oauth::test_engine();
+    let (_issuer, list, engine) = test_status_lists::seed_dirty_environment(
         &pool,
         &secret_engine,
         &registry_url_for(&server),
@@ -140,7 +140,7 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
     let target = list.committed_version;
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -153,7 +153,7 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
     let err = publisher.run_round(list.clone()).await.unwrap_err();
     assert!(format!("{err}").contains("503"));
     let (published, _committed, attempts) =
-        common::status_lists::fetch_publish_state(&pool, &list_id).await;
+        test_status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published, 0);
     assert_eq!(attempts, 1);
 
@@ -161,7 +161,7 @@ async fn registry_503_then_success_resets_publish_attempts(pool: PgPool) {
     // publish_attempts.
     publisher.run_round(list).await.unwrap();
     let (published, _committed, attempts) =
-        common::status_lists::fetch_publish_state(&pool, &list_id).await;
+        test_status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(published as u64, target);
     assert_eq!(attempts, 0);
 
@@ -189,8 +189,8 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
         .mount(&server)
         .await;
 
-    let secret_engine = common::oauth::test_engine();
-    let (_issuer, list, engine) = common::status_lists::seed_dirty_environment(
+    let secret_engine = oauth::test_engine();
+    let (_issuer, list, engine) = test_status_lists::seed_dirty_environment(
         &pool,
         &secret_engine,
         &registry_url_for(&server),
@@ -210,7 +210,7 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
         .unwrap();
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let mut publisher = StatusListPublisher::new(
         pool.clone(),
         engine,
@@ -221,7 +221,7 @@ async fn concurrent_advance_makes_local_update_a_noop(pool: PgPool) {
     publisher.run_round(list).await.unwrap();
 
     let (published, _committed, _attempts) =
-        common::status_lists::fetch_publish_state(&pool, &list_id).await;
+        test_status_lists::fetch_publish_state(&pool, &list_id).await;
     assert_eq!(
         published,
         (target as i64) + 5,

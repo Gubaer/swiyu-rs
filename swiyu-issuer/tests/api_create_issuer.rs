@@ -13,12 +13,10 @@ use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{ApiTokenSecret, IssuerId, TaskId, TaskState, TenantId};
 use swiyu_issuer::persistence;
 
-#[path = "common/mod.rs"]
-mod common;
-use common::api_tokens::mint_test_token;
-use common::app_state::build_state;
-use common::http::{post_request_json, read_body};
-use common::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::api::build_state;
+use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::http::{post_request_json, read_body};
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
@@ -28,8 +26,8 @@ async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
     let app = router(build_state(pool.clone()));
 
     let body = json!({
-        "description": common::issuers::SAMPLE_DESCRIPTION,
-        "display_name": common::issuers::SAMPLE_DISPLAY_NAME,
+        "description": swiyu_issuer::test_support::fixtures::SAMPLE_DESCRIPTION,
+        "display_name": swiyu_issuer::test_support::fixtures::SAMPLE_DISPLAY_NAME,
     });
     let response = app
         .oneshot(post_request_json(
@@ -59,11 +57,11 @@ async fn happy_path_returns_201_and_inserts_task(pool: PgPool) {
     assert_eq!(task.result_issuer_id, Some(issuer_id));
     assert_eq!(
         task.input["description"],
-        common::issuers::SAMPLE_DESCRIPTION
+        swiyu_issuer::test_support::fixtures::SAMPLE_DESCRIPTION
     );
     assert_eq!(
         task.input["display_name"],
-        common::issuers::SAMPLE_DISPLAY_NAME
+        swiyu_issuer::test_support::fixtures::SAMPLE_DISPLAY_NAME
     );
 }
 

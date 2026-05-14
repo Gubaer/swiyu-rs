@@ -21,13 +21,11 @@ use swiyu_issuer::domain::{
 };
 use swiyu_issuer::persistence;
 
-#[path = "common/mod.rs"]
-mod common;
-use common::api_tokens::mint_test_token;
-use common::app_state::build_state;
-use common::fixtures::SAMPLE_HOLDER_KEY_JKT;
-use common::http::{get_request, read_body};
-use common::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::api::build_state;
+use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::fixtures::SAMPLE_HOLDER_KEY_JKT;
+use swiyu_issuer::test_support::http::{get_request, read_body};
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 async fn seed_offer(pool: &PgPool, issuer: &Issuer, vct: &str) -> CredentialOffer {
     let offer = CredentialOffer::new(
@@ -38,7 +36,7 @@ async fn seed_offer(pool: &PgPool, issuer: &Issuer, vct: &str) -> CredentialOffe
         PreAuthCode::generate(),
         Utc::now() + Duration::minutes(5),
     );
-    common::credential_offers::insert(pool, &offer).await;
+    swiyu_issuer::test_support::persistence::credential_offers::insert(pool, &offer).await;
     offer
 }
 
@@ -90,8 +88,10 @@ async fn get_returns_credential_with_full_shape(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
-    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -133,8 +133,10 @@ async fn get_marks_past_expires_at_as_expired(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
-    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
 
     // Insert directly so we can backdate `expires_at` past now.
     let offer = seed_offer(&pool, &issuer, "vc-test").await;
@@ -183,7 +185,8 @@ async fn get_returns_404_for_unknown_id(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let unknown = swiyu_issuer::domain::IssuedCredentialId::generate();
 
     let app = router(build_state(pool.clone()));
@@ -209,9 +212,12 @@ async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_a = common::issuers::insert_active(&pool, &tenant_id).await;
-    let issuer_b = common::issuers::insert_active(&pool, &tenant_id).await;
-    let list_id = common::status_lists::provision(&pool, &issuer_a.id).await;
+    let issuer_a =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let issuer_b =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer_a.id).await;
     let credential = seed_credential(
         &pool,
         &issuer_a,
@@ -242,8 +248,10 @@ async fn get_with_wrong_issuer_returns_404(pool: PgPool) {
 async fn get_is_tenant_scoped(pool: PgPool) {
     let tenant_a = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_a).await;
-    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_a).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
     let credential = seed_credential(
         &pool,
         &issuer,
@@ -298,8 +306,10 @@ async fn list_returns_credentials_newest_first(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
-    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
 
     let now = Utc::now();
     let mut credential_ids = Vec::new();
@@ -345,10 +355,14 @@ async fn list_returns_only_url_issuers_credentials(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer_a = common::issuers::insert_active(&pool, &tenant_id).await;
-    let issuer_b = common::issuers::insert_active(&pool, &tenant_id).await;
-    let list_a = common::status_lists::provision(&pool, &issuer_a.id).await;
-    let list_b = common::status_lists::provision(&pool, &issuer_b.id).await;
+    let issuer_a =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let issuer_b =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let list_a =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer_a.id).await;
+    let list_b =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer_b.id).await;
     let cred_a = seed_credential(
         &pool,
         &issuer_a,
@@ -390,8 +404,10 @@ async fn list_filters_by_state(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
-    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
     let active = seed_credential(
         &pool,
         &issuer,
@@ -437,8 +453,10 @@ async fn list_filters_by_vct(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
-    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
     seed_credential(
         &pool,
         &issuer,
@@ -483,8 +501,10 @@ async fn list_paginates_with_cursor(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
-    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
 
     let now = Utc::now();
     for offset_minutes in 0..5 {
@@ -550,8 +570,10 @@ async fn list_for_other_tenants_issuer_returns_404(pool: PgPool) {
     // gets a 404 — the URL names an issuer they do not own.
     let tenant_a = TenantId::generate();
     insert_test_tenant(&pool, &tenant_a).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_a).await;
-    let list_id = common::status_lists::provision(&pool, &issuer.id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_a).await;
+    let list_id =
+        swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
     seed_credential(
         &pool,
         &issuer,
@@ -601,7 +623,8 @@ async fn list_rejects_invalid_state_filter(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
 
     let app = router(build_state(pool.clone()));
     let response = app
@@ -622,7 +645,8 @@ async fn list_rejects_out_of_range_limit(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     let secret = mint_test_token(&pool, &tenant_id).await;
-    let issuer = common::issuers::insert_active(&pool, &tenant_id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
 
     let app = router(build_state(pool.clone()));
     let response = app

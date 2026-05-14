@@ -41,11 +41,8 @@ fn build_state(pool: PgPool) -> AppState {
     )
 }
 
-#[path = "common/mod.rs"]
-mod common;
-use common::app_state::SAMPLE_BASE_URL;
-use common::fixtures::SAMPLE_STATUS_ENTRY_ID;
-use common::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::fixtures::{SAMPLE_BASE_URL, SAMPLE_STATUS_ENTRY_ID};
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 // Mirrors the shape the create_issuer worker leaves behind once both
 // create_status_list_entry and provision_status_list have run.
@@ -55,9 +52,9 @@ async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer 
 
     let issuer = Issuer {
         assertion_key_id: Some(assertion.id),
-        ..common::issuers::active(tenant_id)
+        ..swiyu_issuer::test_support::persistence::issuers::active(tenant_id)
     };
-    common::issuers::insert(pool, &issuer).await;
+    swiyu_issuer::test_support::persistence::issuers::insert(pool, &issuer).await;
     provision_test_status_list(pool, &issuer).await;
     issuer
 }
@@ -83,7 +80,7 @@ async fn create_pending_offer(pool: &PgPool, issuer: &Issuer, claims: Value) -> 
         PreAuthCode::generate(),
         Utc::now() + Duration::minutes(5),
     );
-    common::credential_offers::insert(pool, &offer).await;
+    swiyu_issuer::test_support::persistence::credential_offers::insert(pool, &offer).await;
     offer
 }
 
@@ -243,9 +240,9 @@ async fn issuer_without_assertion_key_returns_invalid_request(pool: PgPool) {
     // Mirror the seeded dev row's shape: no SigningEngine keys.
     let issuer = Issuer {
         state: None,
-        ..common::issuers::active(&tenant_id)
+        ..swiyu_issuer::test_support::persistence::issuers::active(&tenant_id)
     };
-    common::issuers::insert(&pool, &issuer).await;
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
 
     let offer = create_pending_offer(&pool, &issuer, json!({})).await;
     let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;
@@ -393,9 +390,9 @@ async fn issuance_fails_when_issuer_has_no_status_list(pool: PgPool) {
     let assertion = engine.generate_keypair(KeyRole::Assertion).await.unwrap();
     let issuer = Issuer {
         assertion_key_id: Some(assertion.id),
-        ..common::issuers::active(&tenant_id)
+        ..swiyu_issuer::test_support::persistence::issuers::active(&tenant_id)
     };
-    common::issuers::insert(&pool, &issuer).await;
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &issuer).await;
 
     let offer = create_pending_offer(&pool, &issuer, json!({})).await;
     let access_token = mint_oidc_access_token(&pool, &issuer, &offer).await;

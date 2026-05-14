@@ -11,11 +11,14 @@
 //! verify the predecessor signature, so a minimal but well-formed
 //! TDW 0.3 entry is enough to drive the saga.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
-use common::rng::ConstantRng;
-use common::time::now_micros;
+use swiyu_issuer::test_support::fixtures::{SAMPLE_PARTNER_ID, SAMPLE_REGISTRY_UUID};
+use swiyu_issuer::test_support::oauth;
+use swiyu_issuer::test_support::persistence::credential_offers as test_credential_offers;
+use swiyu_issuer::test_support::persistence::issuers as test_issuers;
+use swiyu_issuer::test_support::persistence::operation_tasks as test_operation_tasks;
+use swiyu_issuer::test_support::registry::identifier as test_identifier_registry;
+use swiyu_issuer::test_support::time::now_micros;
+use swiyu_issuer::test_support::worker::ConstantRng;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,8 +43,8 @@ async fn insert_pending_offer(
     tenant_id: &TenantId,
     issuer_id: &IssuerId,
 ) -> CredentialOffer {
-    let offer = common::credential_offers::pending(tenant_id, issuer_id);
-    common::credential_offers::insert(pool, &offer).await;
+    let offer = test_credential_offers::pending(tenant_id, issuer_id);
+    test_credential_offers::insert(pool, &offer).await;
     offer
 }
 
@@ -61,14 +64,14 @@ async fn insert_issued_offer(
     offer.state = CredentialOfferState::Issued;
     offer.issued_at = Some(now_micros());
     offer.pre_auth_code = None;
-    common::credential_offers::insert(pool, &offer).await;
+    test_credential_offers::insert(pool, &offer).await;
     offer
 }
 
 fn deactivate_task(tenant_id: &TenantId, issuer_id: IssuerId) -> OperationTask {
     OperationTask {
         result_issuer_id: Some(issuer_id),
-        ..common::operation_tasks::pending(tenant_id, TaskType::DeactivateIssuer)
+        ..test_operation_tasks::pending(tenant_id, TaskType::DeactivateIssuer)
     }
 }
 
@@ -78,18 +81,18 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     // Two fetch_log calls: one in build_deactivation_didlog, one in
     // publish_didlog.
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
-        common::identifier_registry::fixture_genesis_entry(&["z6Mk-fixture-authorized"]),
+        test_identifier_registry::fixture_genesis_entry(&["z6Mk-fixture-authorized"]),
     ]));
     registry.enqueue_fetch_log(FetchLogCall::Ok(vec![
-        common::identifier_registry::fixture_genesis_entry(&["z6Mk-fixture-authorized"]),
+        test_identifier_registry::fixture_genesis_entry(&["z6Mk-fixture-authorized"]),
     ]));
     // One publish_log_entry call from publish_didlog.
     registry.enqueue_publish(PublishCall::Ok);
 
-    let secret_engine = common::oauth::test_engine();
+    let secret_engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
-    common::oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
-    let (issuer, engine) = common::issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
+    oauth::insert_test_tenant_with_oauth(&pool, &tenant_id, &secret_engine).await;
+    let (issuer, engine) = test_issuers::insert_active_with_engine_keys(&pool, &tenant_id).await;
     let issuer_id = issuer.id.clone();
 
     let pending_a = insert_pending_offer(&pool, &tenant_id, &issuer_id).await;
@@ -98,10 +101,10 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
 
     let task = deactivate_task(&tenant_id, issuer_id.clone());
     let task_id = task.id.clone();
-    common::operation_tasks::insert(&pool, &task).await;
+    test_operation_tasks::insert(&pool, &task).await;
 
     let (_token_server, providers) =
-        common::oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
+        oauth::build_provider_setup(&pool, Arc::clone(&secret_engine)).await;
     let shutdown = CancellationToken::new();
     let worker = Worker::new(
         pool.clone(),
@@ -114,7 +117,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
     .with_poll_interval(Duration::from_millis(20));
     let handle = tokio::spawn(worker.run(shutdown.clone()));
 
-    let final_task = common::operation_tasks::wait_for_state(
+    let final_task = test_operation_tasks::wait_for_state(
         &pool,
         &tenant_id,
         &task_id,

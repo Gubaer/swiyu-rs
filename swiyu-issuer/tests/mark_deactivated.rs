@@ -10,40 +10,40 @@ use swiyu_issuer::domain::{CredentialOfferState, IssuerId, IssuerState, StepOutc
 use swiyu_issuer::persistence::{credential_offers, issuers};
 use swiyu_issuer::worker::deactivate_issuer::mark_deactivated::execute_mark_deactivated;
 
-#[path = "common/mod.rs"]
-mod common;
-use common::tenants::insert_test_tenant;
-use common::time::now_micros;
+use swiyu_issuer::test_support::persistence::credential_offers as test_credential_offers;
+use swiyu_issuer::test_support::persistence::issuers as test_issuers;
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::time::now_micros;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let target_issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+    let target_issuer = test_issuers::insert_active_with_keys(&pool, &tenant_id)
         .await
         .id;
-    let bystander_issuer = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+    let bystander_issuer = test_issuers::insert_active_with_keys(&pool, &tenant_id)
         .await
         .id;
 
     let mut conn = pool.acquire().await.unwrap();
 
-    let target_pending_a = common::credential_offers::pending(&tenant_id, &target_issuer);
-    let target_pending_b = common::credential_offers::pending(&tenant_id, &target_issuer);
+    let target_pending_a = test_credential_offers::pending(&tenant_id, &target_issuer);
+    let target_pending_b = test_credential_offers::pending(&tenant_id, &target_issuer);
 
-    let mut target_issued = common::credential_offers::pending(&tenant_id, &target_issuer);
+    let mut target_issued = test_credential_offers::pending(&tenant_id, &target_issuer);
     target_issued.state = CredentialOfferState::Issued;
     target_issued.issued_at = Some(now_micros());
     target_issued.pre_auth_code = None;
 
-    let mut target_cancelled = common::credential_offers::pending(&tenant_id, &target_issuer);
+    let mut target_cancelled = test_credential_offers::pending(&tenant_id, &target_issuer);
     target_cancelled.state = CredentialOfferState::Cancelled;
     target_cancelled.cancelled_at = Some(now_micros());
     target_cancelled.pre_auth_code = None;
 
     // Pending offer on a different issuer in the same tenant — must
     // be untouched after deactivating only the target issuer.
-    let bystander_pending = common::credential_offers::pending(&tenant_id, &bystander_issuer);
+    let bystander_pending = test_credential_offers::pending(&tenant_id, &bystander_issuer);
 
     for offer in [
         &target_pending_a,
@@ -121,7 +121,7 @@ async fn happy_path_deactivates_issuer_and_cancels_pending_offers(pool: PgPool) 
 async fn idempotent_rerun_after_already_deactivated(pool: PgPool) {
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_id)
+    let issuer_id = test_issuers::insert_active_with_keys(&pool, &tenant_id)
         .await
         .id;
 
@@ -161,7 +161,7 @@ async fn cross_tenant_caller_is_terminal(pool: PgPool) {
     let tenant_other = TenantId::generate();
     insert_test_tenant(&pool, &tenant_owner).await;
     insert_test_tenant(&pool, &tenant_other).await;
-    let issuer_id = common::issuers::insert_active_with_keys(&pool, &tenant_owner)
+    let issuer_id = test_issuers::insert_active_with_keys(&pool, &tenant_owner)
         .await
         .id;
 

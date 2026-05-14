@@ -12,12 +12,10 @@ use tower::ServiceExt;
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{Issuer, IssuerId, TenantId};
 
-#[path = "common/mod.rs"]
-mod common;
-use common::api_tokens::mint_test_token;
-use common::app_state::build_state;
-use common::http::{get_request, read_body};
-use common::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::api::build_state;
+use swiyu_issuer::test_support::api::tokens::mint_test_token;
+use swiyu_issuer::test_support::http::{get_request, read_body};
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 
 async fn insert_target_shape_issuer(
     pool: &PgPool,
@@ -30,9 +28,9 @@ async fn insert_target_shape_issuer(
         description: Some(format!("{display_name} description")),
         display_name: Some(display_name.into()),
         created_at,
-        ..common::issuers::active_with_keys(tenant_id)
+        ..swiyu_issuer::test_support::persistence::issuers::active_with_keys(tenant_id)
     };
-    common::issuers::insert(pool, &issuer).await;
+    swiyu_issuer::test_support::persistence::issuers::insert(pool, &issuer).await;
     issuer
 }
 
@@ -176,9 +174,9 @@ async fn legacy_issuer_is_filtered_out(pool: PgPool) {
     let legacy = Issuer {
         did: "did:tdw:example.com:legacy".into(),
         state: None,
-        ..common::issuers::active(&tenant_id)
+        ..swiyu_issuer::test_support::persistence::issuers::active(&tenant_id)
     };
-    common::issuers::insert(&pool, &legacy).await;
+    swiyu_issuer::test_support::persistence::issuers::insert(&pool, &legacy).await;
 
     let app = router(build_state(pool));
     let response = app

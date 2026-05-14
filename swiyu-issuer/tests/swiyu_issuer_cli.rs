@@ -3,12 +3,11 @@
 //! Exercises the function the `swiyu-issuer-cli` binary forwards to,
 //! against a freshly created Postgres database created by `sqlx::test`.
 
-#[path = "common/mod.rs"]
-mod common;
-use common::fixtures::SAMPLE_PARTNER_ID;
-
 use secrecy::SecretString;
 use sqlx::PgPool;
+use swiyu_issuer::test_support::fixtures::SAMPLE_PARTNER_ID;
+use swiyu_issuer::test_support::oauth;
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
 use uuid::Uuid;
 
 use swiyu_issuer::cli::tenant::{
@@ -23,8 +22,7 @@ use swiyu_issuer::domain::{
 use swiyu_issuer::persistence::tenant_secret_keys::oauth2_client_secret_key_name;
 use swiyu_issuer::persistence::tenants;
 
-use common::oauth::read_refresh_token;
-use common::tenants::insert_test_tenant;
+use oauth::read_refresh_token;
 
 async fn read_client_credentials(
     pool: &PgPool,
@@ -84,7 +82,7 @@ async fn write_client_credentials_directly(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn import_writes_refresh_token_for_existing_tenant(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
@@ -109,7 +107,7 @@ async fn import_writes_refresh_token_for_existing_tenant(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn import_returns_tenant_not_found_for_unknown_tenant(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
 
     let err = import_oauth_refresh_token(
@@ -132,7 +130,7 @@ async fn import_returns_tenant_not_found_for_unknown_tenant(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn import_overwrites_previous_refresh_token(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
@@ -167,7 +165,7 @@ async fn import_overwrites_previous_refresh_token(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn import_skip_when_only_if_empty_and_already_set(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
@@ -202,7 +200,7 @@ async fn import_skip_when_only_if_empty_and_already_set(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn import_writes_when_only_if_empty_and_column_null(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
@@ -227,7 +225,7 @@ async fn import_writes_when_only_if_empty_and_column_null(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn set_oauth_credentials_writes_both_columns(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
@@ -250,7 +248,7 @@ async fn set_oauth_credentials_writes_both_columns(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn set_oauth_credentials_persists_ciphertext_not_plaintext(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
@@ -289,7 +287,7 @@ async fn set_oauth_credentials_persists_ciphertext_not_plaintext(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn set_oauth_credentials_skip_when_only_if_empty_and_both_set(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     write_client_credentials_directly(&pool, &tenant_id, &engine, "original-id", "original-secret")
@@ -314,7 +312,7 @@ async fn set_oauth_credentials_skip_when_only_if_empty_and_both_set(pool: PgPool
 
 #[sqlx::test(migrations = "./migrations")]
 async fn set_oauth_credentials_writes_when_only_if_empty_and_columns_null(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
 
@@ -337,7 +335,7 @@ async fn set_oauth_credentials_writes_when_only_if_empty_and_columns_null(pool: 
 
 #[sqlx::test(migrations = "./migrations")]
 async fn set_oauth_credentials_overwrites_unconditionally_without_flag(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
     insert_test_tenant(&pool, &tenant_id).await;
     write_client_credentials_directly(&pool, &tenant_id, &engine, "old-id", "old-secret").await;
@@ -361,7 +359,7 @@ async fn set_oauth_credentials_overwrites_unconditionally_without_flag(pool: PgP
 
 #[sqlx::test(migrations = "./migrations")]
 async fn set_oauth_credentials_returns_tenant_not_found_for_unknown_tenant(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let tenant_id = TenantId::generate();
 
     let err = set_oauth_credentials(
@@ -487,7 +485,7 @@ fn bootstrap_args_full(partner_id: Uuid) -> BootstrapDevTenantArgs {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn bootstrap_dev_from_env_creates_missing_tenant(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     let tenant_id = bootstrap_dev_from_env(&pool, bootstrap_args_full(partner_id), false, &engine)
@@ -518,7 +516,7 @@ async fn bootstrap_dev_from_env_creates_missing_tenant(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn bootstrap_dev_from_env_without_force_preserves_existing_oauth(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     // First call: missing -> create with one set of oauth values.
@@ -570,7 +568,7 @@ async fn bootstrap_dev_from_env_without_force_preserves_existing_oauth(pool: PgP
 
 #[sqlx::test(migrations = "./migrations")]
 async fn bootstrap_dev_from_env_with_force_syncs_row_from_env(pool: PgPool) {
-    let engine = common::oauth::test_engine();
+    let engine = oauth::test_engine();
     let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
 
     bootstrap_dev_from_env(

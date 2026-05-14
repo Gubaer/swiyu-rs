@@ -12,15 +12,14 @@ use sqlx::PgPool;
 use swiyu_issuer::domain::{IssuerId, OperationTask, TaskId, TaskState, TaskType, TenantId};
 use swiyu_issuer::persistence::{PersistenceError, operation_tasks};
 
-#[path = "common/mod.rs"]
-mod common;
-use common::tenants::insert_test_tenant;
-use common::time::now_micros;
+use swiyu_issuer::test_support::persistence::operation_tasks as test_operation_tasks;
+use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
+use swiyu_issuer::test_support::time::now_micros;
 
 fn fixture_task(tenant_id: TenantId) -> OperationTask {
     OperationTask {
         input: json!({"display_name": "Test Issuer"}),
-        ..common::operation_tasks::pending(&tenant_id, TaskType::CreateIssuer)
+        ..test_operation_tasks::pending(&tenant_id, TaskType::CreateIssuer)
     }
 }
 
