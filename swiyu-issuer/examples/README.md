@@ -45,7 +45,8 @@ The smokes do not call the registries directly; they observe the management API 
 
 ```
 # In one terminal:
-docker compose up postgres swiyu-issuer-mgmtapi swiyu-issuer-oidcapi
+cd swiyu-issuer
+docker compose up -d
 
 # In another terminal, with the workspace .env loaded (e.g. via direnv):
 cargo run --example issuer_lifecycle_smoke
