@@ -158,10 +158,10 @@ mod tests {
 
     use swiyu_core::didlog::{DIDLogEntry, LogEntryFormat};
 
-    use crate::domain::{KeyAlgorithm, RawPublicKey};
     use crate::test_support::domain::signing_engine::{
-        GetPublicKeyCall, MockSigningEngine, SignCall, fixture_p256_pk, fixture_signature,
+        GetPublicKeyCall, MockSigningEngine, fixture_p256_pk,
     };
+    use crate::test_support::worker::rotate_keys::{engine_for_happy_path, fixture_ed25519_pk};
     use crate::test_support::worker::{
         FIXTURE_DID_REGISTRY_UUID, FetchLogCall, MockRegistry, PublishCall, fixture_did,
         fixture_issuer, fixture_now, fixture_p256, fixture_rotated_triple, fixture_tenant,
@@ -177,23 +177,6 @@ mod tests {
 
     fn fixture_genesis_entry() -> DIDLogEntry {
         crate::test_support::worker::fixture_genesis_entry("z6Mk-old-authorized")
-    }
-
-    fn fixture_ed25519_pk(seed: u8) -> RawPublicKey {
-        RawPublicKey {
-            algorithm: KeyAlgorithm::Ed25519,
-            bytes: vec![seed; 32],
-        }
-    }
-
-    fn engine_for_happy_path() -> MockSigningEngine {
-        let engine = MockSigningEngine::new();
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk(0xAA))); // new authorized
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk())); // new authentication
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_p256_pk())); // new assertion
-        engine.enqueue_public_key(GetPublicKeyCall::Ok(fixture_ed25519_pk(0x11))); // outgoing authorized
-        engine.enqueue_sign(SignCall::Ok(fixture_signature()));
-        engine
     }
 
     #[tokio::test]
