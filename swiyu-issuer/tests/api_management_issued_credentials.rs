@@ -9,88 +9,19 @@
 //! (lifecycle column, status-list bitstring slot, committed_version).
 
 use axum::http::StatusCode;
-use chrono::{Duration, Utc};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 use swiyu_issuer::api_management::router;
 use swiyu_issuer::domain::{
-    BITSTRING_BYTES, CredentialOffer, INTEGRITY_HASH_LEN, IssuedCredential, IssuedCredentialState,
-    Issuer, PreAuthCode, StatusListId, StatusListIndex, StatusValue, TenantId,
+    BITSTRING_BYTES, IssuedCredential, IssuedCredentialState, StatusListId, StatusValue, TenantId,
 };
-use swiyu_issuer::persistence;
 
 use swiyu_issuer::test_support::api::tokens::mint_test_token;
 use swiyu_issuer::test_support::api::{authenticated_app_state, build_state};
-use swiyu_issuer::test_support::fixtures::SAMPLE_HOLDER_KEY_JKT;
 use swiyu_issuer::test_support::http::{post_request_empty, read_body};
+use swiyu_issuer::test_support::persistence::issued_credentials::CredentialSeed;
 use swiyu_issuer::test_support::persistence::tenants::insert_test_tenant;
-
-async fn seed_offer(pool: &PgPool, issuer: &Issuer) -> CredentialOffer {
-    let offer = CredentialOffer::new(
-        issuer.tenant_id.clone(),
-        issuer.id.clone(),
-        "vc-test".into(),
-        serde_json::json!({}),
-        PreAuthCode::generate(),
-        Utc::now() + Duration::minutes(5),
-    );
-    swiyu_issuer::test_support::persistence::credential_offers::insert(pool, &offer).await;
-    offer
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn seed_credential(
-    pool: &PgPool,
-    issuer: &Issuer,
-    list_id: &StatusListId,
-    list_index: u32,
-    initial_state: IssuedCredentialState,
-    initial_bit: StatusValue,
-) -> IssuedCredential {
-    let offer = seed_offer(pool, issuer).await;
-    let now = Utc::now();
-    let credential = IssuedCredential::new(
-        issuer.tenant_id.clone(),
-        issuer.id.clone(),
-        offer.id,
-        "vc-test".into(),
-        SAMPLE_HOLDER_KEY_JKT.into(),
-        list_id.clone(),
-        StatusListIndex::try_from(list_index).unwrap(),
-        [0u8; INTEGRITY_HASH_LEN],
-        now,
-        now + Duration::days(365),
-    );
-    let mut conn = pool.acquire().await.unwrap();
-    persistence::issued_credentials::insert(&mut conn, &credential)
-        .await
-        .unwrap();
-    if initial_state != IssuedCredentialState::Active {
-        persistence::issued_credentials::set_state(
-            &mut conn,
-            &credential.tenant_id,
-            &credential.id,
-            initial_state,
-        )
-        .await
-        .unwrap();
-    }
-    if initial_bit != StatusValue::Valid {
-        persistence::status_lists::write_bit(
-            &mut conn,
-            list_id,
-            credential.status_list_index,
-            initial_bit,
-        )
-        .await
-        .unwrap();
-    }
-    IssuedCredential {
-        state: initial_state,
-        ..credential
-    }
-}
 
 async fn fetch_state(pool: &PgPool, credential: &IssuedCredential) -> String {
     sqlx::query_scalar("SELECT state FROM issued_credentials WHERE id = $1")
@@ -137,15 +68,9 @@ async fn suspend_active_flips_state_and_status_bit(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer,
-        &list_id,
-        0,
-        IssuedCredentialState::Active,
-        StatusValue::Valid,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer, &list_id, 0)
+        .insert()
+        .await;
     let baseline_version = fetch_committed_version(&pool, &list_id).await;
 
     let app = router(state);
@@ -180,15 +105,11 @@ async fn unsuspend_restores_active_and_clears_status_bit(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer,
-        &list_id,
-        0,
-        IssuedCredentialState::Suspended,
-        StatusValue::Suspended,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer, &list_id, 0)
+        .state(IssuedCredentialState::Suspended)
+        .status_bit(StatusValue::Suspended)
+        .insert()
+        .await;
 
     let app = router(state);
     let response = app
@@ -216,15 +137,9 @@ async fn revoke_active_flips_state_and_status_bit(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer,
-        &list_id,
-        0,
-        IssuedCredentialState::Active,
-        StatusValue::Valid,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer, &list_id, 0)
+        .insert()
+        .await;
 
     let app = router(state);
     let response = app
@@ -252,15 +167,11 @@ async fn revoke_suspended_succeeds(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer,
-        &list_id,
-        0,
-        IssuedCredentialState::Suspended,
-        StatusValue::Suspended,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer, &list_id, 0)
+        .state(IssuedCredentialState::Suspended)
+        .status_bit(StatusValue::Suspended)
+        .insert()
+        .await;
 
     let app = router(state);
     let response = app
@@ -281,15 +192,11 @@ async fn suspend_already_suspended_returns_409(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer,
-        &list_id,
-        0,
-        IssuedCredentialState::Suspended,
-        StatusValue::Suspended,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer, &list_id, 0)
+        .state(IssuedCredentialState::Suspended)
+        .status_bit(StatusValue::Suspended)
+        .insert()
+        .await;
 
     let app = router(state);
     let response = app
@@ -313,15 +220,9 @@ async fn unsuspend_active_returns_409(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer,
-        &list_id,
-        0,
-        IssuedCredentialState::Active,
-        StatusValue::Valid,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer, &list_id, 0)
+        .insert()
+        .await;
 
     let app = router(state);
     let response = app
@@ -341,15 +242,11 @@ async fn revoke_already_revoked_returns_409(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer,
-        &list_id,
-        0,
-        IssuedCredentialState::Revoked,
-        StatusValue::Revoked,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer, &list_id, 0)
+        .state(IssuedCredentialState::Revoked)
+        .status_bit(StatusValue::Revoked)
+        .insert()
+        .await;
 
     let app = router(state);
     let response = app
@@ -372,15 +269,9 @@ async fn lifecycle_op_against_other_tenant_returns_404(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_a).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer,
-        &list_id,
-        0,
-        IssuedCredentialState::Active,
-        StatusValue::Valid,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer, &list_id, 0)
+        .insert()
+        .await;
 
     let tenant_b = TenantId::generate();
     insert_test_tenant(&pool, &tenant_b).await;
@@ -434,15 +325,9 @@ async fn lifecycle_op_with_wrong_issuer_returns_404(pool: PgPool) {
         swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
     let list_id =
         swiyu_issuer::test_support::persistence::status_lists::provision(&pool, &issuer_a.id).await;
-    let credential = seed_credential(
-        &pool,
-        &issuer_a,
-        &list_id,
-        0,
-        IssuedCredentialState::Active,
-        StatusValue::Valid,
-    )
-    .await;
+    let credential = CredentialSeed::new(&pool, &issuer_a, &list_id, 0)
+        .insert()
+        .await;
 
     let app = router(state);
     let response = app
