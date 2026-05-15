@@ -56,5 +56,4 @@ RUN mkdir -p /home/claude/.runtime && chown claude:claude /home/claude/.runtime
 RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN echo 'export PATH="/home/claude/.local/bin:$PATH"' >> /home/claude/.bashrc
 RUN echo "alias claude-dangerous='claude --dangerously-skip-permissions'" >> /home/claude/.bashrc
-RUN echo "alias gemini-dangerous='NO_BROWSER=true gemini --approval-mode=yolo'" >> /home/claude/.bashrc
 RUN echo 'eval "$(direnv hook bash)"' >> /home/claude/.bashrc
