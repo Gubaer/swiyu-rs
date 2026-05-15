@@ -58,12 +58,26 @@ COPY --from=builder /app/target/release/swiyu-issuer-mgmtapi /usr/local/bin/swiy
 USER issuer
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/swiyu-issuer-mgmtapi"]
+LABEL org.opencontainers.image.title="swiyu-issuer-mgmtapi" \
+      org.opencontainers.image.description="SWIYU issuer — management API" \
+      org.opencontainers.image.source="https://github.com/gubaer/swiyu-rs" \
+      org.opencontainers.image.url="https://github.com/gubaer/swiyu-rs" \
+      org.opencontainers.image.documentation="https://github.com/gubaer/swiyu-rs/tree/master/swiyu-issuer" \
+      org.opencontainers.image.vendor="Gubaer" \
+      org.opencontainers.image.licenses="MIT"
 
 FROM runtime-base AS runtime-oidcapi
 COPY --from=builder /app/target/release/swiyu-issuer-oidcapi /usr/local/bin/swiyu-issuer-oidcapi
 USER issuer
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/swiyu-issuer-oidcapi"]
+LABEL org.opencontainers.image.title="swiyu-issuer-oidcapi" \
+      org.opencontainers.image.description="SWIYU issuer — OIDC4VCI API" \
+      org.opencontainers.image.source="https://github.com/gubaer/swiyu-rs" \
+      org.opencontainers.image.url="https://github.com/gubaer/swiyu-rs" \
+      org.opencontainers.image.documentation="https://github.com/gubaer/swiyu-rs/tree/master/swiyu-issuer" \
+      org.opencontainers.image.vendor="Gubaer" \
+      org.opencontainers.image.licenses="MIT"
 
 # Operator/dev-loop CLI. Used by the bootstrap-dev-tenant compose
 # service to seed the dev tenant's oauth_refresh_token from .env on
@@ -74,3 +88,10 @@ FROM runtime-base AS runtime-cli
 COPY --from=builder /app/target/release/swiyu-issuer-cli /usr/local/bin/swiyu-issuer-cli
 USER issuer
 ENTRYPOINT ["/usr/local/bin/swiyu-issuer-cli"]
+LABEL org.opencontainers.image.title="swiyu-issuer-cli" \
+      org.opencontainers.image.description="SWIYU issuer — operator CLI" \
+      org.opencontainers.image.source="https://github.com/gubaer/swiyu-rs" \
+      org.opencontainers.image.url="https://github.com/gubaer/swiyu-rs" \
+      org.opencontainers.image.documentation="https://github.com/gubaer/swiyu-rs/tree/master/swiyu-issuer" \
+      org.opencontainers.image.vendor="Gubaer" \
+      org.opencontainers.image.licenses="MIT"

@@ -1,44 +1,14 @@
-# Local PostgreSQL, HashiCorp Vault, swiyu-issuer-mgmtapi, and
-# swiyu-issuer-oidcapi for swiyu-issuer development.
+# swiyu-issuer explorer stack — pulls published images from GHCR.
 #
-# Usage (run from this directory, swiyu-issuer/):
-#   docker compose up -d            # builds + starts everything
+# Goal: no clone, no cargo, no build — just `docker compose up -d`.
 #
-# Or from the workspace root:
-#   docker compose -f swiyu-issuer/docker-compose.yml up -d
+# GENERATED FILE. Do not edit by hand. The source of truth is
+# swiyu-issuer/docker-compose.yml; regenerate with
+#   python3 swiyu-issuer/deploy/explorer/gen-compose.py
+# CI runs `gen-compose.py --check` to block drift.
 #
-# `docker compose build <service>` rebuilds a single binary image.
-# `docker compose up -d --build <service>` rebuilds and restarts it.
-# Each service builds its own runtime stage from the same Dockerfile
-# (`runtime-mgmtapi`, `runtime-oidcapi`); the cargo-chef cook layer is
-# shared between the two so the second build is incremental.
-#
-# Compose auto-loads .env from this directory. The defaults below
-# (after the :- in each ${VAR:-default}) match those documented in
-# .env.example, so `docker compose up -d` works without a .env file.
-# A developer's .env overrides them; if you change a credential
-# there you must keep DATABASE_URL in .env consistent with the
-# four POSTGRES_* values, since the binary reads the URL directly.
-#
-# The Postgres host port defaults to 5433 (not the default 5432) so
-# a Postgres install already running on the host does not clash
-# with this dev container. Vault uses 8200 (its standard port).
-#
-# Vault runs in dev mode: in-memory storage, already unsealed, a
-# single fixed root token. State is wiped on every container
-# restart. This is for local development and integration tests
-# only — production must use a real Vault deployment with sealed
-# storage and proper auth. The vault-init service enables the
-# Transit secrets engine once Vault is healthy so callers can
-# create keys and sign immediately.
-#
-# Migrations are NOT applied by this compose file. The swiyu-issuer
-# binary runs them at startup via persistence::run_migrations, so
-# the same code path applies in dev and in production.
-#
-# To wipe the database (drops the volume) and reset Vault state:
-#   docker compose down -v
-
+# IMAGE_TAG defaults to the floating `swiyu-beta`. Pin to a release by
+# setting e.g. IMAGE_TAG=0.1.12-swiyu-beta in .env.
 name: swiyu-issuer
 
 services:
@@ -122,10 +92,7 @@ services:
   # service_completed_successfully so the seed lands before any
   # OAuth2 grant is attempted.
   bootstrap-dev-tenant:
-    build:
-      context: ..
-      dockerfile: swiyu-issuer/Dockerfile
-      target: runtime-cli
+    image: ghcr.io/gubaer/swiyu-issuer-cli:${IMAGE_TAG:-swiyu-beta}
     container_name: swiyu-issuer-bootstrap-dev-tenant
     depends_on:
       postgres:
@@ -194,11 +161,7 @@ services:
   # because the host-side values in .env (localhost:5433,
   # localhost:8200) do not resolve inside the compose network.
   swiyu-issuer-mgmtapi:
-    image: swiyu-issuer-mgmtapi
-    build:
-      context: ..
-      dockerfile: swiyu-issuer/Dockerfile
-      target: runtime-mgmtapi
+    image: ghcr.io/gubaer/swiyu-issuer-mgmtapi:${IMAGE_TAG:-swiyu-beta}
     container_name: swiyu-issuer-mgmtapi
     depends_on:
       postgres:
@@ -249,11 +212,7 @@ services:
   # dev; in production a reverse proxy in front of the two presents a
   # single ISSUER_BASE_URL.
   swiyu-issuer-oidcapi:
-    image: swiyu-issuer-oidcapi
-    build:
-      context: ..
-      dockerfile: swiyu-issuer/Dockerfile
-      target: runtime-oidcapi
+    image: ghcr.io/gubaer/swiyu-issuer-oidcapi:${IMAGE_TAG:-swiyu-beta}
     container_name: swiyu-issuer-oidcapi
     depends_on:
       postgres:
@@ -292,13 +251,7 @@ services:
   # run` still resolves `depends_on` so postgres and vault are up
   # before the CLI connects.
   swiyu-issuer-cli:
-    image: swiyu-issuer-cli
-    build:
-      context: ..
-      dockerfile: swiyu-issuer/Dockerfile
-      target: runtime-cli
-    profiles:
-      - tools
+    image: ghcr.io/gubaer/swiyu-issuer-cli:${IMAGE_TAG:-swiyu-beta}
     depends_on:
       postgres:
         condition: service_healthy
