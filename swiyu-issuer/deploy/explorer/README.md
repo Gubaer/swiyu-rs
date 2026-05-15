@@ -61,8 +61,8 @@ proxy terminating TLS, and scoped auth tokens.
 Grab the two files into an empty directory:
 
 ```sh
-curl -O https://raw.githubusercontent.com/gubaer/swiyu-rs/master/swiyu-issuer/deploy/explorer/docker-compose.yml
-curl -O https://raw.githubusercontent.com/gubaer/swiyu-rs/master/swiyu-issuer/deploy/explorer/.env.example
+curl -O https://raw.githubusercontent.com/Gubaer/swiyu-rs/master/swiyu-issuer/deploy/explorer/docker-compose.yml
+curl -O https://raw.githubusercontent.com/Gubaer/swiyu-rs/master/swiyu-issuer/deploy/explorer/.env.example
 ```
 
 By default the compose file pulls the floating `:swiyu-beta` tag. To

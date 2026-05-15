@@ -95,9 +95,9 @@ Every published image carries OCI image metadata (`org.opencontainers.image.*`).
 |---|---|
 | `org.opencontainers.image.title` | `swiyu-issuer-mgmtapi`, `swiyu-issuer-oidcapi`, `swiyu-issuer-cli` (per stage) |
 | `org.opencontainers.image.description` | one-line per stage (e.g. "SWIYU issuer — management API") |
-| `org.opencontainers.image.source` | `https://github.com/gubaer/swiyu-rs` |
-| `org.opencontainers.image.url` | `https://github.com/gubaer/swiyu-rs` |
-| `org.opencontainers.image.documentation` | `https://github.com/gubaer/swiyu-rs/tree/master/swiyu-issuer` |
+| `org.opencontainers.image.source` | `https://github.com/Gubaer/swiyu-rs` |
+| `org.opencontainers.image.url` | `https://github.com/Gubaer/swiyu-rs` |
+| `org.opencontainers.image.documentation` | `https://github.com/Gubaer/swiyu-rs/tree/master/swiyu-issuer` |
 | `org.opencontainers.image.vendor` | `Gubaer` |
 | `org.opencontainers.image.licenses` | SPDX expression matching `LICENSE` (currently `MIT`) |
 
