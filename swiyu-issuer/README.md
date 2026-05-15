@@ -6,6 +6,8 @@ the Swiss eID infrastructure. Issues verifiable credentials over
 the lifecycle of issuers (create, rotate keys, deactivate) against the SWIYU
 Identifier Registry.
 
+![swiyu-issuer overview](./swiyu-issuer.svg)
+
 Part of the [`swiyu-rs`](../README.md) workspace.
 
 ## Status
