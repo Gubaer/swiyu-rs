@@ -21,10 +21,11 @@ Companion to [topic-docker-images.md](topic-docker-images.md). Scope: bring `swi
    - `ghcr.io/<owner>/swiyu-issuer-mgmtapi`
    - `ghcr.io/<owner>/swiyu-issuer-oidcapi`
    - `ghcr.io/<owner>/swiyu-issuer-cli`
-2. **Standalone compose file** `swiyu-issuer/deploy/explorer/docker-compose.yml` that pulls those images (no `build:` keys).
+2. **Standalone compose file** `swiyu-issuer/deploy/explorer/docker-compose.yml` that pulls those images (no `build:` keys). **Generated** from `swiyu-issuer/docker-compose.yml` by deliverable 6 and committed; the dev compose is the single source of truth.
 3. **Standalone env template** `swiyu-issuer/deploy/explorer/.env.example` tuned for the explorer flow.
 4. **README** `swiyu-issuer/deploy/explorer/README.md` with the onboarding walk-through.
 5. **Bash script** `swiyu-issuer/deploy/explorer/publish-images.sh` that builds and pushes the three images to GHCR from a developer's machine. A GitHub Actions workflow for the same job is **deferred** to a later iteration.
+6. **Compose generator** `swiyu-issuer/deploy/explorer/gen-compose.py` — Python (using `ruamel.yaml` for comment-preserving round-trip) that produces `docker-compose.yml` from `swiyu-issuer/docker-compose.yml` by applying the transformation rules in the "Standalone compose file" section. Supports a `--check` mode that diffs the committed output against what the generator would emit and exits non-zero if stale, so drift is catchable in CI.
 
 ## File layout
 
@@ -32,14 +33,15 @@ Companion to [topic-docker-images.md](topic-docker-images.md). Scope: bring `swi
 swiyu-issuer/
 ├── deploy/
 │   └── explorer/
-│       ├── docker-compose.yml      # pulls from ghcr.io, no build context
+│       ├── docker-compose.yml      # GENERATED from swiyu-issuer/docker-compose.yml, committed
+│       ├── gen-compose.py          # regenerator (Python + ruamel.yaml); source of truth for the file above
 │       ├── .env.example            # subset of swiyu-issuer/.env.example, retuned
 │       ├── publish-images.sh       # build + push to GHCR (manual, dev machine)
 │       └── README.md               # walk-through (see below)
 └── …
 ```
 
-The developer-facing `swiyu-issuer/docker-compose.yml` and `swiyu-issuer/Dockerfile` are unchanged. No `.github/workflows/` changes in this iteration.
+The developer-facing `swiyu-issuer/docker-compose.yml` is unchanged. `swiyu-issuer/Dockerfile` gets `LABEL org.opencontainers.image.*` blocks added per runtime stage (see "Image labels" below) — additive, no runtime effect, no impact on the developer flow. No `.github/workflows/` changes in this iteration.
 
 ## Image publishing — `swiyu-issuer/deploy/explorer/publish-images.sh`
 
@@ -83,20 +85,56 @@ Platform coverage of the published image — decided:
 
 The script defaults to `linux/amd64` so the first release ships fast. `linux/arm64` can be added later by setting `PLATFORMS=linux/amd64,linux/arm64`. The explorer README acknowledges the emulation behaviour up front so an Apple Silicon user is not surprised by slower container startup.
 
+## Image labels
+
+Every published image carries OCI image metadata (`org.opencontainers.image.*`). The load-bearing label is `source`: GHCR uses it to auto-link the published package to this repo (README rendering on the package page, inherited visibility, "Repository" link in the package settings). Without it the package looks orphaned. The remaining labels make `docker inspect` and scanner output (Trivy, Grype, Renovate, the GHCR UI) meaningful. Same pattern `swiyu-didtool/Dockerfile` already uses on `master`, extended to three stages and rounded out with a few more fields.
+
+**Static labels** — set as `LABEL` directives in `swiyu-issuer/Dockerfile`, one block per runtime stage:
+
+| Label | Value |
+|---|---|
+| `org.opencontainers.image.title` | `swiyu-issuer-mgmtapi`, `swiyu-issuer-oidcapi`, `swiyu-issuer-cli` (per stage) |
+| `org.opencontainers.image.description` | one-line per stage (e.g. "SWIYU issuer — management API") |
+| `org.opencontainers.image.source` | `https://github.com/gubaer/swiyu-rs` |
+| `org.opencontainers.image.url` | `https://github.com/gubaer/swiyu-rs` |
+| `org.opencontainers.image.documentation` | `https://github.com/gubaer/swiyu-rs/tree/master/swiyu-issuer` |
+| `org.opencontainers.image.vendor` | `Gubaer` |
+| `org.opencontainers.image.licenses` | SPDX expression matching `LICENSE` (currently `MIT`) |
+
+`LABEL` directives have no runtime effect and do not change the image's executable contents — this is the only change the plan makes to `swiyu-issuer/Dockerfile`, and the developer flow (`docker compose up -d --build` from `swiyu-issuer/`) is unaffected.
+
+**Dynamic labels** — passed via `--label` from `publish-images.sh` so they describe the build, not the source tree:
+
+| Label | Source |
+|---|---|
+| `org.opencontainers.image.version` | `${VERSION}` (already grepped from `swiyu-issuer/Cargo.toml`) |
+| `org.opencontainers.image.revision` | `git rev-parse HEAD` |
+| `org.opencontainers.image.created` | `date -u +%Y-%m-%dT%H:%M:%SZ` (RFC 3339, UTC) |
+
+New script preconditions: `git` and `date` available on `PATH`. The `date -u +%Y-%m-%dT%H:%M:%SZ` format string works on GNU coreutils (Linux/WSL) and BSD `date` (macOS) identically. If `git rev-parse HEAD` fails (script run outside a checkout), the script aborts before any build so no label-less image is ever published.
+
+`buildx` propagates `--label` to every platform manifest, so multi-arch builds keep their metadata intact. A dev who runs `docker compose up -d --build` from `swiyu-issuer/` gets the static labels (from the Dockerfile) but no version/revision/created — expected, since the dev image is not being published.
+
 ## Standalone compose file — `swiyu-issuer/deploy/explorer/docker-compose.yml`
 
-Differences from `swiyu-issuer/docker-compose.yml`:
+The explorer compose is **generated** from `swiyu-issuer/docker-compose.yml` by `swiyu-issuer/deploy/explorer/gen-compose.py` and committed. The dev compose is the single source of truth; the explorer copy is regenerated whenever the dev compose changes. `gen-compose.py --check` re-runs the transform and exits non-zero (with a diff on stdout) when the committed output is stale, so drift is impossible to merge without noticing.
 
-- Each app service uses `image: ghcr.io/<owner>/swiyu-issuer-<name>:${IMAGE_TAG:-swiyu-beta}` and **drops the `build:` key entirely**. The default falls back to the floating `swiyu-beta` tag, matching the master didtool convention.
-- `bootstrap-dev-tenant` likewise pulls `ghcr.io/<owner>/swiyu-issuer-cli:${IMAGE_TAG:-swiyu-beta}`; the inline shell that runs the two-phase CLI seed is identical.
-- Same Postgres + Vault + vault-init services, same healthchecks, same env-var fallbacks.
-- Header comment is rewritten for the explorer audience: "no clone, no cargo, no build — just `docker compose up -d`."
-- `name:` stays `swiyu-issuer` so a developer who later clones the repo doesn't end up with two parallel project namespaces.
+Transformation rules the generator applies:
 
-That's a near copy of the developer compose with `build:` removed. Worth keeping two files (rather than overlay/profiles) because:
+- For each app service (`swiyu-issuer-mgmtapi`, `swiyu-issuer-oidcapi`, `swiyu-issuer-cli`): delete the `build:` block, insert `image: ghcr.io/gubaer/swiyu-issuer-<name>:${IMAGE_TAG:-swiyu-beta}`.
+- `bootstrap-dev-tenant`: same swap, against `swiyu-issuer-cli`. The inline shell that runs the two-phase CLI seed is passed through unchanged.
+- Replace the top header comment with the explorer-audience version ("no clone, no cargo, no build — just `docker compose up -d`.").
+- Everything else passes through verbatim: Postgres + Vault + vault-init services, healthchecks, env-var fallbacks, `name: swiyu-issuer` (so a developer who later clones the repo doesn't end up with two parallel project namespaces).
 
-- The developer file is read top-to-bottom by contributors — adding `image:` lines they'll never use is noise.
-- An overlay model means the explorer must download two compose files and remember the `-f a.yml -f b.yml` invocation; the whole point is "one file, one command."
+Tooling choice: **Python + `ruamel.yaml`**. `ruamel.yaml` round-trips YAML while preserving comments, key order, and quoting style — important because the generated file is committed and reviewers read it as a normal compose file, not a generator artefact. PyYAML would lose comments; `yq` (Mike Farah's Go version) preserves most formatting but mangles multi-line shell heredocs in `bootstrap-dev-tenant`. The generator is small (~30–50 lines).
+
+Why generate rather than maintain two copies or use Compose overlays:
+
+- **Drift-proof**: the dev compose is the only file humans edit. `gen-compose.py --check` is the pre-commit / CI guardrail.
+- **One file, one curl for explorers**: the generated compose is a standalone file with no `-f overlay.yml` required.
+- **Reviewable**: the generated file is committed, so reviewers see the YAML diff in PRs, not the generator output as a black box.
+
+When the dev compose changes, the workflow is: edit `swiyu-issuer/docker-compose.yml`, run `gen-compose.py`, commit both files in the same PR. CI runs `gen-compose.py --check` and blocks the merge if they're out of sync.
 
 ## Standalone env template — `swiyu-issuer/deploy/explorer/.env.example`
 
@@ -130,19 +168,49 @@ Five short sections:
 
 A short **Troubleshooting** appendix at the end: refresh-token rotation (`docker compose run --rm swiyu-issuer-cli tenant import-oauth-refresh-token --tenant <id> --token-stdin`), wiping state (`docker compose down -v`), and where logs live.
 
+## Implementation steps
+
+Linear sequence. Each step lands one artifact or one operational change; the next step does not begin until the previous one is in shape to merge. Preconditions already satisfied on `master`: `swiyu-issuer/Dockerfile` exposes the three runtime stages (`runtime-mgmtapi`, `runtime-oidcapi`, `runtime-cli`) the publish script targets, and `swiyu-didtool/build-image.sh` is the reference implementation for the script's shape.
+
+1. **Scaffold the deploy directory.** Create `swiyu-issuer/deploy/explorer/`. No files yet — this keeps the path stable so subsequent commits can each land one artifact.
+
+2. **Author `publish-images.sh`.** Start from a literal copy of `swiyu-didtool/build-image.sh` and apply the extensions documented under "Image publishing" above: switch `docker build` → `docker buildx build`; loop over the three `--target` stages (`runtime-mgmtapi`, `runtime-oidcapi`, `runtime-cli`); read `VERSION` from `swiyu-issuer/Cargo.toml`; apply per-image tags `swiyu-issuer-<name>:swiyu-beta` and `swiyu-issuer-<name>:${VERSION}-swiyu-beta`; honour `PLATFORMS` (default `linux/amd64`) and `REGISTRY` (default `ghcr.io/gubaer`); preserve the `--push` flag and the `REPO_ROOT` cd-from-script-location pattern; add `--cache-from`/`--cache-to type=registry,ref=${REGISTRY}/swiyu-issuer-<name>:buildcache,mode=max`. Mark executable (`chmod +x`). Confirm `shellcheck` is clean and a no-push dry run produces all three images locally before committing.
+
+3. **Add OCI image labels.** Add a `LABEL org.opencontainers.image.*` block to each of the three runtime stages in `swiyu-issuer/Dockerfile` per the "Image labels" section above (static labels). Extend `publish-images.sh` to pass the three dynamic labels (`version`, `revision`, `created`) via `--label` on every `docker buildx build` invocation, sourcing values from `${VERSION}`, `git rev-parse HEAD`, and `date -u +%Y-%m-%dT%H:%M:%SZ` respectively; fail fast (`set -euo pipefail` already covers this) if `git` cannot resolve `HEAD`. After a no-push dry run, verify with `docker buildx imagetools inspect <local-tag>` (or `docker inspect <local-tag> --format '{{json .Config.Labels}}'`) that all expected labels are populated on each of the three images.
+
+4. **Author `gen-compose.py` and run it to produce `docker-compose.yml`.** Write `swiyu-issuer/deploy/explorer/gen-compose.py` (Python + `ruamel.yaml`) implementing the transformation rules in the "Standalone compose file" section: drop `build:` on each app service, insert `image: ghcr.io/gubaer/swiyu-issuer-<name>:${IMAGE_TAG:-swiyu-beta}`, do the same for `bootstrap-dev-tenant`, swap the header comment. Add a `--check` mode that re-runs the transform against the dev compose and exits non-zero (with a unified diff on stdout) if the committed output is stale — this is the drift guard. Run the generator once to produce `swiyu-issuer/deploy/explorer/docker-compose.yml`; commit both `gen-compose.py` and the produced file. Validate the result with `docker compose -f swiyu-issuer/deploy/explorer/docker-compose.yml config -q`.
+
+5. **Author `.env.example`.** Copy `swiyu-issuer/.env.example` and trim it per the sections-to-keep / sections-to-drop lists above. Rewrite each `cargo run` comment as the equivalent `docker compose run --rm` invocation. Append `IMAGE_TAG=swiyu-beta` with a short note explaining how to pin to `<version>-swiyu-beta`. Header comment marks the file as explorer-targeted and points contributors at `swiyu-issuer/.env.example` instead.
+
+6. **Author `README.md`.** Five sections per the "Explorer README" outline above (prerequisites, download, ePortal onboarding, fill `.env`, run), plus the troubleshooting appendix. Lift the ePortal walkthrough from `swiyu-issuer/.env.example` lines 169–232 and paraphrase for a first-time reader.
+
+7. **First push to GHCR under `Gubaer`.** Log in once with `docker login ghcr.io` using a PAT scoped to `write:packages`; run `./swiyu-issuer/deploy/explorer/publish-images.sh --push`. Verify the three packages appear on GHCR with both `:swiyu-beta` and `:<version>-swiyu-beta` and that no `:latest` was created.
+
+8. **Set GHCR package visibility to public.** For each of `swiyu-issuer-mgmtapi`, `swiyu-issuer-oidcapi`, `swiyu-issuer-cli`, flip the package visibility to public so an explorer's `docker compose pull` works without a `docker login` step. Confirm each package's "Repository" link on GHCR now points back at `gubaer/swiyu-rs` (proves the `source` label took effect).
+
+9. **Run validation.** Walk the checklist under "Validation steps before announcing" below.
+
+10. **Announce.** Once validation is clean, link the explorer README from the top-level `README.md` and announce on the relevant channel.
+
+11. **Deferred follow-ups.** Promote `PLATFORMS=linux/amd64,linux/arm64` to the default after measuring arm64 cook time on a contributor laptop. Lift `publish-images.sh` into `.github/workflows/publish-images.yml` (matrix over the three targets, `docker/build-push-action`, GHCR via `GITHUB_TOKEN`). Optionally pin the explorer compose to image digests for byte-level reproducibility.
+
 ## Validation steps before announcing
 
 Each step is something the user can run; the assistant does not execute `cargo`/`docker` for them.
 
-- [ ] `cargo fmt --check && cargo clippy -- -D warnings` from the workspace root — proves the plan introduced no Rust changes that need formatting.
-- [ ] `shellcheck swiyu-issuer/deploy/explorer/publish-images.sh` clean.
-- [ ] Dry run: `swiyu-issuer/deploy/explorer/publish-images.sh` (no `--push`) builds all three images locally and applies the `:swiyu-beta` + `:<version>-swiyu-beta` local tags only.
-- [ ] Real push: `swiyu-issuer/deploy/explorer/publish-images.sh --push` to a test namespace (`REGISTRY=ghcr.io/<test-namespace>`); confirm the three packages appear on GHCR with the `swiyu-beta` and `<version>-swiyu-beta` tags and that no `:latest` was created.
-- [ ] On a clean machine with only Docker installed: `curl -O` the two files, fill in `.env`, `docker compose up -d`, mint an API token, hit `/healthz` on both ports.
-- [ ] If multi-arch is enabled, repeat the explorer flow on `linux/arm64` (Apple Silicon Mac).
-- [ ] Bring the developer-facing stack up from `swiyu-issuer/` and confirm nothing changed (`docker compose up -d --build` still works, images still tagged locally).
+- `cargo fmt --check && cargo clippy -- -D warnings` from the workspace root — proves the plan introduced no Rust changes that need formatting.
+- `shellcheck swiyu-issuer/deploy/explorer/publish-images.sh` clean.
+- `python3 swiyu-issuer/deploy/explorer/gen-compose.py --check` exits 0 — committed explorer compose is in sync with the dev compose.
+- `docker compose -f swiyu-issuer/deploy/explorer/docker-compose.yml config -q` parses without error.
+- Dry run: `swiyu-issuer/deploy/explorer/publish-images.sh` (no `--push`) builds all three images locally and applies the `:swiyu-beta` + `:<version>-swiyu-beta` local tags only.
+- Real push: `swiyu-issuer/deploy/explorer/publish-images.sh --push` to a test namespace (`REGISTRY=ghcr.io/<test-namespace>`); confirm the three packages appear on GHCR with the `swiyu-beta` and `<version>-swiyu-beta` tags and that no `:latest` was created.
+- `docker buildx imagetools inspect ghcr.io/gubaer/swiyu-issuer-<name>:<version>-swiyu-beta` (or `docker inspect …` on a local tag) returns all expected `org.opencontainers.image.*` labels populated — title differs per image, version/revision/created reflect the build, source/url/documentation/vendor/licenses match the static block.
+- On GHCR, each of the three packages auto-links to `gubaer/swiyu-rs` (the package page shows the repo README and a "Repository" link) — confirms the `source` label took effect end-to-end.
+- On a clean machine with only Docker installed: `curl -O` the two files, fill in `.env`, `docker compose up -d`, mint an API token, hit `/healthz` on both ports.
+- If multi-arch is enabled, repeat the explorer flow on `linux/arm64` (Apple Silicon Mac).
+- Bring the developer-facing stack up from `swiyu-issuer/` and confirm nothing changed (`docker compose up -d --build` still works, images still tagged locally).
 
 ## Decided
 
 - **Repository owner / image namespace: `Gubaer`.** `REGISTRY` defaults to `ghcr.io/gubaer` (GHCR paths are lowercase; the GitHub owner slug is `Gubaer`). Matches `swiyu-didtool/build-image.sh` on master, so both scripts publish under the same namespace.
-- **Package visibility: public.** The three GHCR packages (`swiyu-issuer-mgmtapi`, `swiyu-issuer-credential-issuance`, `swiyu-issuer-cli`) are published as public, so the explorer's `docker compose pull` works without a `docker login` step and the README does not need to document PAT setup.
+- **Package visibility: public.** The three GHCR packages (`swiyu-issuer-mgmtapi`, `swiyu-issuer-oidcapi`, `swiyu-issuer-cli`) are published as public, so the explorer's `docker compose pull` works without a `docker login` step and the README does not need to document PAT setup.
