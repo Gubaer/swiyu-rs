@@ -3251,7 +3251,7 @@ dependencies = [
 
 [[package]]
 name = "swiyu-issuer"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "aes-gcm",
  "axum",
