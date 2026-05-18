@@ -4,7 +4,8 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::domain::{
-    CredentialOffer, CredentialOfferId, CredentialOfferState, IssuerId, PreAuthCode,
+    CredentialOffer, CredentialOfferId, CredentialOfferState, CredentialTypeId, IssuerId,
+    PreAuthCode,
 };
 use crate::persistence;
 use crate::persistence::credential_offers::ListPageQuery;
@@ -35,10 +36,12 @@ const MAX_EXPIRES_IN_SECONDS: u32 = 3600;
 
 /// `POST /api/v1/issuers/{issuer_id}/credential-offers`
 ///
-/// Validates the VCT and claims against the schema loaded at startup, then
-/// persists a new offer with a freshly generated pre-authorised code. Returns
-/// `201 Created` with the bare pre-auth code and an OID4VCI deeplink the
-/// caller can hand to the holder's wallet.
+/// Resolves the credential type from the DB by `credential_type_id`,
+/// verifies it is assigned to the named issuer, validates `claims`
+/// against the type's compiled JSON Schema, then persists a new offer
+/// with a freshly generated pre-authorised code. Returns `201 Created`
+/// with the bare pre-auth code and an OID4VCI deeplink the caller can
+/// hand to the holder's wallet.
 pub async fn create(
     State(state): State<AppState>,
     Path(issuer_id_str): Path<String>,
@@ -48,17 +51,75 @@ pub async fn create(
     tracing::debug!(
         tenant_id = %tenant_context.tenant_id,
         issuer_id = %issuer_id_str,
-        vct = %payload.vct,
+        credential_type_id = %payload.credential_type_id,
         expires_in_seconds = ?payload.expires_in_seconds,
         "credential offer creation requested",
     );
 
     let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
-
-    validate_claims(&state, &payload)?;
+    let credential_type_id =
+        CredentialTypeId::from_bare(&payload.credential_type_id).map_err(|err| {
+            ApiError::InvalidInput {
+                details: format!("credential_type_id: {err}"),
+            }
+        })?;
     let expires_in = resolve_expires_in(payload.expires_in_seconds)?;
 
+    // Probe (1): the calling tenant owns the named issuer. Performed
+    // by acquire_pool_for_issuer; on failure it returns NotFound.
     let mut conn = acquire_pool_for_issuer(&state, &tenant_context.tenant_id, &issuer_id).await?;
+
+    // Probe (2): the calling tenant owns an active credential type
+    // with this id. Cross-tenant and retired rows both collapse to
+    // NotFound so the caller cannot probe for existence outside its
+    // tenant.
+    let credential_type = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &credential_type_id,
+    )
+    .await?
+    .filter(|ct| ct.retired_at.is_none())
+    .ok_or(ApiError::NotFound)?;
+
+    // Probe (3): the credential type is currently assigned to that
+    // issuer. In-tenant-but-unassigned is a genuine conflict, not a
+    // hidden resource — return 409.
+    let assigned = persistence::issuer_credential_types::is_assigned(
+        &mut conn,
+        &issuer_id,
+        &credential_type.id,
+    )
+    .await?;
+    if !assigned {
+        return Err(ApiError::Conflict {
+            details: format!(
+                "credential type {} is not assigned to issuer {}",
+                credential_type.id, issuer_id
+            ),
+        });
+    }
+
+    // Validator-cache lookup: read-lock fast path on cache hit with
+    // matching updated_at; otherwise compile from the claim_schema
+    // already returned by probe (2) (no extra DB round trip).
+    let validator = state
+        .validators
+        .get_or_compile(
+            &credential_type.id,
+            &credential_type.claim_schema,
+            credential_type.updated_at,
+        )
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let errors: Vec<String> = validator
+        .iter_errors(&payload.claims)
+        .map(|err| err.to_string())
+        .collect();
+    if !errors.is_empty() {
+        return Err(ApiError::ClaimsValidationFailed { errors });
+    }
 
     let pre_auth_code = PreAuthCode::generate();
     let expires_at = Utc::now() + expires_in;
@@ -66,7 +127,8 @@ pub async fn create(
     let offer = CredentialOffer::new(
         tenant_context.tenant_id.clone(),
         issuer_id,
-        payload.vct,
+        Some(credential_type.id.clone()),
+        credential_type.vct.clone(),
         payload.claims,
         pre_auth_code.clone(),
         expires_at,
@@ -84,29 +146,6 @@ pub async fn create(
     };
 
     Ok((StatusCode::CREATED, Json(response)))
-}
-
-fn validate_claims(
-    state: &AppState,
-    payload: &CreateCredentialOfferRequest,
-) -> Result<(), ApiError> {
-    let validator = state
-        .schemas
-        .get(&payload.vct)
-        .ok_or_else(|| ApiError::UnknownVct {
-            vct: payload.vct.clone(),
-        })?;
-
-    let errors: Vec<String> = validator
-        .iter_errors(&payload.claims)
-        .map(|err| err.to_string())
-        .collect();
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(ApiError::ClaimsValidationFailed { errors })
-    }
 }
 
 fn resolve_expires_in(requested: Option<u32>) -> Result<Duration, ApiError> {
@@ -356,6 +395,10 @@ fn offer_to_response(offer: CredentialOffer, now: DateTime<Utc>) -> GetCredentia
         id: offer.id.bare().to_string(),
         issuer_id: offer.issuer_id.bare().to_string(),
         vct: offer.vct,
+        credential_type_id: offer
+            .credential_type_id
+            .as_ref()
+            .map(|id| id.bare().to_string()),
         claims: offer.claims,
         state: observed.as_str().to_string(),
         expires_at: offer.expires_at,
@@ -387,6 +430,7 @@ mod tests {
         CredentialOffer::new(
             TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap(),
             IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap(),
+            None,
             "urn:communal:local-residence-id".to_string(),
             json!({}),
             pre_auth_code,

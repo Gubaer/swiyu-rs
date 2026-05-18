@@ -15,7 +15,6 @@ pub fn build_state(pool: PgPool) -> AppState {
             issuer_base_url: SAMPLE_BASE_URL.into(),
         },
     )
-    .expect("AppState builds")
 }
 
 /// Bootstraps the three things every management-API integration test

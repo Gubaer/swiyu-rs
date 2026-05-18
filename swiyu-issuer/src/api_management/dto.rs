@@ -101,9 +101,13 @@ pub struct GetOperationTaskResponse {
 /// Request body for `POST /api/v1/issuers/{issuer_id}/credential-offers`.
 #[derive(Debug, Deserialize)]
 pub struct CreateCredentialOfferRequest {
-    /// SD-JWT VC type identifier (URI). Selects the JSON Schema used to
-    /// validate `claims`; unknown values return HTTP 400.
-    pub vct: String,
+    /// Bare bs58 [`CredentialTypeId`] of the credential type the
+    /// offer mints from. The handler resolves the `vct`,
+    /// `claim_schema`, and `default_validity_duration` from the row;
+    /// the BA never spells the `vct` directly.
+    ///
+    /// [`CredentialTypeId`]: crate::domain::CredentialTypeId
+    pub credential_type_id: String,
     pub claims: Value,
     /// Offer lifetime in seconds. The handler applies a configured default when
     /// omitted and rejects values outside the configured bounds.
@@ -129,8 +133,15 @@ pub struct CreateCredentialOfferResponse {
 pub struct GetCredentialOfferResponse {
     pub id: String,
     pub issuer_id: String,
-    /// SD-JWT VC type identifier (URI).
+    /// SD-JWT VC type identifier (URI). The opaque historical string
+    /// stored on the offer row; the wallet's issued credential carries
+    /// it as the `vct` claim.
     pub vct: String,
+    /// Bare bs58 id of the credential type the offer was minted
+    /// from. `None` only for legacy rows written before the column
+    /// shipped; new offers always carry it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_type_id: Option<String>,
     pub claims: Value,
     /// Observed state: a stored-`pending` row past `expires_at` surfaces as
     /// `"expired"` without a database update.
@@ -230,4 +241,130 @@ pub struct ListIssuedCredentialsResponse {
     /// Opaque token to pass as `cursor` on the next request; `None` when this
     /// page exhausts the issuer's credentials.
     pub next_cursor: Option<String>,
+}
+
+/// Request body for `POST /api/v1/credential-types`.
+///
+/// Carries the full structured-field set plus the `claim_schema`
+/// document. Invalid JSON Schema documents are rejected with HTTP
+/// 400 at create time.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateCredentialTypeRequest {
+    /// SD-JWT VC type identifier (URI). Burned into every issued
+    /// credential's `vct` claim. Unique within the tenant.
+    pub vct: String,
+    /// JSON Schema 2020-12 document validating the credential's
+    /// application-level claims. Required: a row without a schema
+    /// cannot validate at issuance.
+    pub claim_schema: Value,
+    /// OID4VCI claims metadata; surfaced verbatim in the issuer
+    /// metadata projection. Defaults to `{}` when omitted.
+    pub claims: Option<Value>,
+    /// OID4VCI display array (per-locale entries); surfaced verbatim
+    /// in the issuer metadata projection. Defaults to `[]` when
+    /// omitted.
+    pub display: Option<Value>,
+    /// Admin-facing description; never reaches wallets.
+    pub internal_description: Option<String>,
+    /// Provenance URL the schema was fetched from; the system does
+    /// not auto-refresh from it.
+    pub claim_schema_source_url: Option<String>,
+    /// Default validity window for credentials minted under this
+    /// type, in seconds. Required; the issuance handler applies no
+    /// fallback.
+    pub default_validity_seconds: u64,
+    /// One of `"revocable"`, `"suspendable"`,
+    /// `"revocable_and_suspendable"`, `"none"`.
+    pub revocation_mode: String,
+}
+
+/// Response body returned by `POST /api/v1/credential-types` on
+/// success (HTTP 201).
+#[derive(Debug, Serialize)]
+pub struct CreateCredentialTypeResponse {
+    /// The newly-assigned credential-type id (bs58 form, no
+    /// `ctype_` prefix on the wire).
+    pub credential_type_id: String,
+}
+
+/// Response body returned by the credential-type `GET` endpoints.
+///
+/// The three blob columns (`claim_schema`, `display`, `claims`) are
+/// **not** embedded; they are fetched via their dedicated per-blob
+/// endpoints. This keeps the list page small even on tenants with
+/// large schemas.
+#[derive(Debug, Serialize)]
+pub struct GetCredentialTypeResponse {
+    pub credential_type_id: String,
+    pub vct: String,
+    pub internal_description: Option<String>,
+    pub claim_schema_source_url: Option<String>,
+    pub claim_schema_fetched_at: Option<DateTime<Utc>>,
+    pub default_validity_seconds: u64,
+    pub revocation_mode: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    /// `Some(ts)` when retired; `None` while active.
+    pub retired_at: Option<DateTime<Utc>>,
+}
+
+/// Query parameters for `GET /api/v1/credential-types`.
+#[derive(Debug, Deserialize)]
+pub struct ListCredentialTypesQuery {
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+    /// `true` includes retired rows; defaults to `false` (the hot
+    /// path the partial index serves).
+    #[serde(default)]
+    pub retired: bool,
+}
+
+/// Response body returned by `GET /api/v1/credential-types` on
+/// success (HTTP 200).
+#[derive(Debug, Serialize)]
+pub struct ListCredentialTypesResponse {
+    pub items: Vec<GetCredentialTypeResponse>,
+    pub next_cursor: Option<String>,
+}
+
+/// Request body for `PATCH /api/v1/credential-types/{id}`.
+///
+/// Every field is optional; omitted fields are unchanged. Updates
+/// to `claim_schema` / `display` / `claims` go through the
+/// dedicated per-blob endpoints, not this PATCH.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PatchCredentialTypeRequest {
+    pub vct: Option<String>,
+    pub internal_description: Option<String>,
+    pub claim_schema_source_url: Option<String>,
+    pub default_validity_seconds: Option<u64>,
+    pub revocation_mode: Option<String>,
+}
+
+/// Response body returned by `POST /api/v1/credential-types/{id}/retire`.
+#[derive(Debug, Serialize)]
+pub struct RetireCredentialTypeResponse {
+    pub credential_type_id: String,
+    pub retired_at: DateTime<Utc>,
+}
+
+/// Response body returned by
+/// `POST /api/v1/issuers/{issuer_id}/credential-types/{credential_type_id}`.
+///
+/// HTTP `201` for a fresh assignment, `200` for the idempotent
+/// re-assign of an already-existing row. The body is identical in
+/// both cases.
+#[derive(Debug, Serialize)]
+pub struct AssignmentResponse {
+    pub issuer_id: String,
+    pub credential_type_id: String,
+}
+
+/// Response body returned by
+/// `GET /api/v1/issuers/{issuer_id}/credential-types`.
+#[derive(Debug, Serialize)]
+pub struct ListAssignedCredentialTypesResponse {
+    pub items: Vec<GetCredentialTypeResponse>,
 }

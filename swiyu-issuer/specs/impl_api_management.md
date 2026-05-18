@@ -17,7 +17,6 @@ The v0.1.0 durchstich was "a business application submits a request to create a 
 - `error.rs` — `ApiError` enum and `IntoResponse` mapping; `From` conversions for `DomainError` and `PersistenceError`.
 - `auth.rs` — `TenantContext` axum extractor (stub at v0.1.0).
 - `dto.rs` — request and response shapes for the management API.
-- `schemas.rs` — startup-time loading of the bundled JSON Schemas keyed by `vct`.
 - `credential_offers.rs` — handlers for the credential-offer endpoints (create, fetch, cancel, list, status).
 - `issued_credentials.rs` — lifecycle handlers for issued credentials (suspend, unsuspend, revoke). Added by the credential-management slice; see [`impl-credential-management.md`](impl-credential-management.md).
 
@@ -38,14 +37,10 @@ The management API at v0.1.1 exposes five offer endpoints under `/api/v1/issuers
 - Request body:
   ```json
   {
-    "vct": "urn:communal:local-residence-id",
+    "vct": "urn:dummy:dummy-credential",
     "claims": {
-      "family_name": "...",
-      "given_name": "...",
-      "birth_date": "...",
-      "commune_bfs": 4003,
-      "commune_name": "Buchs SG",
-      "valid_until": "..."
+      "first_name": "...",
+      "last_name": "..."
     },
     "expires_in_seconds": 600
   }
@@ -60,7 +55,7 @@ The management API at v0.1.1 exposes five offer endpoints under `/api/v1/issuers
   }
   ```
 - The `pre_auth_code` is returned exactly once at offer creation; only its hash is persisted (per [`aspect-persistence.md`](aspect-persistence.md)).
-- The `vct` field is the SD-JWT VC type identifier (a URI). See [`impl_credential_schema.md`](impl_credential_schema.md) for the schema lookup and validation step that runs against this value before the offer is persisted.
+- The `vct` field is the SD-JWT VC type identifier (a URI). See [`impl-credential-type.md`](impl-credential-type.md) for the schema lookup and validation step that runs against this value before the offer is persisted.
 
 ### GET .../credential-offers/{offer_id} — fetch (v0.1.0, extended in v0.1.1)
 
@@ -72,7 +67,7 @@ Response (200):
 {
   "id": "offer_…",
   "issuer_id": "issuer_…",
-  "vct": "urn:communal:local-residence-id",
+  "vct": "urn:dummy:dummy-credential",
   "claims": { "...": "..." },
   "state": "pending",
   "expires_at": "2026-05-01T12:34:56Z",
@@ -200,7 +195,7 @@ No request body. Response body:
   "id": "credential_…",
   "issuer_id": "issuer_…",
   "credential_offer_id": "offer_…",
-  "vct": "urn:communal:local-residence-id",
+  "vct": "urn:dummy:dummy-credential",
   "holder_key_jkt": "abcDEF…",
   "status_list_id": "status_list_…",
   "status_list_index": 12,
@@ -222,12 +217,11 @@ Audit trail entries for these transitions are placeholders (`// TODO(audit): rec
 
 ## Claims validation
 
-Before persisting the offer, the handler validates `claims` against the JSON Schema bundled for the requested `vct`:
+Before persisting the offer, the handler runs three SQL probes (issuer ownership, credential-type ownership, type-to-issuer assignment) and validates `claims` through the lazy `ValidatorCache` keyed by `CredentialTypeId`. The full flow lives in [`impl-credential-type.md`](impl-credential-type.md) § *Issuance flow integration* and § *Claim-schema storage and validator cache*.
 
-- `AppState` carries a `HashMap<Vct, Arc<jsonschema::Validator>>` built once at startup from `swiyu-issuer/schemas/` (see [`impl_credential_schema.md`](impl_credential_schema.md)).
-- An unknown `vct` returns `ApiError::UnknownVct` (400).
+- Cross-tenant or retired credential type collapses to `ApiError::NotFound` (404).
+- Credential type known but not assigned to the issuer returns `ApiError::Conflict` (409).
 - A schema mismatch returns `ApiError::ClaimsValidationFailed` (400) with JSON-Pointer paths and validator messages in `details`.
-- v0.1.0 ships exactly one schema: `urn:communal:local-residence-id`.
 
 ## Schema additions for v0.1.1
 
@@ -259,7 +253,6 @@ A single `ApiError` enum implements `IntoResponse` with a fixed status-code tabl
 | `DomainError::StateTransitionNotAllowed`   | 409           |
 | `ApiError::Unauthorised`                   | 401           |
 | `ApiError::Forbidden`                      | 403           |
-| `ApiError::UnknownVct`                     | 400           |
 | `ApiError::ClaimsValidationFailed`         | 400           |
 | `axum::extract::rejection::JsonRejection`  | 400           |
 
@@ -294,7 +287,7 @@ chrono = { version = "0.4", features = ["serde"] }
 jsonschema = "0.30"
 ```
 
-`jsonschema` is used for claims validation; rationale in [`impl_credential_schema.md`](impl_credential_schema.md). `axum` is the HTTP framework in use across both binaries.
+`jsonschema` is used for claims validation (JSON Schema 2020-12). `axum` is the HTTP framework in use across both binaries.
 
 `utoipa` (OpenAPI generation) deliberately absent. The hand-written [`swiyu-issuer/openapi-mgmt.yml`](../openapi-mgmt.yml) is the contract for now; generation can be retrofitted later if drift between the spec and the handlers becomes a real problem.
 

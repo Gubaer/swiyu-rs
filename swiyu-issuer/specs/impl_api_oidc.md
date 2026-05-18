@@ -15,7 +15,7 @@ This slice provides those wallet-facing endpoints and is the first writer of the
 **In scope (v0.1.3):**
 
 - Pre-authorised code grant flow only. No authorisation code grant, no DPoP, no `client_id` registration, no PAR.
-- One credential format: SD-JWT VC (`vc+sd-jwt`). One credential configuration: `urn:communal:local-residence-id`.
+- One credential format: SD-JWT VC (`vc+sd-jwt`). One credential configuration in the dev seed: `urn:dummy:dummy-credential`.
 - Issuer signing keys loaded from the `swiyu-didtool` filesystem key store, same convention used elsewhere in the codebase. **Note:** [`aspect-key-management.md`](aspect-key-management.md) supersedes this approach (DB-backed `swiyu_issuer_keystore` with AEAD-encryption from day one). v0.1.3 as-written predates that decision; the keystore migration is queued for the slice that follows v0.1.3 and the references in this document — including `signing_key_id` shape, `KEY_STORE_PATH`, and `signer.rs` — reflect the pre-decision design. Treat them as v0.1.3 historical context, not as the current direction.
 - `did:tdw` 0.3 issuer DIDs, validated end-to-end against the SWIYU integration registry. `did:webvh` 1.0 code paths exist but are not exercised in tests; treat any `did:webvh` behaviour as unverified (per `CLAUDE.md`).
 - One pre-issuance state-list reservation per offer is **out of scope** — credentials issued in v0.1.3 carry no `status` claim. Status integration lands once the status-list slice is in.
@@ -82,7 +82,7 @@ All under `/i/{issuer_id}` unless noted. JSON shapes follow the OID4VCI draft we
 
 Issuer metadata. Returns the static-plus-config document the wallet uses to discover the credential endpoint, supported credential configurations, signing algorithms, and display metadata.
 
-`credential_configurations_supported` carries one entry at v0.1.3, keyed by `urn:communal:local-residence-id`, with format `vc+sd-jwt`, `cryptographic_binding_methods_supported = ["jwk"]`, and the issuer's supported signing algorithms (single algorithm per issuer at v0.1.3, derived from the loaded key).
+`credential_configurations_supported` carries one entry at v0.1.3, keyed by the dev seed's `urn:dummy:dummy-credential`, with format `vc+sd-jwt`, `cryptographic_binding_methods_supported = ["jwk"]`, and the issuer's supported signing algorithms (single algorithm per issuer at v0.1.3, derived from the loaded key).
 
 Display metadata (name, logo, locale) comes from the `issuers` row — the schema column for it lands with this slice (see *Schema additions*).
 
@@ -103,7 +103,7 @@ Returns the OID4VCI `CredentialOffer` body the wallet expects behind the `creden
 ```json
 {
   "credential_issuer": "{issuer_base_url}/i/{issuer_id}",
-  "credential_configuration_ids": ["urn:communal:local-residence-id"],
+  "credential_configuration_ids": ["urn:dummy:dummy-credential"],
   "grants": {
     "urn:ietf:params:oauth:grant-type:pre-authorized_code": {
       "pre-authorized_code": "..."
@@ -164,7 +164,7 @@ Request body (JSON):
 ```json
 {
   "format": "vc+sd-jwt",
-  "vct": "urn:communal:local-residence-id",
+  "vct": "urn:dummy:dummy-credential",
   "proof": {
     "proof_type": "jwt",
     "jwt": "eyJ..."

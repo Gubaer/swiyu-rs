@@ -60,10 +60,6 @@ The KMS abstraction. `SigningEngine` is the trait (key-pair generation per `KeyR
 
 `OperationTask` is the row for one long-running worker operation: `(id, tenant_id, issuer_id, task_type, state, step, attempts, next_attempt_at, error_*, payload, timestamps)`. `TaskState` is `Pending → InProgress → {Completed, Failed}`; `TaskType` covers `CreateIssuer`, `DeactivateIssuer`, `RotateKeys`. `StepResult` / `StepOutcome` are the per-step return shapes the worker reads to decide retry vs terminal. The worker loop, per-step executors, and retry policy live in `worker/`.
 
-### Credential type catalogue — `vct.rs`
-
-A single `CATALOGUE: &[VctEntry]` constant holds the supported `vct` strings paired with their compile-time-bundled JSON Schema. v0.1.x supports one type (`urn:communal:local-residence-id`). The DB-backed `CredentialType` entity that [`aspect-domain.md`](aspect-domain.md) describes has not yet shipped; this constant is the current source of truth for the management API's claims validation and the OIDC metadata's `credential_configurations_supported`. See [`impl_credential_schema.md`](impl_credential_schema.md).
-
 ## Conventions
 
 - **Free functions and methods, not traits**, except where multiple implementations genuinely exist (`TokenProvider`, `SigningEngine`).

@@ -32,6 +32,7 @@ pub async fn seed_offer(pool: &PgPool, issuer: &Issuer, vct: &str) -> Credential
     let offer = CredentialOffer::new(
         issuer.tenant_id.clone(),
         issuer.id.clone(),
+        None,
         vct.into(),
         serde_json::json!({}),
         PreAuthCode::generate(),

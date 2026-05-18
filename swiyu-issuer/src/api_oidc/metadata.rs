@@ -2,18 +2,13 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
+use swiyu_core::oid4vci;
 
-use crate::domain::vct::CATALOGUE;
+use crate::domain::CredentialType;
 use crate::persistence;
 
 use super::AppState;
 use super::error::OidcError;
-
-/// Hardcoded signing algorithm. Per-issuer algorithm advertising
-/// lands when a second algorithm appears (key rotation, dual-
-/// signing). Until then `ES256` is what `swiyu-didtool`'s assertion
-/// key emits.
-const SIGNING_ALG: &str = "ES256";
 
 /// Wallet-facing OID4VCI credential-issuer metadata document.
 #[derive(Debug, Serialize)]
@@ -68,6 +63,13 @@ pub async fn credential_issuer_metadata(
         .await?
         .ok_or(OidcError::NotFound)?;
 
+    let credential_types = persistence::credential_types::list_assigned_to_issuer(
+        &mut conn,
+        &issuer.tenant_id,
+        &issuer.id,
+    )
+    .await?;
+
     let base = state.config.issuer_base_url.trim_end_matches('/');
     let issuer_url = format!("{base}/i/{}", issuer.id.bare());
     let credential_endpoint = format!("{issuer_url}/credential");
@@ -85,7 +87,7 @@ pub async fn credential_issuer_metadata(
         credential_issuer: issuer_url.clone(),
         credential_endpoint,
         authorization_servers: vec![issuer_url],
-        credential_configurations_supported: build_credential_configurations(),
+        credential_configurations_supported: build_credential_configurations(&credential_types),
         display,
     }))
 }
@@ -144,21 +146,29 @@ pub async fn oauth_authorization_server_metadata(
     }))
 }
 
-fn build_credential_configurations() -> Value {
-    let mut map = Map::with_capacity(CATALOGUE.len());
-    for entry in CATALOGUE {
+// Each entry is keyed by the credential type's prefixed
+// `CredentialTypeId` (the `Display` form, e.g. `ctype_…`) and carries
+// the SWIYU profile constants inlined per OID4VCI, which has no
+// "applies to all configurations" carve-out. Retired rows are
+// filtered out; the retire handler also hard-deletes the assignment
+// rows in the same transaction, so this predicate is defence in
+// depth.
+fn build_credential_configurations(types: &[CredentialType]) -> Value {
+    let mut map = Map::with_capacity(types.len());
+    for ct in types {
+        if ct.retired_at.is_some() {
+            continue;
+        }
         map.insert(
-            entry.vct.to_string(),
+            ct.id.to_string(),
             json!({
-                "format": "vc+sd-jwt",
-                "vct": entry.vct,
-                "cryptographic_binding_methods_supported": ["jwk"],
-                "credential_signing_alg_values_supported": [SIGNING_ALG],
-                "proof_types_supported": {
-                    "jwt": {
-                        "proof_signing_alg_values_supported": [SIGNING_ALG]
-                    }
-                }
+                "format": oid4vci::FORMAT,
+                "vct": ct.vct,
+                "cryptographic_binding_methods_supported": oid4vci::cryptographic_binding_methods_supported(),
+                "credential_signing_alg_values_supported": oid4vci::credential_signing_alg_values_supported(),
+                "proof_types_supported": oid4vci::proof_types_supported(),
+                "display": ct.display.clone(),
+                "claims": ct.claims.clone(),
             }),
         );
     }
@@ -168,6 +178,11 @@ fn build_credential_configurations() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use chrono::Utc;
+
+    use crate::domain::TenantId;
+    use crate::test_support::persistence::credential_types as ct_fixture;
 
     #[test]
     fn oauth_metadata_serializes_with_hyphenated_field_name() {
@@ -199,28 +214,47 @@ mod tests {
     }
 
     #[test]
-    fn build_credential_configurations_advertises_every_catalogue_entry() {
-        let v = build_credential_configurations();
+    fn build_credential_configurations_keys_by_credential_type_id() {
+        let ct = ct_fixture::sample(&TenantId::generate());
+        let key = ct.id.to_string();
+        let expected_vct = ct.vct.clone();
+        let v = build_credential_configurations(&[ct]);
         let obj = v.as_object().unwrap();
-        assert_eq!(obj.len(), CATALOGUE.len());
-        for entry in CATALOGUE {
-            let cfg = obj
-                .get(entry.vct)
-                .unwrap_or_else(|| panic!("missing entry for {}", entry.vct));
-            assert_eq!(cfg["format"], "vc+sd-jwt");
-            assert_eq!(cfg["vct"], entry.vct);
-            assert_eq!(
-                cfg["cryptographic_binding_methods_supported"]
-                    .as_array()
-                    .unwrap()[0],
-                "jwk"
-            );
-            assert_eq!(
-                cfg["credential_signing_alg_values_supported"]
-                    .as_array()
-                    .unwrap()[0],
-                SIGNING_ALG
-            );
-        }
+        assert_eq!(obj.len(), 1);
+        let cfg = obj.get(&key).expect("entry keyed by prefixed id");
+        assert_eq!(cfg["format"], oid4vci::FORMAT);
+        assert_eq!(cfg["vct"], expected_vct);
+        assert_eq!(
+            cfg["cryptographic_binding_methods_supported"],
+            oid4vci::cryptographic_binding_methods_supported()
+        );
+        assert_eq!(
+            cfg["credential_signing_alg_values_supported"],
+            oid4vci::credential_signing_alg_values_supported()
+        );
+        assert_eq!(
+            cfg["proof_types_supported"],
+            oid4vci::proof_types_supported()
+        );
+    }
+
+    #[test]
+    fn build_credential_configurations_skips_retired_rows() {
+        let tenant_id = TenantId::generate();
+        let live = ct_fixture::sample(&tenant_id);
+        let mut retired = ct_fixture::sample(&tenant_id);
+        retired.try_retire(Utc::now()).unwrap();
+        let live_key = live.id.to_string();
+        let retired_key = retired.id.to_string();
+        let v = build_credential_configurations(&[live, retired]);
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key(&live_key));
+        assert!(!obj.contains_key(&retired_key));
+    }
+
+    #[test]
+    fn build_credential_configurations_empty_for_no_assignments() {
+        let v = build_credential_configurations(&[]);
+        assert_eq!(v.as_object().unwrap().len(), 0);
     }
 }

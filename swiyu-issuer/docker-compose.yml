@@ -188,6 +188,41 @@ services:
         swiyu-issuer-cli tenant bootstrap-dev-from-env >/dev/null
     restart: "no"
 
+  # Phase B of dev provisioning: ensure the dev tenant has an Active
+  # issuer. `swiyu-issuer-cli tenant ensure-dev-issuer-from-env` looks
+  # up the tenant by DEV_TENANT_PARTNER_ID, enqueues the same
+  # CreateIssuer operation_task `POST /api/v1/issuers` would, and
+  # polls until the mgmtapi worker drives the saga to completion;
+  # then re-runs the credential-type seed so the assignment row
+  # lands. Bounded by DEV_BOOTSTRAP_TIMEOUT_SECS (default 300s).
+  #
+  # Runs after the mgmtapi healthcheck passes (the worker has to be
+  # up to consume the task) and after bootstrap-dev-tenant has
+  # finished (the dev tenant + OAuth credentials have to exist
+  # before the saga calls the registry).
+  bootstrap-dev-issuer:
+    build:
+      context: ..
+      dockerfile: swiyu-issuer/Dockerfile
+      target: runtime-cli
+    container_name: swiyu-issuer-bootstrap-dev-issuer
+    depends_on:
+      postgres:
+        condition: service_healthy
+      bootstrap-dev-tenant:
+        condition: service_completed_successfully
+      swiyu-issuer-mgmtapi:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}
+      DEV_TENANT_PARTNER_ID: ${DEV_TENANT_PARTNER_ID:-}
+      DEV_BOOTSTRAP_TIMEOUT_SECS: ${DEV_BOOTSTRAP_TIMEOUT_SECS:-300}
+      RUST_LOG: ${RUST_LOG:-info,swiyu_issuer=debug}
+    command:
+      - tenant
+      - ensure-dev-issuer-from-env
+    restart: "no"
+
   # The swiyu-issuer-mgmtapi management API. SWIYU_IDENTIFIER_REGISTRY_URL,
   # SWIYU_STATUS_REGISTRY_URL, and SWIYU_TOKEN_URL come from .env; the
   # in-container hostnames for Postgres and Vault are forced here
@@ -204,8 +239,6 @@ services:
       postgres:
         condition: service_healthy
       vault-init:
-        condition: service_completed_successfully
-      bootstrap-dev-tenant:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-swiyu_issuer}:${POSTGRES_PASSWORD:-swiyu_issuer}@postgres:5432/${POSTGRES_DB:-swiyu_issuer}

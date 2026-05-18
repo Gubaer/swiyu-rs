@@ -39,9 +39,16 @@ pub async fn create(
         "create-issuer task submission",
     );
 
-    let description = normalise_optional_field("description", payload.description.as_deref())?;
-    let supplied_display_name =
-        normalise_optional_field("display_name", payload.display_name.as_deref())?;
+    let description = super::normalise_optional(
+        "description",
+        payload.description.as_deref(),
+        MAX_FIELD_LENGTH,
+    )?;
+    let supplied_display_name = super::normalise_optional(
+        "display_name",
+        payload.display_name.as_deref(),
+        MAX_FIELD_LENGTH,
+    )?;
 
     let issuer_id = IssuerId::generate();
     // The default display name uses the bare issuer id so each
@@ -429,75 +436,4 @@ fn internal(field: &'static str) -> ApiError {
     ApiError::Internal(Box::new(std::io::Error::other(format!(
         "issuer row missing BA-facing field `{field}`"
     ))))
-}
-
-/// Trims and length-checks an optional BA-supplied field.
-///
-/// Returns `None` when the field is missing or trims to empty (the
-/// caller substitutes a default in that case). `Some(trimmed)` is
-/// returned when the field has content; oversized values surface as
-/// `InvalidInput`.
-fn normalise_optional_field(
-    name: &'static str,
-    raw: Option<&str>,
-) -> Result<Option<String>, ApiError> {
-    let Some(value) = raw else {
-        return Ok(None);
-    };
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    if trimmed.len() > MAX_FIELD_LENGTH {
-        return Err(ApiError::InvalidInput {
-            details: format!(
-                "{name} must be at most {MAX_FIELD_LENGTH} bytes (got {})",
-                trimmed.len()
-            ),
-        });
-    }
-    Ok(Some(trimmed.to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalise_returns_none_for_missing_field() {
-        let v = normalise_optional_field("description", None).unwrap();
-        assert!(v.is_none());
-    }
-
-    #[test]
-    fn normalise_returns_none_for_blank_field() {
-        let v = normalise_optional_field("description", Some("   \t\n")).unwrap();
-        assert!(v.is_none());
-    }
-
-    #[test]
-    fn normalise_trims_whitespace_when_content_present() {
-        let v = normalise_optional_field("description", Some("  Padded text  \n")).unwrap();
-        assert_eq!(v.as_deref(), Some("Padded text"));
-    }
-
-    #[test]
-    fn normalise_rejects_oversized_after_trim() {
-        let too_long = "a".repeat(MAX_FIELD_LENGTH + 1);
-        let err = normalise_optional_field("display_name", Some(&too_long)).unwrap_err();
-        match err {
-            ApiError::InvalidInput { details } => {
-                assert!(details.contains("display_name"));
-                assert!(details.contains("at most"));
-            }
-            other => panic!("expected InvalidInput, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn normalise_accepts_at_max_length() {
-        let exact = "a".repeat(MAX_FIELD_LENGTH);
-        let v = normalise_optional_field("description", Some(&exact)).unwrap();
-        assert_eq!(v.unwrap().len(), MAX_FIELD_LENGTH);
-    }
 }
