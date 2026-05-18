@@ -500,24 +500,33 @@ pub async fn seed_dev_credential_type_and_assignments(
     Ok(())
 }
 
+// Bundled artefacts for the dev-seeded dummy credential type. Each
+// of the three blob columns the row carries (`claim_schema`,
+// `display`, `claims`) has its own file under
+// `swiyu-issuer/schemas/` so an operator can inspect or copy the
+// contracts without reading Rust. The same files are consumed by
+// the in-crate `test_support` fixture — keeps the seed shape and
+// the test-time fixtures in lock-step.
+const DEV_DUMMY_CLAIM_SCHEMA_JSON: &str =
+    include_str!("../../../schemas/urn_dummy_dummy-credential.schema.json");
+const DEV_DUMMY_DISPLAY_JSON: &str =
+    include_str!("../../../schemas/urn_dummy_dummy-credential.display.json");
+const DEV_DUMMY_CLAIMS_JSON: &str =
+    include_str!("../../../schemas/urn_dummy_dummy-credential.claims.json");
+
 fn dev_dummy_claim_schema() -> serde_json::Value {
-    serde_json::json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {
-            "first_name": { "type": "string" },
-            "last_name":  { "type": "string" }
-        },
-        "required": ["first_name", "last_name"]
-    })
+    serde_json::from_str(DEV_DUMMY_CLAIM_SCHEMA_JSON)
+        .expect("bundled dev dummy claim schema must be valid JSON")
 }
 
 fn dev_dummy_display() -> serde_json::Value {
-    serde_json::json!([])
+    serde_json::from_str(DEV_DUMMY_DISPLAY_JSON)
+        .expect("bundled dev dummy display must be valid JSON")
 }
 
 fn dev_dummy_claims() -> serde_json::Value {
-    serde_json::json!({})
+    serde_json::from_str(DEV_DUMMY_CLAIMS_JSON)
+        .expect("bundled dev dummy claims must be valid JSON")
 }
 
 /// Default poll cadence the production CLI uses when watching the

@@ -23,7 +23,11 @@ const DEFAULT_POLL_MS: u64 = 1000;
 
 const SMOKE_TOKEN_TTL: Duration = Duration::from_secs(60 * 60);
 
-const FIXTURE_VCT: &str = "urn:communal:local-residence-id";
+// vct the dev-bootstrap-issuer compose service seeds against the dev
+// tenant. The smoke discovers the credential type by this vct so the
+// id (which is generated per-deployment) does not need to be threaded
+// through the smoke's environment.
+const DUMMY_VCT: &str = "urn:dummy:dummy-credential";
 const PRE_AUTHORIZED_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 
 #[tokio::main]
@@ -175,7 +179,7 @@ fn phase(name: &'static str) -> impl FnOnce(PhaseError) -> SmokeError {
 }
 
 fn log_phase(n: u8, name: &str) {
-    tracing::info!("=== Phase {n}/8: {name} ===");
+    tracing::info!("=== Phase {n}/9: {name} ===");
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,6 +245,17 @@ struct ListIssuedCredentialsResponse {
     next_cursor: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CredentialTypeView {
+    credential_type_id: String,
+    vct: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListCredentialTypesView {
+    items: Vec<CredentialTypeView>,
+}
+
 async fn run(cfg: &Config) -> Result<(), SmokeError> {
     let token = mint_smoke_token(&cfg.database_url)
         .await
@@ -291,10 +306,35 @@ async fn run(cfg: &Config) -> Result<(), SmokeError> {
         });
     }
 
-    // ---- Phase 2: create credential offer ----
-    log_phase(2, "create_offer");
+    // ---- Phase 2: discover the dev-seeded dummy credential type
+    // and assign it to the fresh issuer ----
+    log_phase(2, "assign_credential_type");
+    let dummy = mgmt
+        .find_credential_type_by_vct(DUMMY_VCT)
+        .await
+        .map_err(phase("assign.discover"))?;
+    tracing::info!(
+        credential_type_id = %dummy.credential_type_id,
+        vct = %dummy.vct,
+        "✓ found dev-seeded dummy credential type",
+    );
+    mgmt.assign_credential_type(&create.issuer_id, &dummy.credential_type_id)
+        .await
+        .map_err(phase("assign.post"))?;
+    tracing::info!(
+        issuer_id = %create.issuer_id,
+        credential_type_id = %dummy.credential_type_id,
+        "✓ credential type assigned to fresh issuer",
+    );
+
+    // ---- Phase 3: create credential offer ----
+    log_phase(3, "create_offer");
     let offer = mgmt
-        .create_offer(&create.issuer_id, FIXTURE_VCT, fixture_claims())
+        .create_offer(
+            &create.issuer_id,
+            &dummy.credential_type_id,
+            fixture_claims(),
+        )
         .await
         .map_err(phase("offer.submit"))?;
     tracing::info!(
@@ -304,8 +344,8 @@ async fn run(cfg: &Config) -> Result<(), SmokeError> {
         "credential offer created",
     );
 
-    // ---- Phase 3: wallet — fetch offer / mint token / fetch credential ----
-    log_phase(3, "wallet_consume_offer");
+    // ---- Phase 4: wallet — fetch offer / mint token / fetch credential ----
+    log_phase(4, "wallet_consume_offer");
     let offer_body = oidc
         .get_credential_offer(&create.issuer_id, &offer.id)
         .await
@@ -345,15 +385,15 @@ async fn run(cfg: &Config) -> Result<(), SmokeError> {
         .fetch_credential(
             &create.issuer_id,
             &token_resp.access_token,
-            FIXTURE_VCT,
+            &dummy.vct,
             &proof_jwt,
         )
         .await
         .map_err(phase("wallet.credential"))?;
     tracing::info!(bytes = credential.len(), "✓ credential issued");
 
-    // ---- Phase 4: locate credential in the management API ----
-    log_phase(4, "locate_credential");
+    // ---- Phase 5: locate credential in the management API ----
+    log_phase(5, "locate_credential");
     let pointer = read_status_pointer(&credential).map_err(|m| SmokeError::Phase {
         phase: "locate.status_claim",
         source: PhaseError::Decode(m),
@@ -404,14 +444,14 @@ async fn run(cfg: &Config) -> Result<(), SmokeError> {
     );
 
     // ---- Phase 5: registry baseline = Valid ----
-    log_phase(5, "registry_baseline");
+    log_phase(6, "registry_baseline");
     wait_for_registry_status(&public, &pointer, StatusValue::Valid, cfg)
         .await
         .map_err(phase("baseline.registry"))?;
     tracing::info!("✓ registry shows status=Valid for newly-issued credential");
 
     // ---- Phase 6: suspend ----
-    log_phase(6, "suspend");
+    log_phase(7, "suspend");
     let suspended = mgmt
         .suspend(&create.issuer_id, &issued.id)
         .await
@@ -431,7 +471,7 @@ async fn run(cfg: &Config) -> Result<(), SmokeError> {
     tracing::info!("✓ registry shows status=Suspended");
 
     // ---- Phase 7: unsuspend ----
-    log_phase(7, "unsuspend");
+    log_phase(8, "unsuspend");
     let unsuspended = mgmt
         .unsuspend(&create.issuer_id, &issued.id)
         .await
@@ -451,7 +491,7 @@ async fn run(cfg: &Config) -> Result<(), SmokeError> {
     tracing::info!("✓ registry shows status=Valid again after unsuspend");
 
     // ---- Phase 8: revoke ----
-    log_phase(8, "revoke");
+    log_phase(9, "revoke");
     let revoked = mgmt
         .revoke(&create.issuer_id, &issued.id)
         .await
@@ -474,13 +514,12 @@ async fn run(cfg: &Config) -> Result<(), SmokeError> {
 }
 
 fn fixture_claims() -> Value {
+    // Shape matches the dummy credential type's `claim_schema` seeded
+    // by tenant bootstrap: `{ first_name, last_name }`, both required
+    // strings.
     json!({
-        "family_name": "Müller",
-        "given_name": "Anna",
-        "birth_date": "1990-04-15",
-        "commune_bfs": 3203,
-        "commune_name": "Bern",
-        "valid_until": "2030-12-31",
+        "first_name": "Anna",
+        "last_name": "Müller",
     })
 }
 
@@ -536,11 +575,11 @@ impl Mgmt {
     async fn create_offer(
         &self,
         issuer_id: &str,
-        vct: &str,
+        credential_type_id: &str,
         claims: Value,
     ) -> Result<CreateOfferResponse, PhaseError> {
         let body = json!({
-            "vct": vct,
+            "credential_type_id": credential_type_id,
             "claims": claims,
         });
         self.post(
@@ -549,6 +588,40 @@ impl Mgmt {
             &[StatusCode::CREATED],
         )
         .await
+    }
+
+    async fn find_credential_type_by_vct(
+        &self,
+        vct: &str,
+    ) -> Result<CredentialTypeView, PhaseError> {
+        let listing: ListCredentialTypesView = self.get("/api/v1/credential-types").await?;
+        listing
+            .items
+            .into_iter()
+            .find(|t| t.vct == vct)
+            .ok_or_else(|| {
+                assertion(format!(
+                    "no credential type with vct {vct:?} found for the dev tenant; \
+                     ensure bootstrap-dev-tenant has run",
+                ))
+            })
+    }
+
+    async fn assign_credential_type(
+        &self,
+        issuer_id: &str,
+        credential_type_id: &str,
+    ) -> Result<(), PhaseError> {
+        // Idempotent on the API side: 200 OK on a duplicate, 201
+        // Created on a fresh assignment.
+        let _: serde_json::Value = self
+            .post(
+                &format!("/api/v1/issuers/{issuer_id}/credential-types/{credential_type_id}",),
+                &serde_json::json!({}),
+                &[StatusCode::CREATED, StatusCode::OK],
+            )
+            .await?;
+        Ok(())
     }
 
     async fn list_issued_credentials(
