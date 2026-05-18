@@ -1,18 +1,20 @@
 -- Initial schema for swiyu-issuer.
 --
--- This file is the consolidation of the early-development migrations
--- into a single pre-production baseline. The originals covered 0001
--- through 0015 (status-list, issued-credentials, registry-coordinate
--- additions), the OAuth2 credential columns on tenants (originally a
--- separate `tenants_oauth` migration), the subsequent re-type of
--- those secret columns from TEXT to BYTEA for encryption-at-rest
--- (originally `tenants_oauth_encrypted`), the tenant-metadata slice
--- that tightened `partner_id` to `UUID NOT NULL` and added
--- `display_name` / `description`, and the follow-up that pinned
--- `partner_id` UNIQUE. The project is still pre-production;
--- collapsing was cheaper than carrying the expand/contract history.
--- Subsequent schema changes go in their own numbered migration on
--- top of this one.
+-- This file is the consolidation of pre-production migrations into a
+-- single baseline. The originals covered 0001 through 0015 (status-
+-- list, issued-credentials, registry-coordinate additions), the
+-- OAuth2 credential columns on tenants (originally a separate
+-- `tenants_oauth` migration), the re-type of those secret columns
+-- from TEXT to BYTEA for encryption-at-rest (originally
+-- `tenants_oauth_encrypted`), the tenant-metadata slice that
+-- tightened `partner_id` to `UUID NOT NULL` and added `display_name`
+-- / `description`, the follow-up that pinned `partner_id` UNIQUE,
+-- and the credential-type slice (originally three migrations adding
+-- `credential_types`, `issuer_credential_types`, and the
+-- `credential_offers.credential_type_id` column). The project is
+-- still pre-production; collapsing was cheaper than carrying the
+-- expand/contract history. Subsequent schema changes go in their own
+-- numbered migration on top of this one.
 --
 -- See specs/impl_persistence.md and
 -- specs/impl-credential-management.md for design rationale.
@@ -110,12 +112,24 @@ CREATE TABLE issuers (
 --
 -- `state` is held as TEXT, not a Postgres ENUM, to keep migrations
 -- simple.
+--
+-- `credential_type_id` is the denormalised reference to the
+-- `credential_types` row the BA addressed at offer creation.
+-- Nullable rather than NOT NULL: legacy offer rows written before
+-- the column shipped read as NULL and the issuance handler treats
+-- them as "no per-type validity policy available" (the historical
+-- `vct` column still drives metadata). No foreign key to
+-- `credential_types(id)` per specs/impl-credential-type.md §
+-- *Relationship to credential-offer / issued-credential rows*: a FK
+-- would couple the offer row's lifetime to the credential type's,
+-- which is the wrong contract for a historical record.
 
 CREATE TABLE credential_offers (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
     issuer_id TEXT NOT NULL REFERENCES issuers(id),
     vct TEXT NOT NULL,
+    credential_type_id TEXT,
     claims JSONB NOT NULL,
     state TEXT NOT NULL,
     pre_auth_code TEXT,
@@ -389,6 +403,124 @@ CREATE INDEX issued_credentials_tenant_issuer
 -- globally unique across issuers.
 CREATE INDEX issued_credentials_holder
     ON issued_credentials (tenant_id, issuer_id, holder_key_jkt);
+
+-- ============================================================================
+-- Credential types
+-- ============================================================================
+--
+-- Per-tenant catalogue of credential types a tenant's issuers can
+-- offer. Replaces the compile-time `vct.rs` catalogue (removed in
+-- step 12 of the credential-type slice).
+--
+-- Cardinality and ownership:
+--   - Each row belongs to exactly one tenant. Two tenants may carry
+--     the same `vct` value on independent rows -- credential types
+--     are not globally unique. The `UNIQUE (tenant_id, vct)`
+--     constraint codifies "a tenant has at most one credential-type
+--     row per vct".
+--   - The relationship to `issuers` is many-to-many via the
+--     `issuer_credential_types` join table below.
+--
+-- Column notes:
+--   `claim_schema`              JSON Schema validating the
+--                               credential's application-level claims.
+--                               Required: a credential type without a
+--                               schema cannot validate at issuance.
+--   `claim_schema_source_url` /
+--   `claim_schema_fetched_at`   Provenance for schemas fetched from
+--                               an external URL; both nullable.
+--   `claims`                    OID4VCI claims metadata; per-claim
+--                               display labels surfaced verbatim in
+--                               the issuer metadata projection.
+--   `default_validity_duration` Required at creation. No
+--                               application-level fallback at
+--                               issuance -- silently picking a
+--                               default would produce credentials
+--                               with surprise expiry.
+--   `revocation_mode`           TEXT (enum-as-text):
+--                               'revocable' / 'suspendable' /
+--                               'revocable_and_suspendable' / 'none'.
+--                               The credential-lifecycle handlers
+--                               reject verbs the mode forbids with
+--                               HTTP 409.
+--   `retired_at`                Soft-delete marker. Already-issued
+--                               credentials may still reference the
+--                               row long after retirement, so rows
+--                               are never hard-deleted.
+
+CREATE TABLE credential_types (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+    vct TEXT NOT NULL,
+
+    display JSONB NOT NULL DEFAULT '[]'::jsonb,
+    internal_description TEXT,
+
+    claim_schema JSONB NOT NULL,
+    claim_schema_source_url TEXT,
+    claim_schema_fetched_at TIMESTAMPTZ,
+    claims JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+    default_validity_duration INTERVAL NOT NULL,
+    revocation_mode TEXT NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    retired_at TIMESTAMPTZ,
+
+    UNIQUE (tenant_id, vct)
+);
+
+-- Hot path: "list a tenant's active (non-retired) credential types".
+-- Retired rows stay in the table for audit and historical lookup
+-- from already-issued credentials.
+CREATE INDEX credential_types_tenant_active
+    ON credential_types (tenant_id)
+    WHERE retired_at IS NULL;
+
+-- ============================================================================
+-- Issuer / credential-type assignments
+-- ============================================================================
+--
+-- Many-to-many join between `issuers` and `credential_types`: an
+-- issuer offers a credential type only when a row exists here. The
+-- OID4VCI metadata projection consumes
+-- `credential_types JOIN issuer_credential_types` so wallets see
+-- exactly the assigned types in `credential_configurations_supported`.
+--
+-- Cross-tenant integrity (both the issuer and the credential type
+-- must belong to the same tenant) is enforced in application code at
+-- the assignment handler, not via a SQL check constraint. A SQL-level
+-- enforcement would need either a trigger (heavy) or a composite FK
+-- against a denormalised `tenant_id` on every referenced row; the
+-- application check is the simplest faithful enforcement and matches
+-- how the issuance handler already performs (tenant, issuer,
+-- credential type) ownership checks before claim validation.
+--
+-- Retiring a credential type hard-deletes its rows from this table in
+-- the same transaction that stamps `credential_types.retired_at`, so
+-- a retired type drops out of every issuer's offer set atomically.
+--
+-- See specs/impl-credential-type.md for rationale.
+
+CREATE TABLE issuer_credential_types (
+    issuer_id TEXT NOT NULL REFERENCES issuers(id),
+    credential_type_id TEXT NOT NULL REFERENCES credential_types(id),
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (issuer_id, credential_type_id)
+);
+
+-- Tenant-scoped listing support.
+CREATE INDEX issuer_credential_types_tenant
+    ON issuer_credential_types (tenant_id);
+
+-- Reverse-lookup support: "which issuers carry this credential type?"
+-- The retire handler also uses this index path when deleting
+-- assignments by credential_type_id.
+CREATE INDEX issuer_credential_types_credential_type
+    ON issuer_credential_types (credential_type_id);
 
 -- No seed data. Contributors create their own dev tenant via
 -- `swiyu-issuer-cli tenant bootstrap-dev-from-env`, sourcing their
