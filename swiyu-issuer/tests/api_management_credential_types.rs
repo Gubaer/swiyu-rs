@@ -16,7 +16,8 @@ use swiyu_issuer::persistence;
 
 use swiyu_issuer::test_support::api::authenticated_app_state;
 use swiyu_issuer::test_support::http::{
-    get_request, patch_request_json, post_request_empty, post_request_json, read_body,
+    get_request, patch_request_json, post_request_empty, post_request_json, put_request_json,
+    read_body,
 };
 use swiyu_issuer::test_support::persistence::issuers as test_issuers;
 
@@ -435,4 +436,254 @@ async fn create_rejects_request_without_authorization(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+async fn create_and_return_id(
+    state: swiyu_issuer::api_management::AppState,
+    secret: &swiyu_issuer::domain::ApiTokenSecret,
+) -> String {
+    let app = router(state);
+    let resp = app
+        .oneshot(post_request_json(
+            "/api/v1/credential-types",
+            Some(&secret.as_wire()),
+            valid_create_body(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    read_body(resp).await["credential_type_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn put_schema_happy_path_bumps_fetched_at(pool: PgPool) {
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let id = create_and_return_id(state.clone(), &secret).await;
+
+    let new_schema = json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": { "age": { "type": "integer" } },
+        "required": ["age"]
+    });
+
+    let app = router(state);
+    let resp = app
+        .oneshot(put_request_json(
+            &format!("/api/v1/credential-types/{id}/schema"),
+            Some(&secret.as_wire()),
+            new_schema,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body(resp).await;
+    // The credential-type metadata now carries a non-null
+    // claim_schema_fetched_at — the create call leaves it null.
+    assert!(!body["claim_schema_fetched_at"].is_null());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn put_schema_rejects_invalid_schema(pool: PgPool) {
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let id = create_and_return_id(state.clone(), &secret).await;
+
+    // `type: 42` doesn't compile.
+    let app = router(state);
+    let resp = app
+        .oneshot(put_request_json(
+            &format!("/api/v1/credential-types/{id}/schema"),
+            Some(&secret.as_wire()),
+            json!({ "type": 42 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = read_body(resp).await;
+    assert_eq!(body["error"], "invalid_input");
+    assert!(body["details"].as_str().unwrap().contains("claim_schema"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn put_then_get_schema_round_trips_byte_identical(pool: PgPool) {
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let id = create_and_return_id(state.clone(), &secret).await;
+
+    let new_schema = json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": { "age": { "type": "integer" } },
+        "required": ["age"]
+    });
+
+    let put_resp = router(state.clone())
+        .oneshot(put_request_json(
+            &format!("/api/v1/credential-types/{id}/schema"),
+            Some(&secret.as_wire()),
+            new_schema.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(put_resp.status(), StatusCode::OK);
+
+    let get_resp = router(state)
+        .oneshot(get_request(
+            &format!("/api/v1/credential-types/{id}/schema"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    // Content-Type must be schema+json so downstream tooling treats
+    // the body as a JSON Schema rather than plain JSON.
+    let ct = get_resp
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "application/schema+json");
+
+    let bytes = axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed, new_schema);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_schema_returns_404_cross_tenant(pool: PgPool) {
+    let (state_a, _t_a, secret_a) = authenticated_app_state(&pool).await;
+    let (state_b, _t_b, secret_b) = authenticated_app_state(&pool).await;
+
+    let id = create_and_return_id(state_a, &secret_a).await;
+
+    let resp = router(state_b)
+        .oneshot(get_request(
+            &format!("/api/v1/credential-types/{id}/schema"),
+            Some(&secret_b.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn put_schema_returns_404_cross_tenant(pool: PgPool) {
+    let (state_a, _t_a, secret_a) = authenticated_app_state(&pool).await;
+    let (state_b, _t_b, secret_b) = authenticated_app_state(&pool).await;
+
+    let id = create_and_return_id(state_a, &secret_a).await;
+
+    let new_schema = json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+    });
+    let resp = router(state_b)
+        .oneshot(put_request_json(
+            &format!("/api/v1/credential-types/{id}/schema"),
+            Some(&secret_b.as_wire()),
+            new_schema,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn put_display_round_trips_through_get(pool: PgPool) {
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let id = create_and_return_id(state.clone(), &secret).await;
+
+    let new_display = json!([
+        { "name": "Proof of residency", "locale": "en-US" },
+        { "name": "Wohnsitznachweis",   "locale": "de-CH" }
+    ]);
+
+    let put = router(state.clone())
+        .oneshot(put_request_json(
+            &format!("/api/v1/credential-types/{id}/display"),
+            Some(&secret.as_wire()),
+            new_display.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(put.status(), StatusCode::OK);
+
+    let get = router(state)
+        .oneshot(get_request(
+            &format!("/api/v1/credential-types/{id}/display"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+    let body = read_body(get).await;
+    assert_eq!(body, new_display);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn put_display_rejects_object(pool: PgPool) {
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let id = create_and_return_id(state.clone(), &secret).await;
+
+    let resp = router(state)
+        .oneshot(put_request_json(
+            &format!("/api/v1/credential-types/{id}/display"),
+            Some(&secret.as_wire()),
+            json!({ "wrong": "shape" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn put_claims_round_trips_through_get(pool: PgPool) {
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let id = create_and_return_id(state.clone(), &secret).await;
+
+    let new_claims = json!({
+        "first_name": { "display": [{ "name": "First name", "locale": "en-US" }] }
+    });
+
+    let put = router(state.clone())
+        .oneshot(put_request_json(
+            &format!("/api/v1/credential-types/{id}/claims"),
+            Some(&secret.as_wire()),
+            new_claims.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(put.status(), StatusCode::OK);
+
+    let get = router(state)
+        .oneshot(get_request(
+            &format!("/api/v1/credential-types/{id}/claims"),
+            Some(&secret.as_wire()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+    let body = read_body(get).await;
+    assert_eq!(body, new_claims);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn put_claims_rejects_array(pool: PgPool) {
+    let (state, _tenant_id, secret) = authenticated_app_state(&pool).await;
+    let id = create_and_return_id(state.clone(), &secret).await;
+
+    let resp = router(state)
+        .oneshot(put_request_json(
+            &format!("/api/v1/credential-types/{id}/claims"),
+            Some(&secret.as_wire()),
+            json!([]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

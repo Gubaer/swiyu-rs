@@ -2,8 +2,10 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use chrono::{Duration, Utc};
+use serde_json::Value;
 
 use crate::domain::{CredentialType, CredentialTypeId, RevocationMode};
 use crate::persistence;
@@ -41,14 +43,16 @@ pub async fn create(
         "credential-type create",
     );
 
-    let vct = normalise_required("vct", &payload.vct)?;
-    let internal_description = normalise_optional(
+    let vct = super::normalise_required("vct", &payload.vct, MAX_FIELD_LENGTH)?;
+    let internal_description = super::normalise_optional(
         "internal_description",
         payload.internal_description.as_deref(),
+        MAX_FIELD_LENGTH,
     )?;
-    let claim_schema_source_url = normalise_optional(
+    let claim_schema_source_url = super::normalise_optional(
         "claim_schema_source_url",
         payload.claim_schema_source_url.as_deref(),
+        MAX_FIELD_LENGTH,
     )?;
     let seconds = payload.default_validity_seconds;
     if !(MIN_VALIDITY_SECONDS..=MAX_VALIDITY_SECONDS).contains(&seconds) {
@@ -127,7 +131,7 @@ pub async fn get(
     .await?
     .ok_or(ApiError::NotFound)?;
 
-    Ok(Json(to_response(row)))
+    Ok(Json(row.into()))
 }
 
 pub async fn list(
@@ -167,7 +171,7 @@ pub async fn list(
         None
     };
 
-    let items = page.items.into_iter().map(to_response).collect();
+    let items = page.items.into_iter().map(Into::into).collect();
     Ok(Json(ListCredentialTypesResponse { items, next_cursor }))
 }
 
@@ -182,17 +186,17 @@ pub async fn patch(
     let vct = payload
         .vct
         .as_deref()
-        .map(|raw| normalise_required("vct", raw))
+        .map(|raw| super::normalise_required("vct", raw, MAX_FIELD_LENGTH))
         .transpose()?;
     let internal_description = payload
         .internal_description
         .as_deref()
-        .map(|raw| normalise_required("internal_description", raw))
+        .map(|raw| super::normalise_required("internal_description", raw, MAX_FIELD_LENGTH))
         .transpose()?;
     let claim_schema_source_url = payload
         .claim_schema_source_url
         .as_deref()
-        .map(|raw| normalise_required("claim_schema_source_url", raw))
+        .map(|raw| super::normalise_required("claim_schema_source_url", raw, MAX_FIELD_LENGTH))
         .transpose()?;
     let default_validity = match payload.default_validity_seconds {
         Some(seconds) => {
@@ -252,7 +256,7 @@ pub async fn patch(
     )
     .await?
     .ok_or(ApiError::NotFound)?;
-    Ok(Json(to_response(row)))
+    Ok(Json(row.into()))
 }
 
 pub async fn retire(
@@ -284,25 +288,208 @@ pub async fn retire(
     }))
 }
 
-fn to_response(ct: CredentialType) -> GetCredentialTypeResponse {
-    GetCredentialTypeResponse {
-        credential_type_id: ct.id.bare().to_string(),
-        vct: ct.vct,
-        internal_description: ct.internal_description,
-        claim_schema_source_url: ct.claim_schema_source_url,
-        claim_schema_fetched_at: ct.claim_schema_fetched_at,
-        // Negative durations are impossible since the persistence
-        // layer holds an unsigned-ish microsecond count and `new`
-        // accepts only positive durations, so `u64` cast is safe.
-        default_validity_seconds: ct
-            .default_validity_duration
-            .num_seconds()
-            .max(0)
-            .unsigned_abs(),
-        revocation_mode: ct.revocation_mode.as_str().to_string(),
-        created_at: ct.created_at,
-        updated_at: ct.updated_at,
-        retired_at: ct.retired_at,
+// Schema documents are served with `application/schema+json` so
+// downstream tooling that branches on MIME type (linters, IDE
+// integrations) treats them as JSON Schema rather than plain JSON.
+const SCHEMA_CONTENT_TYPE: &str = "application/schema+json";
+
+pub async fn get_schema(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<Response, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let row = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    let body =
+        serde_json::to_vec(&row.claim_schema).map_err(|err| ApiError::Internal(Box::new(err)))?;
+    Ok(([(header::CONTENT_TYPE, SCHEMA_CONTENT_TYPE)], body).into_response())
+}
+
+pub async fn put_schema(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+    Json(body): Json<Value>,
+) -> Result<Json<GetCredentialTypeResponse>, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+
+    // Compile the supplied schema first so an invalid document is
+    // rejected before any write.
+    jsonschema::validator_for(&body).map_err(|err| ApiError::InvalidInput {
+        details: format!("claim_schema does not compile: {err}"),
+    })?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let outcome = persistence::credential_types::update_blob_schema(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+        &body,
+    )
+    .await?;
+    if outcome == UpdateOutcome::NotFound {
+        return Err(ApiError::NotFound);
+    }
+
+    let row = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    Ok(Json(row.into()))
+}
+
+pub async fn get_display(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<Json<Value>, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let row = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    Ok(Json(row.display))
+}
+
+pub async fn put_display(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+    Json(body): Json<Value>,
+) -> Result<Json<GetCredentialTypeResponse>, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+    let body = validate_display(body)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let outcome = persistence::credential_types::update_blob_display(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+        &body,
+    )
+    .await?;
+    if outcome == UpdateOutcome::NotFound {
+        return Err(ApiError::NotFound);
+    }
+
+    let row = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    Ok(Json(row.into()))
+}
+
+pub async fn get_claims(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<Json<Value>, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let row = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    Ok(Json(row.claims))
+}
+
+pub async fn put_claims(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+    Json(body): Json<Value>,
+) -> Result<Json<GetCredentialTypeResponse>, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+    let body = validate_claims(body)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let outcome = persistence::credential_types::update_blob_claims(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+        &body,
+    )
+    .await?;
+    if outcome == UpdateOutcome::NotFound {
+        return Err(ApiError::NotFound);
+    }
+
+    let row = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    Ok(Json(row.into()))
+}
+
+impl From<CredentialType> for GetCredentialTypeResponse {
+    fn from(ct: CredentialType) -> Self {
+        Self {
+            credential_type_id: ct.id.bare().to_string(),
+            vct: ct.vct,
+            internal_description: ct.internal_description,
+            claim_schema_source_url: ct.claim_schema_source_url,
+            claim_schema_fetched_at: ct.claim_schema_fetched_at,
+            // Negative durations are impossible since the persistence
+            // layer holds an unsigned-ish microsecond count and `new`
+            // accepts only positive durations, so `u64` cast is safe.
+            default_validity_seconds: ct
+                .default_validity_duration
+                .num_seconds()
+                .max(0)
+                .unsigned_abs(),
+            revocation_mode: ct.revocation_mode.as_str().to_string(),
+            created_at: ct.created_at,
+            updated_at: ct.updated_at,
+            retired_at: ct.retired_at,
+        }
     }
 }
 
@@ -322,43 +509,6 @@ fn validate_claims(value: serde_json::Value) -> Result<serde_json::Value, ApiErr
         });
     }
     Ok(value)
-}
-
-fn normalise_required(name: &'static str, raw: &str) -> Result<String, ApiError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(ApiError::InvalidInput {
-            details: format!("{name} must not be blank"),
-        });
-    }
-    if trimmed.len() > MAX_FIELD_LENGTH {
-        return Err(ApiError::InvalidInput {
-            details: format!(
-                "{name} must be at most {MAX_FIELD_LENGTH} bytes (got {})",
-                trimmed.len()
-            ),
-        });
-    }
-    Ok(trimmed.to_string())
-}
-
-fn normalise_optional(name: &'static str, raw: Option<&str>) -> Result<Option<String>, ApiError> {
-    let Some(value) = raw else {
-        return Ok(None);
-    };
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    if trimmed.len() > MAX_FIELD_LENGTH {
-        return Err(ApiError::InvalidInput {
-            details: format!(
-                "{name} must be at most {MAX_FIELD_LENGTH} bytes (got {})",
-                trimmed.len()
-            ),
-        });
-    }
-    Ok(Some(trimmed.to_string()))
 }
 
 #[cfg(test)]

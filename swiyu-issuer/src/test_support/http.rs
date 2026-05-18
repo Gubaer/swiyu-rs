@@ -44,6 +44,19 @@ pub fn patch_request_json(uri: &str, bearer: Option<&str>, body: Value) -> Reque
         .unwrap()
 }
 
+pub fn put_request_json(uri: &str, bearer: Option<&str>, body: Value) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(b) = bearer {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
+    }
+    builder
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
+}
+
 pub async fn read_body(response: axum::response::Response) -> Value {
     let bytes = body::to_bytes(response.into_body(), usize::MAX)
         .await

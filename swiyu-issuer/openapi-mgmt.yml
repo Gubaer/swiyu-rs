@@ -800,6 +800,154 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/credential-types/{credential_type_id}/schema:
+    get:
+      summary: Fetch the credential type's JSON Schema document
+      description: |
+        Returns the `claim_schema` blob with `Content-Type:
+        application/schema+json`. Authenticated; cross-tenant
+        access returns `404` like the rest of the credential-type
+        surface. The byte-exact body is identical to what the
+        public verifier-dereference endpoint
+        (`GET /schemas/{credential_type_id}` on the OIDC binary)
+        serves.
+      operationId: getCredentialTypeSchema
+      parameters:
+        - $ref: '#/components/parameters/CredentialTypeId'
+      responses:
+        '200':
+          description: JSON Schema document.
+          content:
+            application/schema+json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Replace the credential type's JSON Schema document
+      description: |
+        Body is the new JSON Schema 2020-12 document. The server
+        attempts a `jsonschema::Validator` compile; failure returns
+        `400 invalid_input` with the compiler's message and leaves
+        the row unchanged. On success both `claim_schema_fetched_at`
+        and `updated_at` are bumped on the row.
+      operationId: putCredentialTypeSchema
+      parameters:
+        - $ref: '#/components/parameters/CredentialTypeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              $schema: 'https://json-schema.org/draft/2020-12/schema'
+              type: object
+              properties:
+                first_name: { type: string }
+              required: [first_name]
+      responses:
+        '200':
+          description: Schema replaced; updated credential-type metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetCredentialTypeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/credential-types/{credential_type_id}/display:
+    get:
+      summary: Fetch the credential type's OID4VCI display array
+      operationId: getCredentialTypeDisplay
+      parameters:
+        - $ref: '#/components/parameters/CredentialTypeId'
+      responses:
+        '200':
+          description: Display array.
+          content:
+            application/json:
+              schema:
+                type: array
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Replace the credential type's OID4VCI display array
+      description: |
+        Body must be a JSON array (per-locale entries). The server
+        validates only the top-level shape; OID4VCI defines `display`
+        in prose without a canonical machine-readable schema, so
+        deeper structural checks are not performed.
+      operationId: putCredentialTypeDisplay
+      parameters:
+        - $ref: '#/components/parameters/CredentialTypeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+      responses:
+        '200':
+          description: Display replaced; updated credential-type metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetCredentialTypeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/credential-types/{credential_type_id}/claims:
+    get:
+      summary: Fetch the credential type's OID4VCI claims metadata
+      operationId: getCredentialTypeClaims
+      parameters:
+        - $ref: '#/components/parameters/CredentialTypeId'
+      responses:
+        '200':
+          description: Claims metadata object.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Replace the credential type's OID4VCI claims metadata
+      description: |
+        Body must be a JSON object. Only the top-level shape is
+        validated.
+      operationId: putCredentialTypeClaims
+      parameters:
+        - $ref: '#/components/parameters/CredentialTypeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Claims replaced; updated credential-type metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetCredentialTypeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/v1/credential-types/{credential_type_id}/retire:
     post:
       summary: Retire a credential type
