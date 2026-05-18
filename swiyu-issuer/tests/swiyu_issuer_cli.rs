@@ -854,3 +854,358 @@ async fn bootstrap_with_force_rewrites_edited_row(pool: PgPool) {
         json!(["first_name", "last_name"])
     );
 }
+
+mod ensure_dev_issuer_tests {
+    use super::*;
+    use chrono::Utc;
+    use std::time::Duration as StdDuration;
+    use swiyu_issuer::cli::tenant::{
+        EnsureDevIssuerArgs, EnsureDevIssuerError, EnsureDevIssuerOutcome,
+        ensure_dev_issuer_from_env,
+    };
+    use swiyu_issuer::domain::{IssuerId, IssuerState};
+    use swiyu_issuer::test_support::persistence::issuers::insert_test_with_did;
+
+    async fn insert_tenant_with_partner_and_display(
+        pool: &PgPool,
+        partner_id: Uuid,
+        display_name: Option<&str>,
+    ) -> TenantId {
+        let tenant_id = TenantId::generate();
+        sqlx::query("INSERT INTO tenants (id, partner_id, display_name) VALUES ($1, $2, $3)")
+            .bind(tenant_id.bare())
+            .bind(partner_id)
+            .bind(display_name)
+            .execute(pool)
+            .await
+            .unwrap();
+        tenant_id
+    }
+
+    fn quick_args(partner_id: Uuid) -> EnsureDevIssuerArgs {
+        EnsureDevIssuerArgs {
+            partner_id,
+            poll_interval: StdDuration::from_millis(20),
+            timeout: StdDuration::from_secs(2),
+        }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn returns_already_active_and_writes_assignment(pool: PgPool) {
+        let partner_id = Uuid::new_v4();
+        let tenant_id =
+            insert_tenant_with_partner_and_display(&pool, partner_id, Some("Dev Tenant")).await;
+        let issuer =
+            swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id)
+                .await;
+
+        let outcome = ensure_dev_issuer_from_env(&pool, quick_args(partner_id))
+            .await
+            .unwrap();
+        match &outcome {
+            EnsureDevIssuerOutcome::AlreadyActive { issuer_id } => {
+                assert_eq!(issuer_id, &issuer.id);
+            }
+            other => panic!("expected AlreadyActive, got {other:?}"),
+        }
+
+        let task_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM operation_tasks WHERE tenant_id = $1")
+                .bind(tenant_id.bare())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            task_count.0, 0,
+            "no CreateIssuer task should have been enqueued"
+        );
+
+        // The defensive re-seed wrote the credential type + assignment.
+        let mut conn = pool.acquire().await.unwrap();
+        let ct = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+            &mut conn,
+            &tenant_id,
+            "urn:dummy:dummy-credential",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let assignments =
+            swiyu_issuer::persistence::issuer_credential_types::list_by_credential_type(
+                &mut conn, &ct.id,
+            )
+            .await
+            .unwrap();
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].issuer_id, issuer.id);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn returns_deactivated_only_and_skips_seed(pool: PgPool) {
+        let partner_id = Uuid::new_v4();
+        let tenant_id = insert_tenant_with_partner_and_display(&pool, partner_id, None).await;
+        let mut deactivated = swiyu_issuer::test_support::persistence::issuers::active(&tenant_id);
+        deactivated.state = Some(IssuerState::Deactivated);
+        swiyu_issuer::test_support::persistence::issuers::insert(&pool, &deactivated).await;
+
+        let outcome = ensure_dev_issuer_from_env(&pool, quick_args(partner_id))
+            .await
+            .unwrap();
+        assert!(matches!(outcome, EnsureDevIssuerOutcome::DeactivatedOnly));
+
+        let task_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM operation_tasks WHERE tenant_id = $1")
+                .bind(tenant_id.bare())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(task_count.0, 0);
+
+        let mut conn = pool.acquire().await.unwrap();
+        let ct = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+            &mut conn,
+            &tenant_id,
+            "urn:dummy:dummy-credential",
+        )
+        .await
+        .unwrap();
+        assert!(
+            ct.is_none(),
+            "deactivated-only branch must not run the credential-type seed",
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn returns_timeout_when_task_never_terminates(pool: PgPool) {
+        let partner_id = Uuid::new_v4();
+        let _tenant_id =
+            insert_tenant_with_partner_and_display(&pool, partner_id, Some("Dev Tenant")).await;
+
+        let args = EnsureDevIssuerArgs {
+            partner_id,
+            poll_interval: StdDuration::from_millis(10),
+            timeout: StdDuration::from_millis(150),
+        };
+        let err = ensure_dev_issuer_from_env(&pool, args).await.unwrap_err();
+        assert!(
+            matches!(err, EnsureDevIssuerError::Timeout { .. }),
+            "expected Timeout, got {err:?}",
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn returns_tenant_not_found_for_unknown_partner_id(pool: PgPool) {
+        let err = ensure_dev_issuer_from_env(&pool, quick_args(Uuid::new_v4()))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, EnsureDevIssuerError::TenantNotFound { .. }),
+            "expected TenantNotFound, got {err:?}",
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn enqueued_task_derives_display_name_from_tenant(pool: PgPool) {
+        let partner_id = Uuid::new_v4();
+        let tenant_id =
+            insert_tenant_with_partner_and_display(&pool, partner_id, Some("Karl Inc")).await;
+
+        // Tight timeout — we don't simulate completion; we only care
+        // about the task row that was inserted before the timeout
+        // fired.
+        let args = EnsureDevIssuerArgs {
+            partner_id,
+            poll_interval: StdDuration::from_millis(20),
+            timeout: StdDuration::from_millis(100),
+        };
+        let _err = ensure_dev_issuer_from_env(&pool, args).await.unwrap_err();
+
+        let row: (serde_json::Value,) = sqlx::query_as(
+            "SELECT input FROM operation_tasks
+             WHERE tenant_id = $1 AND task_type = 'create_issuer'",
+        )
+        .bind(tenant_id.bare())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0["display_name"], "Karl Inc - dev issuer");
+        assert_eq!(row.0["description"], "");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn enqueued_task_falls_back_when_tenant_has_no_display_name(pool: PgPool) {
+        let partner_id = Uuid::new_v4();
+        let tenant_id = insert_tenant_with_partner_and_display(&pool, partner_id, None).await;
+
+        let args = EnsureDevIssuerArgs {
+            partner_id,
+            poll_interval: StdDuration::from_millis(20),
+            timeout: StdDuration::from_millis(100),
+        };
+        let _err = ensure_dev_issuer_from_env(&pool, args).await.unwrap_err();
+
+        let row: (serde_json::Value,) = sqlx::query_as(
+            "SELECT input FROM operation_tasks
+             WHERE tenant_id = $1 AND task_type = 'create_issuer'",
+        )
+        .bind(tenant_id.bare())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0["display_name"], "Dev Issuer");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn returns_provisioned_when_simulated_worker_completes_task(pool: PgPool) {
+        let partner_id = Uuid::new_v4();
+        let tenant_id =
+            insert_tenant_with_partner_and_display(&pool, partner_id, Some("Dev Tenant")).await;
+
+        // Spawn a fake worker: wait for the task row to appear, insert
+        // an Active issuer matching its result_issuer_id, then flip the
+        // task to Completed. The main function's polling loop should
+        // converge on Provisioned shortly after.
+        let fake_pool = pool.clone();
+        let fake_tenant = tenant_id.clone();
+        let fake = tokio::spawn(async move {
+            for _ in 0..200 {
+                let row: Option<(String, String)> = sqlx::query_as(
+                    "SELECT id, result_issuer_id
+                     FROM operation_tasks
+                     WHERE tenant_id = $1
+                       AND task_type = 'create_issuer'
+                       AND state = 'pending'
+                     LIMIT 1",
+                )
+                .bind(fake_tenant.bare())
+                .fetch_optional(&fake_pool)
+                .await
+                .unwrap();
+                if let Some((task_id_bare, issuer_id_bare)) = row {
+                    let issuer_id = IssuerId::from_bare(&issuer_id_bare).unwrap();
+                    insert_test_with_did(&fake_pool, &fake_tenant, &issuer_id).await;
+                    sqlx::query(
+                        "UPDATE operation_tasks
+                         SET state = 'completed',
+                             completed_at = $1,
+                             updated_at = $1
+                         WHERE id = $2",
+                    )
+                    .bind(Utc::now())
+                    .bind(&task_id_bare)
+                    .execute(&fake_pool)
+                    .await
+                    .unwrap();
+                    return;
+                }
+                tokio::time::sleep(StdDuration::from_millis(10)).await;
+            }
+            panic!("fake worker: pending task never appeared");
+        });
+
+        let args = EnsureDevIssuerArgs {
+            partner_id,
+            poll_interval: StdDuration::from_millis(10),
+            timeout: StdDuration::from_secs(5),
+        };
+        let outcome = ensure_dev_issuer_from_env(&pool, args).await.unwrap();
+        let (provisioned_issuer_id, provisioned_task_id) = match outcome {
+            EnsureDevIssuerOutcome::Provisioned { issuer_id, task_id } => (issuer_id, task_id),
+            other => panic!("expected Provisioned, got {other:?}"),
+        };
+        fake.await.unwrap();
+
+        // The fake worker stamped the result_issuer_id matching the
+        // function's reported issuer_id.
+        let row: (String, String) =
+            sqlx::query_as("SELECT id, result_issuer_id FROM operation_tasks WHERE id = $1")
+                .bind(provisioned_task_id.bare())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.0, provisioned_task_id.bare());
+        assert_eq!(row.1, provisioned_issuer_id.bare());
+
+        // Re-seed wrote the assignment row.
+        let mut conn = pool.acquire().await.unwrap();
+        let ct = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+            &mut conn,
+            &tenant_id,
+            "urn:dummy:dummy-credential",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let assignments =
+            swiyu_issuer::persistence::issuer_credential_types::list_by_credential_type(
+                &mut conn, &ct.id,
+            )
+            .await
+            .unwrap();
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].issuer_id, provisioned_issuer_id);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn returns_task_failed_when_simulated_worker_marks_failed(pool: PgPool) {
+        let partner_id = Uuid::new_v4();
+        let tenant_id = insert_tenant_with_partner_and_display(&pool, partner_id, None).await;
+
+        let fake_pool = pool.clone();
+        let fake_tenant = tenant_id.clone();
+        let fake = tokio::spawn(async move {
+            for _ in 0..200 {
+                let row: Option<(String,)> = sqlx::query_as(
+                    "SELECT id FROM operation_tasks
+                     WHERE tenant_id = $1
+                       AND task_type = 'create_issuer'
+                       AND state = 'pending'
+                     LIMIT 1",
+                )
+                .bind(fake_tenant.bare())
+                .fetch_optional(&fake_pool)
+                .await
+                .unwrap();
+                if let Some((task_id_bare,)) = row {
+                    sqlx::query(
+                        "UPDATE operation_tasks
+                         SET state = 'failed',
+                             error_code = 'registry_unreachable',
+                             error_message = 'simulated worker failure',
+                             completed_at = $1,
+                             updated_at = $1
+                         WHERE id = $2",
+                    )
+                    .bind(Utc::now())
+                    .bind(&task_id_bare)
+                    .execute(&fake_pool)
+                    .await
+                    .unwrap();
+                    return;
+                }
+                tokio::time::sleep(StdDuration::from_millis(10)).await;
+            }
+            panic!("fake worker: pending task never appeared");
+        });
+
+        let args = EnsureDevIssuerArgs {
+            partner_id,
+            poll_interval: StdDuration::from_millis(10),
+            timeout: StdDuration::from_secs(5),
+        };
+        let err = ensure_dev_issuer_from_env(&pool, args).await.unwrap_err();
+        fake.await.unwrap();
+
+        match err {
+            EnsureDevIssuerError::TaskFailed {
+                error_code,
+                error_message,
+                ..
+            } => {
+                assert_eq!(error_code.as_deref(), Some("registry_unreachable"));
+                assert_eq!(error_message.as_deref(), Some("simulated worker failure"));
+            }
+            other => panic!("expected TaskFailed, got {other:?}"),
+        }
+    }
+}

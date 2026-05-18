@@ -42,6 +42,13 @@ enum TenantCommand {
     /// env vars. `--force` overwrites an existing row from env;
     /// otherwise oauth columns are filled only where currently NULL.
     BootstrapDevFromEnv(BootstrapDevFromEnvArgs),
+    /// Ensure the dev tenant (looked up by `DEV_TENANT_PARTNER_ID`) has
+    /// an Active issuer. Enqueues the same `CreateIssuer` operation
+    /// task `POST /api/v1/issuers` would, then waits for the
+    /// management binary's worker to drive it to completion. Requires
+    /// the mgmtapi service to be healthy. Designed for the docker
+    /// `bootstrap-dev-issuer` sidecar.
+    EnsureDevIssuerFromEnv,
     /// API tokens scoped to a tenant.
     ApiToken {
         #[command(subcommand)]
@@ -191,6 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             TenantCommand::Create(args) => create_tenant(args).await,
             TenantCommand::Update(args) => update_tenant(args).await,
             TenantCommand::BootstrapDevFromEnv(args) => bootstrap_dev_from_env(args).await,
+            TenantCommand::EnsureDevIssuerFromEnv => ensure_dev_issuer_from_env().await,
             TenantCommand::ApiToken { command } => match command {
                 ApiTokenCommand::Mint {
                     tenant,
@@ -266,6 +274,33 @@ async fn bootstrap_dev_from_env(
     // confirmation banner lands on stderr.
     println!("{}", tenant_id.bare());
     eprintln!("bootstrapped dev tenant {}", tenant_id.bare());
+
+    Ok(())
+}
+
+async fn ensure_dev_issuer_from_env() -> Result<(), Box<dyn std::error::Error>> {
+    let parsed = cli::tenant::parse_dev_issuer_args(|k| env::var(k).ok())?;
+
+    let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
+    let pool: PgPool = persistence::connect(&database_url).await?;
+    persistence::run_migrations(&pool).await?;
+
+    let outcome = cli::tenant::ensure_dev_issuer_from_env(&pool, parsed).await?;
+    match outcome {
+        cli::tenant::EnsureDevIssuerOutcome::AlreadyActive { issuer_id } => {
+            eprintln!(
+                "ensure-dev-issuer: tenant already has Active issuer {issuer_id}; no provisioning performed",
+            );
+        }
+        cli::tenant::EnsureDevIssuerOutcome::DeactivatedOnly => {
+            eprintln!(
+                "ensure-dev-issuer: tenant has only Deactivated issuers; no provisioning performed",
+            );
+        }
+        cli::tenant::EnsureDevIssuerOutcome::Provisioned { issuer_id, task_id } => {
+            eprintln!("ensure-dev-issuer: provisioned issuer {issuer_id} via task {task_id}",);
+        }
+    }
 
     Ok(())
 }
