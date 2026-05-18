@@ -7,16 +7,19 @@ use axum::response::{IntoResponse, Response};
 use chrono::{Duration, Utc};
 use serde_json::Value;
 
-use crate::domain::{CredentialType, CredentialTypeId, RevocationMode};
+use crate::domain::{
+    CredentialType, CredentialTypeId, IssuerCredentialTypeAssignment, RevocationMode,
+};
 use crate::persistence;
 use crate::persistence::credential_types::{ListPageQuery, StructuredUpdate, UpdateOutcome};
+use crate::persistence::issuer_credential_types::AssignOutcome;
 
 use super::AppState;
 use super::auth::TenantContext;
 use super::dto::{
-    CreateCredentialTypeRequest, CreateCredentialTypeResponse, GetCredentialTypeResponse,
-    ListCredentialTypesQuery, ListCredentialTypesResponse, PatchCredentialTypeRequest,
-    RetireCredentialTypeResponse,
+    AssignmentResponse, CreateCredentialTypeRequest, CreateCredentialTypeResponse,
+    GetCredentialTypeResponse, ListAssignedCredentialTypesResponse, ListCredentialTypesQuery,
+    ListCredentialTypesResponse, PatchCredentialTypeRequest, RetireCredentialTypeResponse,
 };
 use super::error::ApiError;
 
@@ -286,6 +289,115 @@ pub async fn retire(
         credential_type_id: id.bare().to_string(),
         retired_at: now,
     }))
+}
+
+pub async fn assign(
+    State(state): State<AppState>,
+    Path((issuer_id_str, credential_type_id_str)): Path<(String, String)>,
+    tenant_context: TenantContext,
+) -> Result<(StatusCode, Json<AssignmentResponse>), ApiError> {
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
+    let credential_type_id = super::parse_credential_type_id(&credential_type_id_str)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let ownership = persistence::issuer_credential_types::tenant_owns_pair(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+        &credential_type_id,
+    )
+    .await?;
+    if !ownership.both() {
+        return Err(ApiError::NotFound);
+    }
+
+    let assignment = IssuerCredentialTypeAssignment::new(
+        issuer_id.clone(),
+        credential_type_id.clone(),
+        tenant_context.tenant_id.clone(),
+    );
+    let outcome = persistence::issuer_credential_types::assign(&mut conn, &assignment).await?;
+    let status = match outcome {
+        AssignOutcome::NowAssigned => StatusCode::CREATED,
+        AssignOutcome::AlreadyAssigned => StatusCode::OK,
+    };
+
+    Ok((
+        status,
+        Json(AssignmentResponse {
+            issuer_id: issuer_id.bare().to_string(),
+            credential_type_id: credential_type_id.bare().to_string(),
+        }),
+    ))
+}
+
+pub async fn unassign(
+    State(state): State<AppState>,
+    Path((issuer_id_str, credential_type_id_str)): Path<(String, String)>,
+    tenant_context: TenantContext,
+) -> Result<StatusCode, ApiError> {
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
+    let credential_type_id = super::parse_credential_type_id(&credential_type_id_str)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    // Probing defence: pair-ownership check first so a caller cannot
+    // probe for assignments against issuers or credential types they
+    // don't own. The unassign itself is then idempotent — a missing
+    // row still surfaces as 204.
+    let ownership = persistence::issuer_credential_types::tenant_owns_pair(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+        &credential_type_id,
+    )
+    .await?;
+    if !ownership.both() {
+        return Err(ApiError::NotFound);
+    }
+
+    persistence::issuer_credential_types::unassign(&mut conn, &issuer_id, &credential_type_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_assignments(
+    State(state): State<AppState>,
+    Path(issuer_id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<Json<ListAssignedCredentialTypesResponse>, ApiError> {
+    let issuer_id = super::parse_issuer_id(&issuer_id_str)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let issuer_owned =
+        persistence::issuers::exists_for_tenant(&mut conn, &tenant_context.tenant_id, &issuer_id)
+            .await?;
+    if !issuer_owned {
+        return Err(ApiError::NotFound);
+    }
+
+    let rows = persistence::credential_types::list_assigned_to_issuer(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &issuer_id,
+    )
+    .await?;
+    let items = rows.into_iter().map(Into::into).collect();
+    Ok(Json(ListAssignedCredentialTypesResponse { items }))
 }
 
 // Schema documents are served with `application/schema+json` so

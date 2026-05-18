@@ -98,6 +98,14 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/credential-types/{credential_type_id}/claims",
             get(credential_types::get_claims).put(credential_types::put_claims),
         )
+        .route(
+            "/api/v1/issuers/{issuer_id}/credential-types",
+            get(credential_types::list_assignments),
+        )
+        .route(
+            "/api/v1/issuers/{issuer_id}/credential-types/{credential_type_id}",
+            post(credential_types::assign).delete(credential_types::unassign),
+        )
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }

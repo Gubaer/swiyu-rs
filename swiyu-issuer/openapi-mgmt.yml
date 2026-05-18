@@ -948,6 +948,82 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/issuers/{issuer_id}/credential-types:
+    get:
+      summary: List credential types assigned to an issuer
+      description: |
+        Returns the structured fields of every credential type
+        currently assigned to the named issuer. Cross-tenant access
+        (issuer unknown to the calling tenant) returns `404`.
+      operationId: listIssuerCredentialTypes
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+      responses:
+        '200':
+          description: List of assigned credential types.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAssignedCredentialTypesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/issuers/{issuer_id}/credential-types/{credential_type_id}:
+    post:
+      summary: Assign a credential type to an issuer
+      description: |
+        Verifies that the calling tenant owns *both* the issuer and
+        the credential type in a single SQL probe; either being
+        unknown to the tenant returns `404` (probing-defence
+        convention). Idempotent: a fresh assignment returns `201`,
+        a duplicate against an already-existing row returns `200`.
+        The body is empty by convention; clients may send no body,
+        an empty body, or `{}`.
+      operationId: assignCredentialTypeToIssuer
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+        - $ref: '#/components/parameters/CredentialTypeId'
+      responses:
+        '200':
+          description: Idempotent re-assignment; the row already existed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentResponse'
+        '201':
+          description: Fresh assignment; the row was newly inserted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssignmentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Un-assign a credential type from an issuer
+      description: |
+        Removes the assignment row. Idempotent: deleting an
+        already-absent assignment still returns `204`. The
+        pair-ownership check runs first; either half being unknown
+        to the calling tenant returns `404`. Already-issued
+        credentials are unaffected.
+      operationId: unassignCredentialTypeFromIssuer
+      parameters:
+        - $ref: '#/components/parameters/IssuerId'
+        - $ref: '#/components/parameters/CredentialTypeId'
+      responses:
+        '204':
+          description: |
+            Assignment removed (or never existed; both cases share
+            the idempotent response).
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/v1/credential-types/{credential_type_id}/retire:
     post:
       summary: Retire a credential type
@@ -1661,3 +1737,23 @@ components:
         retired_at:
           type: string
           format: date-time
+
+    AssignmentResponse:
+      type: object
+      required: [issuer_id, credential_type_id]
+      properties:
+        issuer_id:
+          type: string
+          example: 9hXq2vRtL8pK7f
+        credential_type_id:
+          type: string
+          example: 9hXq2vRtL8pK7f
+
+    ListAssignedCredentialTypesResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/GetCredentialTypeResponse'

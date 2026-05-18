@@ -1,9 +1,50 @@
+use sqlx::Row;
 use sqlx::postgres::PgConnection;
 
-use crate::domain::{CredentialTypeId, IssuerCredentialTypeAssignment, IssuerId};
+use crate::domain::{CredentialTypeId, IssuerCredentialTypeAssignment, IssuerId, TenantId};
 
 use super::PersistenceError;
 use super::helpers::map_database_error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PairOwnership {
+    pub issuer_owned: bool,
+    pub credential_type_owned: bool,
+}
+
+impl PairOwnership {
+    pub fn both(self) -> bool {
+        self.issuer_owned && self.credential_type_owned
+    }
+}
+
+/// Checks both halves of the assignment-ownership predicate in a
+/// single SQL round-trip. The result distinguishes which half failed
+/// so the handler can log the cause; the wire response collapses
+/// either failure to `404`.
+pub async fn tenant_owns_pair(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+    credential_type_id: &CredentialTypeId,
+) -> Result<PairOwnership, PersistenceError> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            EXISTS(SELECT 1 FROM issuers WHERE id = $1 AND tenant_id = $3) AS issuer_owned,
+            EXISTS(SELECT 1 FROM credential_types WHERE id = $2 AND tenant_id = $3) AS credential_type_owned
+        "#,
+    )
+    .bind(issuer_id)
+    .bind(credential_type_id)
+    .bind(tenant_id)
+    .fetch_one(conn)
+    .await?;
+    Ok(PairOwnership {
+        issuer_owned: row.try_get("issuer_owned")?,
+        credential_type_owned: row.try_get("credential_type_owned")?,
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssignOutcome {

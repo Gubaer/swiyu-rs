@@ -338,3 +338,22 @@ pub struct RetireCredentialTypeResponse {
     pub credential_type_id: String,
     pub retired_at: DateTime<Utc>,
 }
+
+/// Response body returned by
+/// `POST /api/v1/issuers/{issuer_id}/credential-types/{credential_type_id}`.
+///
+/// HTTP `201` for a fresh assignment, `200` for the idempotent
+/// re-assign of an already-existing row. The body is identical in
+/// both cases.
+#[derive(Debug, Serialize)]
+pub struct AssignmentResponse {
+    pub issuer_id: String,
+    pub credential_type_id: String,
+}
+
+/// Response body returned by
+/// `GET /api/v1/issuers/{issuer_id}/credential-types`.
+#[derive(Debug, Serialize)]
+pub struct ListAssignedCredentialTypesResponse {
+    pub items: Vec<GetCredentialTypeResponse>,
+}

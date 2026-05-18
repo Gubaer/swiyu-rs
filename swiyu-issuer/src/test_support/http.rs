@@ -57,6 +57,14 @@ pub fn put_request_json(uri: &str, bearer: Option<&str>, body: Value) -> Request
         .unwrap()
 }
 
+pub fn delete_request(uri: &str, bearer: Option<&str>) -> Request<Body> {
+    let mut builder = Request::builder().method("DELETE").uri(uri);
+    if let Some(b) = bearer {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
+    }
+    builder.body(Body::empty()).unwrap()
+}
+
 pub async fn read_body(response: axum::response::Response) -> Value {
     let bytes = body::to_bytes(response.into_body(), usize::MAX)
         .await

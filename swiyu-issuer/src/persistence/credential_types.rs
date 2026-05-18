@@ -5,7 +5,7 @@ use sqlx::postgres::PgConnection;
 use sqlx::postgres::PgRow;
 use sqlx::postgres::types::PgInterval;
 
-use crate::domain::{CredentialType, CredentialTypeId, RevocationMode, TenantId};
+use crate::domain::{CredentialType, CredentialTypeId, IssuerId, RevocationMode, TenantId};
 
 use super::PersistenceError;
 use super::helpers::map_database_error;
@@ -168,6 +168,38 @@ pub async fn list(
     }
 
     Ok(ListPage { items, has_more })
+}
+
+/// Returns the credential-type rows assigned to `issuer_id`, scoped
+/// to `tenant_id`. Cross-tenant rows are filtered server-side via
+/// the `tenant_id` predicate on `credential_types`. Retired rows are
+/// included — the caller decides whether to surface them.
+pub async fn list_assigned_to_issuer(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    issuer_id: &IssuerId,
+) -> Result<Vec<CredentialType>, PersistenceError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT ct.id, ct.tenant_id, ct.vct,
+               ct.display, ct.internal_description,
+               ct.claim_schema, ct.claim_schema_source_url, ct.claim_schema_fetched_at,
+               ct.claims,
+               ct.default_validity_duration, ct.revocation_mode,
+               ct.created_at, ct.updated_at, ct.retired_at
+        FROM credential_types ct
+        JOIN issuer_credential_types ict
+            ON ict.credential_type_id = ct.id
+        WHERE ict.issuer_id = $1
+          AND ct.tenant_id = $2
+        ORDER BY ict.assigned_at DESC, ct.id DESC
+        "#,
+    )
+    .bind(issuer_id)
+    .bind(tenant_id)
+    .fetch_all(conn)
+    .await?;
+    rows.iter().map(row_to_credential_type).collect()
 }
 
 /// Applies a partial update to the structured (non-blob) columns and
