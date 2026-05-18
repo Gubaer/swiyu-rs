@@ -20,8 +20,8 @@ use tower::ServiceExt;
 
 use swiyu_issuer::api_oidc::{AppState, Config, router};
 use swiyu_issuer::domain::{
-    AccessTokenSecret, AnySigningEngine, CredentialOffer, DevSigningEngine, Issuer, IssuerId,
-    KeyRole, NonceSecret, PreAuthCode, SigningEngine, TenantId,
+    AccessTokenSecret, AnySigningEngine, CredentialOffer, CredentialType, DevSigningEngine, Issuer,
+    IssuerId, KeyRole, NonceSecret, PreAuthCode, RevocationMode, SigningEngine, TenantId,
 };
 use swiyu_issuer::persistence;
 
@@ -66,10 +66,22 @@ async fn create_onboarded_issuer(pool: &PgPool, tenant_id: &TenantId) -> Issuer 
 }
 
 async fn create_pending_offer(pool: &PgPool, issuer: &Issuer, claims: Value) -> CredentialOffer {
+    let credential_type = CredentialType::new(
+        issuer.tenant_id.clone(),
+        "vc-test".into(),
+        json!([]),
+        None,
+        json!({"type": "object"}),
+        json!({}),
+        Duration::days(365),
+        RevocationMode::None,
+    );
+    swiyu_issuer::test_support::persistence::credential_types::insert(pool, &credential_type).await;
+
     let offer = CredentialOffer::new(
         issuer.tenant_id.clone(),
         issuer.id.clone(),
-        None,
+        Some(credential_type.id.clone()),
         "vc-test".into(),
         claims,
         PreAuthCode::generate(),

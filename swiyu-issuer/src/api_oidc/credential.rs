@@ -4,7 +4,7 @@ use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -27,13 +27,6 @@ const SUPPORTED_PROOF_TYPE: &str = "jwt";
 /// matches the access-token TTL default and is also what the SWIYU
 /// integration registry uses elsewhere.
 const PROOF_IAT_SKEW_SECONDS: i64 = 300;
-
-/// How long an issued credential remains valid. v0.1.0 hard-codes one
-/// year; a per-credential-type policy lands when credential-type
-/// management does. The same value drives both the JWS `exp` claim
-/// and the `issued_credentials.expires_at` column so the row mirrors
-/// what the wallet holds.
-const CREDENTIAL_VALIDITY_DAYS: i64 = 365;
 
 #[derive(Debug, Deserialize)]
 pub struct CredentialRequest {
@@ -137,6 +130,31 @@ pub async fn credential(
         });
     }
 
+    // Per-credential-type validity: the issued credential's `exp`
+    // and the `issued_credentials.expires_at` column derive from the
+    // credential type's `default_validity_duration`. Retired types
+    // still resolve (retirement does not invalidate in-flight
+    // redemption of an already-pending offer); only missing rows or
+    // offers without a `credential_type_id` (legacy pre-migration)
+    // fail.
+    let credential_type_id = offer.credential_type_id.as_ref().ok_or_else(|| {
+        OAuthError::Internal(Box::new(std::io::Error::other(
+            "offer lacks credential_type_id; legacy rows cannot be issued",
+        )))
+    })?;
+    let credential_type = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &token.tenant_id,
+        credential_type_id,
+    )
+    .await
+    .map_err(OAuthError::from)?
+    .ok_or_else(|| {
+        OAuthError::Internal(Box::new(std::io::Error::other(
+            "credential type referenced by offer no longer exists",
+        )))
+    })?;
+
     let issuer = persistence::issuers::find_by_id(&mut conn, &issuer_id)
         .await
         .map_err(OAuthError::from)?
@@ -224,7 +242,7 @@ pub async fn credential(
         allocate_status_slot(&mut tx, &issuer.id).await?;
 
     let status_claim = build_status_claim(&status_list_registry_url, status_list_index);
-    let expires_at = now + Duration::days(CREDENTIAL_VALIDITY_DAYS);
+    let expires_at = now + credential_type.default_validity_duration;
     let credential = build_sd_jwt_vc(
         state.signing_engine.as_ref(),
         &assertion_key_id,
@@ -881,7 +899,7 @@ mod tests {
         }
 
         fn fixture_expires_at(now: DateTime<Utc>) -> DateTime<Utc> {
-            now + Duration::days(CREDENTIAL_VALIDITY_DAYS)
+            now + Duration::days(365)
         }
 
         fn split_jws(credential: &str) -> (Value, Value, Vec<u8>) {
