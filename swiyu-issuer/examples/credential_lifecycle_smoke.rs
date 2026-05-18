@@ -27,9 +27,6 @@ const DEFAULT_POLL_MS: u64 = 1000;
 
 const SMOKE_TOKEN_TTL: Duration = Duration::from_secs(60 * 60);
 
-// The only credential type the management API ships a schema for
-// (see `domain::vct::CATALOGUE`). The smoke happens to issue one of
-// these; if more vcts land later it stays valid.
 const FIXTURE_VCT: &str = "urn:communal:local-residence-id";
 
 const PRE_AUTHORIZED_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";

@@ -14,7 +14,6 @@ pub mod secret_encryption_engine;
 pub mod signing_engine;
 pub mod status_list;
 pub mod tenant;
-pub mod vct;
 
 pub use access_token::{AccessToken, AccessTokenHash, AccessTokenSecret};
 pub use api_token::{ApiToken, ApiTokenHash, ApiTokenSecret};
