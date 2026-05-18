@@ -3,6 +3,7 @@ members = [
     "swiyu-core",
     "swiyu-didtool",
     "swiyu-issuer",
+    "swiyu-issuer-web/bff",
     "swiyu-registries",
 ]
 resolver = "2"

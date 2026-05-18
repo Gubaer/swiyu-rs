@@ -1,0 +1,17 @@
+.page-header h1 {
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+  font-weight: 500;
+}
+
+.did {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.empty {
+  text-align: center;
+  color: var(--p-text-muted-color);
+  padding: 2rem 0;
+}

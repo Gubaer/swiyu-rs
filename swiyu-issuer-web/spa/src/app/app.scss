@@ -1,0 +1,39 @@
+:host {
+  display: grid;
+  grid-template-areas:
+    'topbar topbar'
+    'sidebar content';
+  grid-template-columns: 220px 1fr;
+  grid-template-rows: auto 1fr;
+  height: 100dvh;
+}
+
+app-top-bar {
+  grid-area: topbar;
+  border-bottom: 1px solid var(--p-surface-200);
+}
+
+.sidebar-area {
+  grid-area: sidebar;
+  overflow-y: auto;
+  border-right: 1px solid var(--p-surface-200);
+}
+
+.content-area {
+  grid-area: content;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  :host {
+    grid-template-areas:
+      'topbar'
+      'content';
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-area {
+    display: none;
+  }
+}

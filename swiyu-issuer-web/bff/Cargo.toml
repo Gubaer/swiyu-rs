@@ -1,0 +1,16 @@
+[package]
+name = "swiyu-issuer-web-bff"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

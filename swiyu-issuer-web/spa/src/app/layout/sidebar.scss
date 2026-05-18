@@ -1,0 +1,38 @@
+:host {
+  display: block;
+  height: 100%;
+}
+
+.sidebar {
+  padding: 0.5rem 0;
+}
+
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  color: inherit;
+  text-decoration: none;
+  border-left: 3px solid transparent;
+
+  &:hover {
+    background: var(--p-surface-100);
+  }
+
+  &.active {
+    background: var(--p-primary-50);
+    border-left-color: var(--p-primary-color);
+    font-weight: 500;
+  }
+
+  i {
+    font-size: 1.05rem;
+  }
+}
