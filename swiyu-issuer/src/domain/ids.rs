@@ -1,48 +1,37 @@
-//! Identifier newtypes for the issuer's domain aggregates.
-//!
-//! Each aggregate type ([`TenantId`], [`IssuerId`],
-//! [`CredentialOfferId`], [`IssuedCredentialId`], [`StatusListId`],
-//! [`ApiTokenId`], [`TaskId`]) shares the same underlying scheme but
-//! stays separate at the type level so a [`TenantId`] cannot
-//! accidentally be passed where an [`IssuerId`] is expected.
-//!
-//! # Generation
-//!
-//! 10 bytes from the operating system's CSPRNG, base58-encoded.
-//! The result is a ~14-character string. 80 bits of entropy give a
-//! per-insert collision probability of about 10⁻⁹ at 100 million
-//! rows ever stored, so retry-on-conflict is a defensive measure
-//! that should never fire in practice.
-//!
-//! # Encoding choice: base58
-//!
-//! The wallet-facing credential-offer URL is rendered as a QR code;
-//! base58 keeps that URL short while staying URL-safe without
-//! percent-encoding. The Bitcoin base58 alphabet also excludes the
-//! visually similar characters `0`, `O`, `I`, and `l`, which
-//! reduces transcription errors when an identifier is read off a
-//! screen by a human. UUIDs were rejected for being unnecessarily
-//! long; hash-of-UUID for arriving at the same place by a longer
-//! route.
-//!
-//! # Prefix discipline
-//!
-//! Each ID type carries a textual prefix (`tenant_`, `issuer_`,
-//! `offer_`, `credential_`, `status_list_`, `apitok_`, `task_`)
-//! when displayed but stores only the bare form internally:
-//!
-//! - `bare()` returns the unprefixed string. Used for DB storage
-//!   and the wallet-facing offer URL, where every character
-//!   matters for QR density.
-//! - `Display` and `Serialize` produce the prefixed form. Used in
-//!   management-API JSON bodies and log lines so the type of an
-//!   identifier is self-evident in HTTP traffic and traces.
-//! - `FromStr` and `Deserialize` accept only the prefixed form,
-//!   validating both the prefix and the base58 alphabet.
-//!
-//! Validation lives in the constructor; the database does not
-//! enforce a `CHECK` constraint on the column, which keeps the
-//! schema easier to evolve.
+// Identifier newtypes for the issuer's domain aggregates. Each
+// aggregate type shares the same underlying scheme but stays separate
+// at the type level so a TenantId cannot accidentally be passed where
+// an IssuerId is expected.
+//
+// Generation: 10 bytes from the OS CSPRNG, base58-encoded. ~14 chars,
+// 80 bits of entropy -- per-insert collision probability ~10^-9 at
+// 100M rows, so retry-on-conflict is a defensive measure that should
+// never fire in practice.
+//
+// Encoding choice: base58. The wallet-facing credential-offer URL is
+// rendered as a QR code; base58 keeps that URL short while staying
+// URL-safe without percent-encoding. The Bitcoin base58 alphabet
+// also excludes the visually similar characters 0, O, I, l, reducing
+// transcription errors when an identifier is read off a screen.
+// UUIDs were rejected for being unnecessarily long.
+//
+// Prefix discipline: each ID type carries a textual prefix
+// (tenant_, issuer_, offer_, credential_, status_list_, apitok_,
+// task_, ctype_) when displayed but stores only the bare form
+// internally.
+//
+//   - bare() returns the unprefixed string. Used for DB storage and
+//     the wallet-facing offer URL, where every character matters for
+//     QR density.
+//   - Display and Serialize produce the prefixed form. Used in
+//     management-API JSON bodies and log lines so the type of an
+//     identifier is self-evident in HTTP traffic and traces.
+//   - FromStr and Deserialize accept only the prefixed form,
+//     validating both the prefix and the base58 alphabet.
+//
+// Validation lives in the constructor; the database does not enforce
+// a CHECK constraint on the column, which keeps the schema easier to
+// evolve.
 
 use std::fmt;
 use std::str::FromStr;
@@ -189,6 +178,7 @@ define_id!(IssuedCredentialId, "credential");
 define_id!(StatusListId, "status_list");
 define_id!(ApiTokenId, "apitok");
 define_id!(TaskId, "task");
+define_id!(CredentialTypeId, "ctype");
 
 #[cfg(test)]
 mod tests {
@@ -280,5 +270,18 @@ mod tests {
         let id = StatusListId::generate();
         let parsed: StatusListId = id.to_string().parse().unwrap();
         assert_eq!(id, parsed);
+    }
+
+    #[test]
+    fn credential_type_id_round_trips() {
+        let id = CredentialTypeId::generate();
+        let parsed: CredentialTypeId = id.to_string().parse().unwrap();
+        assert_eq!(id, parsed);
+    }
+
+    #[test]
+    fn credential_type_id_uses_ctype_prefix() {
+        let id = CredentialTypeId::from_bare("9hXq2vRtL8pK7f").unwrap();
+        assert_eq!(id.to_string(), "ctype_9hXq2vRtL8pK7f");
     }
 }
