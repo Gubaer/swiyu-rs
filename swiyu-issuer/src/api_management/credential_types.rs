@@ -1,0 +1,394 @@
+// HTTP handlers for the credential-type CRUD endpoints.
+
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use chrono::{Duration, Utc};
+
+use crate::domain::{CredentialType, CredentialTypeId, RevocationMode};
+use crate::persistence;
+use crate::persistence::credential_types::{ListPageQuery, StructuredUpdate, UpdateOutcome};
+
+use super::AppState;
+use super::auth::TenantContext;
+use super::dto::{
+    CreateCredentialTypeRequest, CreateCredentialTypeResponse, GetCredentialTypeResponse,
+    ListCredentialTypesQuery, ListCredentialTypesResponse, PatchCredentialTypeRequest,
+    RetireCredentialTypeResponse,
+};
+use super::error::ApiError;
+
+// Cap on BA-supplied free-text fields after trim. The columns are
+// TEXT-unbounded; the cap exists for API hygiene only.
+const MAX_FIELD_LENGTH: usize = 1024;
+
+// One second is the smallest useful validity; zero almost certainly
+// indicates a client bug.
+const MIN_VALIDITY_SECONDS: u64 = 1;
+
+// ~317 years. Safely fits `chrono::Duration` and is far past any
+// sensible credential lifetime.
+const MAX_VALIDITY_SECONDS: u64 = 10_000_000_000;
+
+pub async fn create(
+    State(state): State<AppState>,
+    tenant_context: TenantContext,
+    Json(payload): Json<CreateCredentialTypeRequest>,
+) -> Result<(StatusCode, Json<CreateCredentialTypeResponse>), ApiError> {
+    tracing::debug!(
+        tenant_id = %tenant_context.tenant_id,
+        vct = %payload.vct,
+        "credential-type create",
+    );
+
+    let vct = normalise_required("vct", &payload.vct)?;
+    let internal_description = normalise_optional(
+        "internal_description",
+        payload.internal_description.as_deref(),
+    )?;
+    let claim_schema_source_url = normalise_optional(
+        "claim_schema_source_url",
+        payload.claim_schema_source_url.as_deref(),
+    )?;
+    let seconds = payload.default_validity_seconds;
+    if !(MIN_VALIDITY_SECONDS..=MAX_VALIDITY_SECONDS).contains(&seconds) {
+        return Err(ApiError::InvalidInput {
+            details: format!(
+                "default_validity_seconds must be between {MIN_VALIDITY_SECONDS} and {MAX_VALIDITY_SECONDS}, got {seconds}"
+            ),
+        });
+    }
+    let default_validity =
+        Duration::try_seconds(seconds as i64).ok_or_else(|| ApiError::InvalidInput {
+            details: "default_validity_seconds out of range for chrono::Duration".into(),
+        })?;
+    let revocation_mode =
+        RevocationMode::try_from(payload.revocation_mode.as_str()).map_err(|err| {
+            ApiError::InvalidInput {
+                details: format!("revocation_mode: {err}"),
+            }
+        })?;
+    let display = validate_display(payload.display.unwrap_or_else(|| serde_json::json!([])))?;
+    let claims = validate_claims(payload.claims.unwrap_or_else(|| serde_json::json!({})))?;
+
+    // Compile the claim schema before inserting so an invalid
+    // document surfaces as 400 with the compiler's error.
+    jsonschema::validator_for(&payload.claim_schema).map_err(|err| ApiError::InvalidInput {
+        details: format!("claim_schema does not compile: {err}"),
+    })?;
+
+    let credential_type = CredentialType::new(
+        tenant_context.tenant_id.clone(),
+        vct,
+        display,
+        internal_description,
+        payload.claim_schema,
+        claims,
+        default_validity,
+        revocation_mode,
+    );
+    let credential_type = CredentialType {
+        claim_schema_source_url,
+        ..credential_type
+    };
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    persistence::credential_types::insert(&mut conn, &credential_type).await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateCredentialTypeResponse {
+            credential_type_id: credential_type.id.bare().to_string(),
+        }),
+    ))
+}
+
+pub async fn get(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<Json<GetCredentialTypeResponse>, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+    let row = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    Ok(Json(to_response(row)))
+}
+
+pub async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<ListCredentialTypesQuery>,
+    tenant_context: TenantContext,
+) -> Result<Json<ListCredentialTypesResponse>, ApiError> {
+    let limit = super::resolve_list_limit(query.limit)?;
+    let decoded_cursor = query
+        .cursor
+        .as_deref()
+        .map(|raw| super::cursor::decode(raw, |bare| CredentialTypeId::from_bare(bare).map(|_| ())))
+        .transpose()?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let page = persistence::credential_types::list(
+        &mut conn,
+        &tenant_context.tenant_id,
+        ListPageQuery {
+            cursor: decoded_cursor.map(|c| (c.timestamp, c.bare_id)),
+            limit,
+            include_retired: query.retired,
+        },
+    )
+    .await?;
+
+    let next_cursor = if page.has_more {
+        page.items
+            .last()
+            .map(|ct| super::cursor::encode(ct.created_at, ct.id.bare()))
+    } else {
+        None
+    };
+
+    let items = page.items.into_iter().map(to_response).collect();
+    Ok(Json(ListCredentialTypesResponse { items, next_cursor }))
+}
+
+pub async fn patch(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+    Json(payload): Json<PatchCredentialTypeRequest>,
+) -> Result<Json<GetCredentialTypeResponse>, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+
+    let vct = payload
+        .vct
+        .as_deref()
+        .map(|raw| normalise_required("vct", raw))
+        .transpose()?;
+    let internal_description = payload
+        .internal_description
+        .as_deref()
+        .map(|raw| normalise_required("internal_description", raw))
+        .transpose()?;
+    let claim_schema_source_url = payload
+        .claim_schema_source_url
+        .as_deref()
+        .map(|raw| normalise_required("claim_schema_source_url", raw))
+        .transpose()?;
+    let default_validity = match payload.default_validity_seconds {
+        Some(seconds) => {
+            if !(MIN_VALIDITY_SECONDS..=MAX_VALIDITY_SECONDS).contains(&seconds) {
+                return Err(ApiError::InvalidInput {
+                    details: format!(
+                        "default_validity_seconds must be between {MIN_VALIDITY_SECONDS} and {MAX_VALIDITY_SECONDS}, got {seconds}"
+                    ),
+                });
+            }
+            Some(
+                Duration::try_seconds(seconds as i64).ok_or_else(|| ApiError::InvalidInput {
+                    details: "default_validity_seconds out of range for chrono::Duration".into(),
+                })?,
+            )
+        }
+        None => None,
+    };
+    let revocation_mode = payload
+        .revocation_mode
+        .as_deref()
+        .map(|raw| {
+            RevocationMode::try_from(raw).map_err(|err| ApiError::InvalidInput {
+                details: format!("revocation_mode: {err}"),
+            })
+        })
+        .transpose()?;
+
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let outcome = persistence::credential_types::update_structured(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+        StructuredUpdate {
+            vct: vct.as_deref(),
+            internal_description: internal_description.as_deref(),
+            claim_schema_source_url: claim_schema_source_url.as_deref(),
+            default_validity_duration: default_validity,
+            revocation_mode,
+        },
+    )
+    .await?;
+
+    if outcome == UpdateOutcome::NotFound {
+        return Err(ApiError::NotFound);
+    }
+
+    let row = persistence::credential_types::find_by_id_for_tenant(
+        &mut conn,
+        &tenant_context.tenant_id,
+        &id,
+    )
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    Ok(Json(to_response(row)))
+}
+
+pub async fn retire(
+    State(state): State<AppState>,
+    Path(id_str): Path<String>,
+    tenant_context: TenantContext,
+) -> Result<Json<RetireCredentialTypeResponse>, ApiError> {
+    let id = super::parse_credential_type_id(&id_str)?;
+    let now = Utc::now();
+
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    let outcome =
+        persistence::credential_types::retire(&mut tx, &tenant_context.tenant_id, &id, now).await?;
+    if outcome == UpdateOutcome::NotFound {
+        return Err(ApiError::NotFound);
+    }
+    tx.commit()
+        .await
+        .map_err(|err| ApiError::Internal(Box::new(err)))?;
+
+    Ok(Json(RetireCredentialTypeResponse {
+        credential_type_id: id.bare().to_string(),
+        retired_at: now,
+    }))
+}
+
+fn to_response(ct: CredentialType) -> GetCredentialTypeResponse {
+    GetCredentialTypeResponse {
+        credential_type_id: ct.id.bare().to_string(),
+        vct: ct.vct,
+        internal_description: ct.internal_description,
+        claim_schema_source_url: ct.claim_schema_source_url,
+        claim_schema_fetched_at: ct.claim_schema_fetched_at,
+        // Negative durations are impossible since the persistence
+        // layer holds an unsigned-ish microsecond count and `new`
+        // accepts only positive durations, so `u64` cast is safe.
+        default_validity_seconds: ct
+            .default_validity_duration
+            .num_seconds()
+            .max(0)
+            .unsigned_abs(),
+        revocation_mode: ct.revocation_mode.as_str().to_string(),
+        created_at: ct.created_at,
+        updated_at: ct.updated_at,
+        retired_at: ct.retired_at,
+    }
+}
+
+fn validate_display(value: serde_json::Value) -> Result<serde_json::Value, ApiError> {
+    if !value.is_array() {
+        return Err(ApiError::InvalidInput {
+            details: "display must be a JSON array".into(),
+        });
+    }
+    Ok(value)
+}
+
+fn validate_claims(value: serde_json::Value) -> Result<serde_json::Value, ApiError> {
+    if !value.is_object() {
+        return Err(ApiError::InvalidInput {
+            details: "claims must be a JSON object".into(),
+        });
+    }
+    Ok(value)
+}
+
+fn normalise_required(name: &'static str, raw: &str) -> Result<String, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::InvalidInput {
+            details: format!("{name} must not be blank"),
+        });
+    }
+    if trimmed.len() > MAX_FIELD_LENGTH {
+        return Err(ApiError::InvalidInput {
+            details: format!(
+                "{name} must be at most {MAX_FIELD_LENGTH} bytes (got {})",
+                trimmed.len()
+            ),
+        });
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalise_optional(name: &'static str, raw: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() > MAX_FIELD_LENGTH {
+        return Err(ApiError::InvalidInput {
+            details: format!(
+                "{name} must be at most {MAX_FIELD_LENGTH} bytes (got {})",
+                trimmed.len()
+            ),
+        });
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_display_accepts_array() {
+        assert!(validate_display(serde_json::json!([])).is_ok());
+        assert!(validate_display(serde_json::json!([{ "name": "X" }])).is_ok());
+    }
+
+    #[test]
+    fn validate_display_rejects_object() {
+        assert!(matches!(
+            validate_display(serde_json::json!({})),
+            Err(ApiError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_claims_accepts_object() {
+        assert!(validate_claims(serde_json::json!({})).is_ok());
+    }
+
+    #[test]
+    fn validate_claims_rejects_array() {
+        assert!(matches!(
+            validate_claims(serde_json::json!([])),
+            Err(ApiError::InvalidInput { .. })
+        ));
+    }
+}

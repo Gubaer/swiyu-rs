@@ -1,5 +1,6 @@
 mod auth;
 mod credential_offers;
+mod credential_types;
 mod cursor;
 mod dto;
 mod error;
@@ -12,7 +13,7 @@ mod state;
 pub use error::ApiError;
 pub use state::{AppState, Config};
 
-use crate::domain::IssuerId;
+use crate::domain::{CredentialTypeId, IssuerId};
 
 use axum::Router;
 use axum::extract::State;
@@ -73,6 +74,18 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/issuers/{issuer_id}/credentials/{credential_id}/revoke",
             post(issued_credentials::revoke),
         )
+        .route(
+            "/api/v1/credential-types",
+            post(credential_types::create).get(credential_types::list),
+        )
+        .route(
+            "/api/v1/credential-types/{credential_type_id}",
+            get(credential_types::get).patch(credential_types::patch),
+        )
+        .route(
+            "/api/v1/credential-types/{credential_type_id}/retire",
+            post(credential_types::retire),
+        )
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -104,6 +117,12 @@ fn resolve_list_limit(requested: Option<u32>) -> Result<u32, ApiError> {
 fn parse_issuer_id(raw: &str) -> Result<IssuerId, ApiError> {
     IssuerId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
         details: format!("issuer_id path parameter: {err}"),
+    })
+}
+
+fn parse_credential_type_id(raw: &str) -> Result<CredentialTypeId, ApiError> {
+    CredentialTypeId::from_bare(raw).map_err(|err| ApiError::InvalidInput {
+        details: format!("credential_type_id path parameter: {err}"),
     })
 }
 
@@ -161,6 +180,19 @@ mod tests {
     fn parse_issuer_id_rejects_invalid_character() {
         assert!(matches!(
             parse_issuer_id("notValid0").unwrap_err(),
+            ApiError::InvalidInput { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_credential_type_id_accepts_valid_base58() {
+        assert!(parse_credential_type_id("9hXq2vRtL8pK7f").is_ok());
+    }
+
+    #[test]
+    fn parse_credential_type_id_rejects_invalid_character() {
+        assert!(matches!(
+            parse_credential_type_id("notValid0").unwrap_err(),
             ApiError::InvalidInput { .. }
         ));
     }

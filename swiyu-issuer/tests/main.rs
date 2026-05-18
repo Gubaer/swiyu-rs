@@ -9,6 +9,7 @@ mod api_deactivate_issuer;
 mod api_get_issuer;
 mod api_get_operation_task;
 mod api_list_issuers;
+mod api_management_credential_types;
 mod api_management_issued_credentials;
 mod api_management_issued_credentials_get;
 mod api_oidc_credential;
