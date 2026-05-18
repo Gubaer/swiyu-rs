@@ -3,6 +3,7 @@ use std::sync::Arc;
 use sqlx::PgPool;
 
 use crate::domain::AnySigningEngine;
+use crate::state::ValidatorCache;
 
 pub struct Config {
     /// Public base URL the wallet sees. The metadata document
@@ -39,6 +40,7 @@ pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<Config>,
     pub signing_engine: Arc<AnySigningEngine>,
+    pub validators: Arc<ValidatorCache>,
 }
 
 impl AppState {
@@ -47,6 +49,7 @@ impl AppState {
             pool,
             config: Arc::new(config),
             signing_engine,
+            validators: Arc::new(ValidatorCache::new()),
         }
     }
 }
