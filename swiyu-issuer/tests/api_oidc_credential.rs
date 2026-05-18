@@ -69,6 +69,7 @@ async fn create_pending_offer(pool: &PgPool, issuer: &Issuer, claims: Value) -> 
     let offer = CredentialOffer::new(
         issuer.tenant_id.clone(),
         issuer.id.clone(),
+        None,
         "vc-test".into(),
         claims,
         PreAuthCode::generate(),

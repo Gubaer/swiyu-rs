@@ -13,17 +13,18 @@ pub async fn insert(
     sqlx::query(
         r#"
         INSERT INTO credential_offers (
-            id, tenant_id, issuer_id, vct, claims, state,
-            pre_auth_code, expires_at, created_at,
+            id, tenant_id, issuer_id, vct, credential_type_id,
+            claims, state, pre_auth_code, expires_at, created_at,
             issued_at, cancelled_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         "#,
     )
     .bind(&offer.id)
     .bind(&offer.tenant_id)
     .bind(&offer.issuer_id)
     .bind(&offer.vct)
+    .bind(offer.credential_type_id.as_ref())
     .bind(&offer.claims)
     .bind(offer.state)
     .bind(offer.pre_auth_code.as_ref())
@@ -46,8 +47,8 @@ pub async fn find_by_id(
 ) -> Result<CredentialOffer, PersistenceError> {
     sqlx::query_as::<_, CredentialOffer>(
         r#"
-        SELECT id, tenant_id, issuer_id, vct, claims, state,
-               pre_auth_code, expires_at, created_at,
+        SELECT id, tenant_id, issuer_id, vct, credential_type_id,
+               claims, state, pre_auth_code, expires_at, created_at,
                issued_at, cancelled_at
         FROM credential_offers
         WHERE id = $1 AND tenant_id = $2 AND issuer_id = $3
@@ -95,8 +96,8 @@ pub async fn list(
 
     let mut offers = sqlx::query_as::<_, CredentialOffer>(
         r#"
-        SELECT id, tenant_id, issuer_id, vct, claims, state,
-               pre_auth_code, expires_at, created_at,
+        SELECT id, tenant_id, issuer_id, vct, credential_type_id,
+               claims, state, pre_auth_code, expires_at, created_at,
                issued_at, cancelled_at
         FROM credential_offers
         WHERE tenant_id = $1

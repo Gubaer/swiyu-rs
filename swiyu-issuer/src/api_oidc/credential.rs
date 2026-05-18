@@ -855,6 +855,7 @@ mod tests {
             CredentialOffer::new(
                 TenantId::generate(),
                 IssuerId::generate(),
+                None,
                 "vc-fixture".into(),
                 claims,
                 PreAuthCode::generate(),
