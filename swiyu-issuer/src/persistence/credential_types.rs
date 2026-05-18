@@ -122,6 +122,37 @@ pub async fn find_by_id_for_tenant(
     }
 }
 
+/// Lookup by `(tenant_id, vct)`, the natural composite key on the
+/// table. Useful where the caller knows the vct but not the
+/// generated id; the management API addresses credential types by
+/// id, so this lookup is mostly for seeding and migration paths.
+pub async fn find_by_vct_for_tenant(
+    conn: &mut PgConnection,
+    tenant_id: &TenantId,
+    vct: &str,
+) -> Result<Option<CredentialType>, PersistenceError> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, tenant_id, vct,
+               display, internal_description,
+               claim_schema, claim_schema_source_url, claim_schema_fetched_at,
+               claims,
+               default_validity_duration, revocation_mode,
+               created_at, updated_at, retired_at
+        FROM credential_types
+        WHERE tenant_id = $1 AND vct = $2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(vct)
+    .fetch_optional(conn)
+    .await?;
+    match row {
+        Some(row) => Ok(Some(row_to_credential_type(&row)?)),
+        None => Ok(None),
+    }
+}
+
 pub async fn list(
     conn: &mut PgConnection,
     tenant_id: &TenantId,

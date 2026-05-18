@@ -675,3 +675,182 @@ fn parse_dev_tenant_args_invalid_partner_id_errors() {
         other => panic!("expected InvalidUuid, got {other:?}"),
     }
 }
+
+const DEV_DUMMY_VCT: &str = "urn:dummy:dummy-credential";
+
+#[sqlx::test(migrations = "./migrations")]
+async fn bootstrap_seeds_credential_type_when_tenant_has_no_issuers(pool: PgPool) {
+    let engine = oauth::test_engine();
+    let partner_id: Uuid = SAMPLE_PARTNER_ID.parse().unwrap();
+
+    let tenant_id = bootstrap_dev_from_env(&pool, bootstrap_args_full(partner_id), false, &engine)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let credential_type = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+        &mut conn,
+        &tenant_id,
+        DEV_DUMMY_VCT,
+    )
+    .await
+    .unwrap()
+    .expect("dummy credential type was seeded");
+    assert_eq!(credential_type.vct, DEV_DUMMY_VCT);
+
+    // No issuer existed, so the assignment table stays empty.
+    let assignments = swiyu_issuer::persistence::issuer_credential_types::list_by_credential_type(
+        &mut conn,
+        &credential_type.id,
+    )
+    .await
+    .unwrap();
+    assert!(assignments.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn bootstrap_assigns_credential_type_to_existing_issuer(pool: PgPool) {
+    // Create the tenant first so the issuer-insert FK is satisfied.
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+    let issuer =
+        swiyu_issuer::test_support::persistence::issuers::insert_active(&pool, &tenant_id).await;
+
+    // Seed via the helper directly so the test doesn't have to thread
+    // a matching partner_id through the BootstrapDevTenantArgs path.
+    swiyu_issuer::cli::tenant::seed_dev_credential_type_and_assignments(&pool, &tenant_id, false)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let credential_type = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+        &mut conn,
+        &tenant_id,
+        DEV_DUMMY_VCT,
+    )
+    .await
+    .unwrap()
+    .expect("credential type was seeded");
+    let assignments = swiyu_issuer::persistence::issuer_credential_types::list_by_credential_type(
+        &mut conn,
+        &credential_type.id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(assignments.len(), 1);
+    assert_eq!(assignments[0].issuer_id, issuer.id);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn bootstrap_is_idempotent_without_force(pool: PgPool) {
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+
+    swiyu_issuer::cli::tenant::seed_dev_credential_type_and_assignments(&pool, &tenant_id, false)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let row1 = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+        &mut conn,
+        &tenant_id,
+        DEV_DUMMY_VCT,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    drop(conn);
+
+    // Second run without --force leaves the row untouched.
+    swiyu_issuer::cli::tenant::seed_dev_credential_type_and_assignments(&pool, &tenant_id, false)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let row2 = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+        &mut conn,
+        &tenant_id,
+        DEV_DUMMY_VCT,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(row1.id, row2.id);
+    assert_eq!(row1.updated_at, row2.updated_at);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn bootstrap_with_force_rewrites_edited_row(pool: PgPool) {
+    use serde_json::json;
+    use swiyu_issuer::persistence::credential_types::{StructuredUpdate, update_blob_schema};
+
+    let tenant_id = TenantId::generate();
+    insert_test_tenant(&pool, &tenant_id).await;
+
+    swiyu_issuer::cli::tenant::seed_dev_credential_type_and_assignments(&pool, &tenant_id, false)
+        .await
+        .unwrap();
+
+    // Simulate a contributor edit: change a structured field and
+    // replace the schema with something obviously different.
+    let mut conn = pool.acquire().await.unwrap();
+    let initial = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+        &mut conn,
+        &tenant_id,
+        DEV_DUMMY_VCT,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    swiyu_issuer::persistence::credential_types::update_structured(
+        &mut conn,
+        &tenant_id,
+        &initial.id,
+        StructuredUpdate {
+            internal_description: Some("hand-edited by contributor"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    update_blob_schema(
+        &mut conn,
+        &tenant_id,
+        &initial.id,
+        &json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": { "age": { "type": "integer" } },
+            "required": ["age"]
+        }),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    // --force resets the row to the dummy defaults.
+    swiyu_issuer::cli::tenant::seed_dev_credential_type_and_assignments(&pool, &tenant_id, true)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let rewritten = swiyu_issuer::persistence::credential_types::find_by_vct_for_tenant(
+        &mut conn,
+        &tenant_id,
+        DEV_DUMMY_VCT,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(rewritten.id, initial.id);
+    assert_eq!(
+        rewritten.internal_description.as_deref(),
+        Some("Auto-seeded dummy credential type for local development"),
+    );
+    // The schema is back to the dummy first_name/last_name shape.
+    assert_eq!(
+        rewritten.claim_schema["required"],
+        json!(["first_name", "last_name"])
+    );
+}

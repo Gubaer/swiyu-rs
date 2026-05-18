@@ -1,13 +1,23 @@
 pub mod api_token;
 
+use chrono::Duration;
 use secrecy::SecretString;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::domain::TenantId;
 use crate::domain::secret_encryption_engine::AnySecretEncryptionEngine;
+use crate::domain::{CredentialType, IssuerCredentialTypeAssignment, RevocationMode, TenantId};
+use crate::persistence::credential_types::StructuredUpdate;
+use crate::persistence::issuers::ListPageQuery as IssuersListPageQuery;
 use crate::persistence::tenants::UpdateOutcome;
 use crate::persistence::{self, PersistenceError};
+
+// `vct` value of the auto-seeded dev credential type. The dummy
+// URI scheme makes it obvious in any wire trace that the row is a
+// dev placeholder, not a real credential type.
+const DEV_DUMMY_VCT: &str = "urn:dummy:dummy-credential";
+const DEV_DUMMY_INTERNAL_DESCRIPTION: &str =
+    "Auto-seeded dummy credential type for local development";
 
 #[derive(Debug, thiserror::Error)]
 pub enum CreateTenantError {
@@ -362,5 +372,144 @@ pub async fn bootstrap_dev_from_env(
     };
 
     tx.commit().await?;
+
+    seed_dev_credential_type_and_assignments(pool, &tenant_id, force).await?;
+
     Ok(tenant_id)
+}
+
+/// Seeds the dummy credential type and assigns it to every active
+/// issuer the dev tenant currently owns. Idempotent without `force`
+/// (existing row is left untouched); with `force = true` the row's
+/// structured fields are rewritten and all three blob columns are
+/// re-uploaded so a contributor who tweaked the row locally can
+/// reset it to the dummy defaults.
+///
+/// Issuer creation is not part of this flow — when the dev tenant
+/// has no issuers yet, the credential type is still seeded but no
+/// assignment row is written. The next bootstrap run (after the
+/// contributor creates an issuer via the management API) picks up
+/// the new issuer and inserts the assignment row idempotently.
+pub async fn seed_dev_credential_type_and_assignments(
+    pool: &PgPool,
+    tenant_id: &TenantId,
+    force: bool,
+) -> Result<(), BootstrapDevError> {
+    let mut tx = pool.begin().await?;
+
+    let existing =
+        persistence::credential_types::find_by_vct_for_tenant(&mut tx, tenant_id, DEV_DUMMY_VCT)
+            .await?;
+
+    let credential_type_id = match (existing, force) {
+        (Some(row), false) => {
+            tracing::info!(
+                credential_type_id = %row.id,
+                "dev credential type already exists; skipping (pass --force to overwrite)",
+            );
+            row.id
+        }
+        (Some(row), true) => {
+            persistence::credential_types::update_structured(
+                &mut tx,
+                tenant_id,
+                &row.id,
+                StructuredUpdate {
+                    internal_description: Some(DEV_DUMMY_INTERNAL_DESCRIPTION),
+                    default_validity_duration: Some(Duration::days(365)),
+                    revocation_mode: Some(RevocationMode::RevocableAndSuspendable),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            let schema = dev_dummy_claim_schema();
+            persistence::credential_types::update_blob_schema(&mut tx, tenant_id, &row.id, &schema)
+                .await?;
+            persistence::credential_types::update_blob_display(
+                &mut tx,
+                tenant_id,
+                &row.id,
+                &dev_dummy_display(),
+            )
+            .await?;
+            persistence::credential_types::update_blob_claims(
+                &mut tx,
+                tenant_id,
+                &row.id,
+                &dev_dummy_claims(),
+            )
+            .await?;
+            tracing::info!(
+                credential_type_id = %row.id,
+                "dev credential type rewritten under --force",
+            );
+            row.id
+        }
+        (None, _) => {
+            let credential_type = CredentialType::new(
+                tenant_id.clone(),
+                DEV_DUMMY_VCT.to_string(),
+                dev_dummy_display(),
+                Some(DEV_DUMMY_INTERNAL_DESCRIPTION.to_string()),
+                dev_dummy_claim_schema(),
+                dev_dummy_claims(),
+                Duration::days(365),
+                RevocationMode::RevocableAndSuspendable,
+            );
+            persistence::credential_types::insert(&mut tx, &credential_type).await?;
+            tracing::info!(
+                credential_type_id = %credential_type.id,
+                "dev credential type seeded",
+            );
+            credential_type.id
+        }
+    };
+
+    let issuers = persistence::issuers::list(
+        &mut tx,
+        tenant_id,
+        IssuersListPageQuery {
+            cursor: None,
+            limit: 100,
+        },
+    )
+    .await?;
+
+    if issuers.items.is_empty() {
+        tracing::warn!(
+            "dev tenant has no issuers; credential type seeded but no assignment row written",
+        );
+    }
+
+    for issuer in issuers.items {
+        let assignment = IssuerCredentialTypeAssignment::new(
+            issuer.id.clone(),
+            credential_type_id.clone(),
+            tenant_id.clone(),
+        );
+        persistence::issuer_credential_types::assign(&mut tx, &assignment).await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+fn dev_dummy_claim_schema() -> serde_json::Value {
+    serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "first_name": { "type": "string" },
+            "last_name":  { "type": "string" }
+        },
+        "required": ["first_name", "last_name"]
+    })
+}
+
+fn dev_dummy_display() -> serde_json::Value {
+    serde_json::json!([])
+}
+
+fn dev_dummy_claims() -> serde_json::Value {
+    serde_json::json!({})
 }
