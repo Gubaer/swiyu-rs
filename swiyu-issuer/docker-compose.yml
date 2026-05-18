@@ -219,7 +219,6 @@ services:
       DEV_BOOTSTRAP_TIMEOUT_SECS: ${DEV_BOOTSTRAP_TIMEOUT_SECS:-300}
       RUST_LOG: ${RUST_LOG:-info,swiyu_issuer=debug}
     command:
-      - swiyu-issuer-cli
       - tenant
       - ensure-dev-issuer-from-env
     restart: "no"

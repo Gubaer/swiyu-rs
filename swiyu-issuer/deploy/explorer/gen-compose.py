@@ -29,13 +29,16 @@ except ImportError:
 
 REGISTRY = "ghcr.io/gubaer"
 
-# Dev-compose service name -> image name in the registry. bootstrap-dev-tenant
-# uses the same image as swiyu-issuer-cli (different entrypoint, two-phase seed).
+# Dev-compose service name -> image name in the registry. The two
+# bootstrap sidecars (`bootstrap-dev-tenant`, `bootstrap-dev-issuer`)
+# both run the swiyu-issuer-cli image, differing only in entrypoint /
+# command — same binary, different invocations.
 SERVICE_TO_IMAGE = {
     "swiyu-issuer-mgmtapi": "swiyu-issuer-mgmtapi",
     "swiyu-issuer-oidcapi": "swiyu-issuer-oidcapi",
     "swiyu-issuer-cli": "swiyu-issuer-cli",
     "bootstrap-dev-tenant": "swiyu-issuer-cli",
+    "bootstrap-dev-issuer": "swiyu-issuer-cli",
 }
 
 EXPLORER_HEADER = """\
