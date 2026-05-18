@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use super::ids::{CredentialTypeId, IssuerId, TenantId};
 
 /// Link row connecting an issuer to a credential type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct IssuerCredentialTypeAssignment {
     /// The issuer offering the credential type.
     pub issuer_id: IssuerId,

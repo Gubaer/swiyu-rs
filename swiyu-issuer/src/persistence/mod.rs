@@ -1,8 +1,10 @@
 pub mod api_tokens;
 pub mod credential_offers;
+pub mod credential_types;
 mod errors;
 mod helpers;
 pub mod issued_credentials;
+pub mod issuer_credential_types;
 pub mod issuers;
 pub mod oidc;
 pub mod operation_tasks;
