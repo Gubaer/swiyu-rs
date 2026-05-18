@@ -234,6 +234,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/OAuthErrorBody'
 
+  /schemas/{credential_type_id}:
+    get:
+      summary: Dereference the credential type's JSON Schema document
+      description: |
+        Public, unauthenticated endpoint. The URL is embedded in
+        every issued credential's `credentialSchema` field and may
+        be hit by any verifier in the world long after the
+        credential was minted. The body is the canonical JSON
+        Schema 2020-12 document for the credential type, served
+        with `Content-Type: application/schema+json`.
+
+        The endpoint has no tenant in its path because verifiers
+        have no tenant context. Retired credential types return
+        `404` so verifiers stop trusting documents whose issuance
+        type the issuer has wound down. `CredentialTypeId` carries
+        ~80 bits of entropy, so the bare path is not enumerable.
+        Cacheable.
+      operationId: getPublicCredentialTypeSchema
+      parameters:
+        - $ref: '#/components/parameters/CredentialTypeId'
+      responses:
+        '200':
+          description: JSON Schema document.
+          content:
+            application/schema+json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /i/{issuer_id}/credential-offer/{offer_id}:
     get:
       summary: Fetch the OID4VCI CredentialOffer body
@@ -284,6 +316,16 @@ components:
       in: path
       required: true
       description: Bare base58 credential offer identifier (no `offer_` prefix).
+      schema:
+        type: string
+        pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'
+        example: 9hXq2vRtL8pK7f
+
+    CredentialTypeId:
+      name: credential_type_id
+      in: path
+      required: true
+      description: Bare base58 credential-type identifier (no `ctype_` prefix).
       schema:
         type: string
         pattern: '^[1-9A-HJ-NP-Za-km-z]{1,32}$'

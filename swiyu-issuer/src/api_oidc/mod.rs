@@ -3,6 +3,7 @@ mod credential_offer;
 mod error;
 mod metadata;
 mod oauth_error;
+mod schemas;
 mod state;
 mod token;
 
@@ -10,7 +11,7 @@ pub use error::OidcError;
 pub use oauth_error::OAuthError;
 pub use state::{AppState, Config};
 
-use crate::domain::IssuerId;
+use crate::domain::{CredentialTypeId, IssuerId};
 
 pub(super) const PRE_AUTHORIZED_GRANT_TYPE: &str =
     "urn:ietf:params:oauth:grant-type:pre-authorized_code";
@@ -38,6 +39,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/i/{issuer_id}/token", post(token::token))
         .route("/i/{issuer_id}/credential", post(credential::credential))
+        .route(
+            "/schemas/{credential_type_id}",
+            get(schemas::get_public_schema),
+        )
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -45,6 +50,12 @@ pub fn router(state: AppState) -> Router {
 pub(super) fn parse_issuer_id(raw: &str) -> Result<IssuerId, OidcError> {
     IssuerId::from_bare(raw).map_err(|err| OidcError::InvalidInput {
         details: format!("issuer_id path parameter: {err}"),
+    })
+}
+
+pub(super) fn parse_credential_type_id(raw: &str) -> Result<CredentialTypeId, OidcError> {
+    CredentialTypeId::from_bare(raw).map_err(|err| OidcError::InvalidInput {
+        details: format!("credential_type_id path parameter: {err}"),
     })
 }
 
@@ -74,6 +85,19 @@ mod tests {
     fn parse_issuer_id_rejects_invalid_character() {
         assert!(matches!(
             parse_issuer_id("notValid0").unwrap_err(),
+            OidcError::InvalidInput { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_credential_type_id_accepts_valid_base58() {
+        assert!(parse_credential_type_id("9hXq2vRtL8pK7f").is_ok());
+    }
+
+    #[test]
+    fn parse_credential_type_id_rejects_invalid_character() {
+        assert!(matches!(
+            parse_credential_type_id("notValid0").unwrap_err(),
             OidcError::InvalidInput { .. }
         ));
     }
