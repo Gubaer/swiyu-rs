@@ -34,13 +34,19 @@ const SUCCESS_TOAST_KEYS: Record<OperationKind, string> = {
   rotate_keys: 'issuer.operation.rotated_toast'
 };
 
-// Case-insensitive, locale-aware sort by display name. Returns a new array.
-function sortByDisplayName(issuers: Issuer[]): Issuer[] {
-  return [...issuers].sort((a, b) =>
-    a.display_name.localeCompare(b.display_name, undefined, {
+// Active issuers first, then by display name (case-insensitive,
+// locale-aware). Returns a new array.
+function sortIssuers(issuers: Issuer[]): Issuer[] {
+  return [...issuers].sort((a, b) => {
+    const stateRank = (issuer: Issuer) => (issuer.state === 'active' ? 0 : 1);
+    const byState = stateRank(a) - stateRank(b);
+    if (byState !== 0) {
+      return byState;
+    }
+    return a.display_name.localeCompare(b.display_name, undefined, {
       sensitivity: 'base'
-    })
-  );
+    });
+  });
 }
 
 @Injectable({ providedIn: 'root' })
@@ -67,7 +73,7 @@ export class IssuersStore {
     this.listError.set(null);
     this.service.list().subscribe({
       next: (resp) => {
-        this.readyIssuers.set(sortByDisplayName(resp.items));
+        this.readyIssuers.set(sortIssuers(resp.items));
         this.listLoading.set(false);
       },
       error: () => {
@@ -80,7 +86,7 @@ export class IssuersStore {
   // Insert or replace a single issuer in the ready list, keeping it sorted.
   upsertIssuer(issuer: Issuer): void {
     this.readyIssuers.update((list) =>
-      sortByDisplayName([issuer, ...list.filter((i) => i.id !== issuer.id)])
+      sortIssuers([issuer, ...list.filter((i) => i.id !== issuer.id)])
     );
   }
 
