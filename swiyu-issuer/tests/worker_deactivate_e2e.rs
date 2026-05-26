@@ -56,6 +56,7 @@ async fn insert_issued_offer(
     let mut offer = CredentialOffer::new(
         tenant_id.clone(),
         issuer_id.clone(),
+        None,
         "https://example.com/vct/test".into(),
         json!({"first_name": "Beat"}),
         PreAuthCode::generate(),

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::DomainError;
-use super::ids::{CredentialOfferId, IssuerId, TenantId};
+use super::ids::{CredentialOfferId, CredentialTypeId, IssuerId, TenantId};
 use super::pre_auth_code::PreAuthCode;
 
 /// Lifecycle state of a `CredentialOffer`.
@@ -98,8 +98,28 @@ pub struct CredentialOffer {
     pub issuer_id: IssuerId,
 
     /// SD-JWT VC type identifier (a URI). Determines which JSON
-    /// Schema validates `claims`.
+    /// Schema validates `claims`. Kept as an opaque historical
+    /// string — minted into the issued credential's `vct` claim and
+    /// preserved verbatim after the source [`CredentialType`] retires.
+    ///
+    /// [`CredentialType`]: super::CredentialType
     pub vct: String,
+
+    /// The [`CredentialType`] the BA addressed at offer creation,
+    /// resolved from the BA's `credential_type_id` input by the
+    /// management handler. `Some` for every offer minted by the
+    /// management API; `None` only for legacy rows written before
+    /// this column was added.
+    ///
+    /// No foreign key to `credential_types(id)`: the offer is a
+    /// historical record, and the source type may have retired (and
+    /// in the future may be hard-deletable) without invalidating the
+    /// offer's audit trail. The handler resolves `vct`,
+    /// `default_validity_duration`, and `revocation_mode` from this
+    /// id at issuance time.
+    ///
+    /// [`CredentialType`]: super::CredentialType
+    pub credential_type_id: Option<CredentialTypeId>,
 
     /// Credential claims as a JSON object, validated against the
     /// schema bundled for the `vct` before this aggregate is
@@ -138,6 +158,7 @@ impl CredentialOffer {
     pub fn new(
         tenant_id: TenantId,
         issuer_id: IssuerId,
+        credential_type_id: Option<CredentialTypeId>,
         vct: String,
         claims: Value,
         pre_auth_code: PreAuthCode,
@@ -148,6 +169,7 @@ impl CredentialOffer {
             tenant_id,
             issuer_id,
             vct,
+            credential_type_id,
             claims,
             state: CredentialOfferState::Pending,
             pre_auth_code: Some(pre_auth_code),
@@ -249,6 +271,7 @@ mod tests {
         CredentialOffer::new(
             TenantId::from_bare("4Mk7yK5pQR7sN3").unwrap(),
             IssuerId::from_bare("9hXq2vRtL8pK7f").unwrap(),
+            None,
             "urn:communal:local-residence-id".to_string(),
             json!({}),
             pre_auth_code,

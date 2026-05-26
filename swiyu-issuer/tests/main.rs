@@ -14,6 +14,7 @@ mod api_management_credential_types;
 mod api_management_issued_credentials;
 mod api_management_issued_credentials_get;
 mod api_oidc_credential;
+mod api_oidc_public_schema;
 mod api_rotate_keys;
 mod credential_offers_persistence;
 mod credential_types_persistence;

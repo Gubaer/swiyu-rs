@@ -15,8 +15,6 @@ pub enum ApiError {
     Unauthorised,
     #[error("forbidden")]
     Forbidden,
-    #[error("unknown vct: {vct}")]
-    UnknownVct { vct: String },
     #[error("claims validation failed")]
     ClaimsValidationFailed { errors: Vec<String> },
     #[error("invalid input: {details}")]
@@ -52,11 +50,6 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "forbidden",
                 "access denied".to_string(),
-            ),
-            ApiError::UnknownVct { vct } => (
-                StatusCode::BAD_REQUEST,
-                "unknown_vct",
-                format!("no schema bundled for vct {vct}"),
             ),
             ApiError::ClaimsValidationFailed { errors } => (
                 StatusCode::BAD_REQUEST,

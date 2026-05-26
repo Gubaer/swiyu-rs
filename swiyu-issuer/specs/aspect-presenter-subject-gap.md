@@ -237,7 +237,7 @@ Source: `Educa-CH/dmz` prototype — `https://github.com/Educa-CH/dmz`; live dem
 
 ## v0.1.0 decision
 
-The first issued credential, `urn:communal:local-residence-id`, ships **without a portrait claim**. The schema in [`impl_credential_schema.md`](impl_credential_schema.md) carries identity-bearing claims (`family_name`, `given_name`, `birth_date`, `address`, `valid_until`) but no image.
+The first issued credential, `urn:communal:local-residence-id`, ships **without a portrait claim**. The schema in [`schemas/urn_communal_local-residence-id.json`](../schemas/urn_communal_local-residence-id.json) carries identity-bearing claims (`family_name`, `given_name`, `birth_date`, `address`, `valid_until`) but no image.
 
 Layer 1 is in place by virtue of the SD-JWT VC format. Layer 2 is inherited from the SWIYU wallet. Layer 3 is **explicitly deferred**: v0.1.0 does not commit to *how* the ski-lift cash desk closes the human-side gap.
 

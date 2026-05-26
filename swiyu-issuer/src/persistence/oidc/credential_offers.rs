@@ -34,8 +34,8 @@ pub async fn find_by_pre_auth_code(
 ) -> Result<Option<CredentialOffer>, PersistenceError> {
     sqlx::query_as::<_, CredentialOffer>(
         r#"
-        SELECT id, tenant_id, issuer_id, vct, claims, state,
-               pre_auth_code, expires_at, created_at,
+        SELECT id, tenant_id, issuer_id, vct, credential_type_id,
+               claims, state, pre_auth_code, expires_at, created_at,
                issued_at, cancelled_at
         FROM credential_offers
         WHERE pre_auth_code = $1
@@ -75,8 +75,8 @@ pub async fn find_by_id_for_update(
 ) -> Result<CredentialOffer, PersistenceError> {
     sqlx::query_as::<_, CredentialOffer>(
         r#"
-        SELECT id, tenant_id, issuer_id, vct, claims, state,
-               pre_auth_code, expires_at, created_at,
+        SELECT id, tenant_id, issuer_id, vct, credential_type_id,
+               claims, state, pre_auth_code, expires_at, created_at,
                issued_at, cancelled_at
         FROM credential_offers
         WHERE id = $1 AND tenant_id = $2 AND issuer_id = $3

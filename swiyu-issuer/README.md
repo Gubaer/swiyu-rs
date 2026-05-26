@@ -116,8 +116,10 @@ cargo run --bin swiyu-issuer-oidcapi
 # Seed the dev tenant from .env (idempotent).
 cargo run --bin swiyu-issuer-cli -- tenant bootstrap-dev-from-env
 
-# Mint a tenant-scoped bearer token (default TTL is documented by --help).
-cargo run --bin swiyu-issuer-cli -- tenant api-token mint --tenant-id <id>
+# Mint a tenant-scoped bearer token for the dev tenant.
+# --tenant also accepts a bare tenant id or a business partner UUID;
+# --name is optional and defaults to a generated label.
+cargo run --bin swiyu-issuer-cli -- tenant api-token mint --tenant dev
 ```
 
 The bundled compose stack runs `bootstrap-dev-tenant` for you on every

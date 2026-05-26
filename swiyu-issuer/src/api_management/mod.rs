@@ -7,7 +7,6 @@ mod error;
 mod issued_credentials;
 mod issuers;
 mod operation_tasks;
-mod schemas;
 mod state;
 
 pub use error::ApiError;

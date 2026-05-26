@@ -1339,19 +1339,23 @@ components:
 
     CreateCredentialOfferRequest:
       type: object
-      required: [vct, claims]
+      required: [credential_type_id, claims]
       properties:
-        vct:
+        credential_type_id:
           type: string
           description: |
-            SD-JWT VC type identifier (URI). Determines which JSON
-            Schema validates `claims`. Unknown values return 400.
-          example: urn:communal:local-residence-id
+            Bare bs58 identifier of the credential type the offer
+            mints from. The handler resolves `vct`, `claim_schema`,
+            and `default_validity_duration` from the row; cross-tenant
+            or retired ids return 404, in-tenant-but-unassigned ids
+            return 409.
+          example: 9hXq2vRtL8pK7f
         claims:
           type: object
           description: |
             Credential claims as a JSON object. Validated against the
-            schema bundled for `vct` before the offer is persisted.
+            credential type's `claim_schema` before the offer is
+            persisted.
           additionalProperties: true
         expires_in_seconds:
           type: integer
@@ -1406,7 +1410,18 @@ components:
           example: issuer_9hXq2vRtL8pK7f
         vct:
           type: string
-          example: urn:communal:local-residence-id
+          description: |
+            SD-JWT VC type identifier (URI). The opaque historical
+            string stored on the offer row; the wallet's issued
+            credential carries it as the `vct` claim.
+          example: urn:dummy:dummy-credential
+        credential_type_id:
+          type: string
+          description: |
+            Bare bs58 id of the credential type the offer was minted
+            from. Omitted only for legacy rows written before the
+            column shipped.
+          example: 9hXq2vRtL8pK7f
         claims:
           type: object
           additionalProperties: true

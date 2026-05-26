@@ -61,7 +61,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
 
-    let state = AppState::new(pool.clone(), Config { issuer_base_url })?;
+    let state = AppState::new(pool.clone(), Config { issuer_base_url });
     let app = router(state);
 
     let registry_client = IdentifierRegistryClient::new(registry_url)?;

@@ -1,30 +1,41 @@
 use chrono::Duration;
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::domain::{CredentialType, RevocationMode, TenantId};
 use crate::persistence;
 
+// Shared with the dev-bootstrap seed via bundled files so the row
+// the test fixture writes matches the one a real dev tenant carries
+// on disk.
+const SAMPLE_CLAIM_SCHEMA_JSON: &str =
+    include_str!("../../../schemas/urn_dummy_dummy-credential.schema.json");
+const SAMPLE_DISPLAY_JSON: &str =
+    include_str!("../../../schemas/urn_dummy_dummy-credential.display.json");
+const SAMPLE_CLAIMS_JSON: &str =
+    include_str!("../../../schemas/urn_dummy_dummy-credential.claims.json");
+
 pub fn sample_claim_schema() -> Value {
-    json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {
-            "first_name": { "type": "string" },
-            "last_name":  { "type": "string" }
-        },
-        "required": ["first_name", "last_name"]
-    })
+    serde_json::from_str(SAMPLE_CLAIM_SCHEMA_JSON)
+        .expect("bundled dummy claim schema must be valid JSON")
+}
+
+pub fn sample_display() -> Value {
+    serde_json::from_str(SAMPLE_DISPLAY_JSON).expect("bundled dummy display must be valid JSON")
+}
+
+pub fn sample_claims() -> Value {
+    serde_json::from_str(SAMPLE_CLAIMS_JSON).expect("bundled dummy claims must be valid JSON")
 }
 
 pub fn sample(tenant_id: &TenantId) -> CredentialType {
     CredentialType::new(
         tenant_id.clone(),
         "urn:dummy:dummy-credential".into(),
-        json!([]),
+        sample_display(),
         Some("Test credential type".into()),
         sample_claim_schema(),
-        json!({}),
+        sample_claims(),
         Duration::days(365),
         RevocationMode::RevocableAndSuspendable,
     )

@@ -101,9 +101,13 @@ pub struct GetOperationTaskResponse {
 /// Request body for `POST /api/v1/issuers/{issuer_id}/credential-offers`.
 #[derive(Debug, Deserialize)]
 pub struct CreateCredentialOfferRequest {
-    /// SD-JWT VC type identifier (URI). Selects the JSON Schema used to
-    /// validate `claims`; unknown values return HTTP 400.
-    pub vct: String,
+    /// Bare bs58 [`CredentialTypeId`] of the credential type the
+    /// offer mints from. The handler resolves the `vct`,
+    /// `claim_schema`, and `default_validity_duration` from the row;
+    /// the BA never spells the `vct` directly.
+    ///
+    /// [`CredentialTypeId`]: crate::domain::CredentialTypeId
+    pub credential_type_id: String,
     pub claims: Value,
     /// Offer lifetime in seconds. The handler applies a configured default when
     /// omitted and rejects values outside the configured bounds.
@@ -129,8 +133,15 @@ pub struct CreateCredentialOfferResponse {
 pub struct GetCredentialOfferResponse {
     pub id: String,
     pub issuer_id: String,
-    /// SD-JWT VC type identifier (URI).
+    /// SD-JWT VC type identifier (URI). The opaque historical string
+    /// stored on the offer row; the wallet's issued credential carries
+    /// it as the `vct` claim.
     pub vct: String,
+    /// Bare bs58 id of the credential type the offer was minted
+    /// from. `None` only for legacy rows written before the column
+    /// shipped; new offers always carry it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_type_id: Option<String>,
     pub claims: Value,
     /// Observed state: a stored-`pending` row past `expires_at` surfaces as
     /// `"expired"` without a database update.

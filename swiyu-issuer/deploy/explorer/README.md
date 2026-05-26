@@ -124,19 +124,13 @@ docker compose up -d
 The first run pulls four images (Postgres, Vault, and the three
 `swiyu-issuer` images) and brings them up in dependency order.
 
-When `bootstrap-dev-tenant` finishes, it prints the bare tenant id.
-Surface it:
-
-```sh
-docker compose logs bootstrap-dev-tenant
-```
-
-Look for the line `bootstrap-dev-tenant: dev tenant id = <id>` and
-copy that id. Mint a bearer token for the management API:
+Once `bootstrap-dev-tenant` has finished, mint a bearer token for the
+management API. The `dev` keyword resolves the dev tenant from
+`DEV_TENANT_PARTNER_ID`, so there's no id to look up:
 
 ```sh
 docker compose run --rm swiyu-issuer-cli \
-    tenant api-token mint --tenant <id> --name explorer
+    tenant api-token mint --tenant dev --name explorer
 ```
 
 The CLI prints a `tok_<base58>` token. Save it and curl the health
@@ -153,6 +147,43 @@ curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/issuers
 From here you can drive the credential-offer flow against the
 management API (port 8080) and verify the OIDC binary (port 8081)
 serves the credential offer back to a wallet.
+
+## 6. What gets provisioned
+
+After `docker compose up -d` finishes, the dev tenant database
+carries a complete, end-to-end issuable baseline:
+
+- **One tenant** — seeded from `DEV_TENANT_PARTNER_ID` and the rest
+  of the `DEV_TENANT_*` env vars by the `bootstrap-dev-tenant`
+  sidecar. Every API token you mint is scoped to this tenant.
+- **One issuer** owned by that tenant — provisioned by the
+  `bootstrap-dev-issuer` sidecar, which enqueues the same
+  `CreateIssuer` operation task `POST /api/v1/issuers` would and
+  waits for the mgmtapi worker to drive the saga to completion.
+  Display name `${DEV_TENANT_DISPLAY_NAME} - dev issuer`; the DID
+  is registered against the SWIYU integration registry and resolves
+  end-to-end.
+- **One dummy credential type** owned by the tenant —
+  `vct = urn:dummy:dummy-credential`, with claim schema, display
+  metadata, and per-claim labels (en-US + de-CH) bundled into the
+  `swiyu-issuer-cli` image. Schema accepts a minimal
+  `{ first_name, last_name }` payload.
+- **One assignment row** linking the dummy credential type to the
+  issuer. Without this row a `POST /credential-offers` would fail
+  with `409 Conflict` ("credential type is not assigned to issuer"),
+  so the assignment is what makes the type actually issuable through
+  the seeded issuer.
+
+The net effect: an end-to-end credential issuance against this stack
+needs no further provisioning before you point a wallet at it. The
+demo path is exercised by the `credential_lifecycle_smoke` and
+`credential_status_lifecycle_smoke` examples in the source repo
+(which spin up their *own* additional issuer + assignment per run,
+so they do not mutate the baseline above).
+
+The bootstrap is idempotent on subsequent `docker compose up -d`
+runs against an existing volume; wipe with `docker compose down -v`
+to start fresh (see *Troubleshooting*).
 
 ## Troubleshooting
 

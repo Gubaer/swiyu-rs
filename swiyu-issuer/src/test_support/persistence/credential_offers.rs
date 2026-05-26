@@ -16,6 +16,7 @@ pub fn pending(tenant_id: &TenantId, issuer_id: &IssuerId) -> CredentialOffer {
     CredentialOffer::new(
         tenant_id.clone(),
         issuer_id.clone(),
+        None,
         "https://example.com/vct/test".into(),
         json!({"first_name": "Anna"}),
         PreAuthCode::generate(),
