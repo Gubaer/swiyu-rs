@@ -111,7 +111,7 @@
 
         <p-tabpanel value="in-progress">
           <p-table
-            [value]="creations()"
+            [value]="operations()"
             dataKey="key"
             [paginator]="false"
             styleClass="p-datatable-sm"
@@ -123,33 +123,37 @@
                 <th></th>
               </tr>
             </ng-template>
-            <ng-template #body let-creation>
+            <ng-template #body let-op>
               <tr>
-                <td>{{ creation.display_name }}</td>
+                <td>{{ op.label }}</td>
                 <td>
-                  @if (creation.status === 'in_progress') {
+                  @if (op.status === 'in_progress') {
                     <span class="status-in-progress">
                       <i class="pi pi-spin pi-spinner"></i>
-                      {{ 'issuer.list.status_in_progress' | transloco }}
+                      @if (op.kind === 'create') {
+                        {{ 'issuer.list.status_creating' | transloco }}
+                      } @else {
+                        {{ 'issuer.list.status_deactivating' | transloco }}
+                      }
                     </span>
                   } @else {
                     <p-tag
                       severity="danger"
                       [value]="'issuer.list.status_failed' | transloco"
                     />
-                    @if (creation.error) {
-                      <small class="status-error">{{ creation.error }}</small>
+                    @if (op.error) {
+                      <small class="status-error">{{ op.error }}</small>
                     }
                   }
                 </td>
                 <td class="row-actions">
-                  @if (creation.status === 'failed') {
+                  @if (op.status === 'failed') {
                     <p-button
                       [label]="'issuer.list.retry' | transloco"
                       icon="pi pi-refresh"
                       size="small"
                       [text]="true"
-                      (onClick)="retry(creation.key)"
+                      (onClick)="retry(op.key)"
                     />
                     <p-button
                       [label]="'issuer.list.dismiss' | transloco"
@@ -157,7 +161,7 @@
                       size="small"
                       severity="secondary"
                       [text]="true"
-                      (onClick)="dismiss(creation.key)"
+                      (onClick)="dismiss(op.key)"
                     />
                   }
                 </td>

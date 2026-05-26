@@ -1,28 +1,31 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { TranslocoService } from '@jsverse/transloco';
 import { MessageService } from 'primeng/api';
-import { Subscription, switchMap, take, takeWhile, timer } from 'rxjs';
+import { Subscription } from 'rxjs';
 
-import {
-  CreateIssuerRequest,
-  Issuer,
-  IssuersService
-} from './issuers-service';
+import { CreateIssuerRequest, Issuer, IssuersService } from './issuers-service';
+import { pollOperationTask } from './operation-task-poll';
 
-// A create-issuer operation tracked client-side. Lives only for this browser
-// session: the management API has no "list operation-tasks" endpoint, so the
-// only creations we can show are the ones this tab initiated.
-export type CreationStatus = 'in_progress' | 'failed';
+// A long-running issuer operation (create or deactivate) tracked client-side.
+// Lives only for this browser session: the management API has no "list
+// operation-tasks" endpoint, so the only operations we can show are the ones
+// this tab initiated.
+export type OperationKind = 'create' | 'deactivate';
+export type OperationStatus = 'in_progress' | 'failed';
 
-export interface IssuerCreation {
-  // Stable client-side key, assigned on optimistic insert and never changed.
+export interface TrackedOperation {
+  // Stable client-side key, assigned on insert and never changed.
   key: string;
-  taskId: string | null;
-  issuerId: string | null;
-  display_name: string;
-  description: string;
-  status: CreationStatus;
+  kind: OperationKind;
+  // Display name shown in the "In progress" tab row.
+  label: string;
+  status: OperationStatus;
   error: string | null;
+  // Known up-front for deactivate; filled in after the POST for create.
+  issuerId: string | null;
+  taskId: string | null;
+  // Kept for retry of a failed create; null for deactivate.
+  createInput: CreateIssuerRequest | null;
 }
 
 // Case-insensitive, locale-aware sort by display name. Returns a new array.
@@ -34,10 +37,6 @@ function sortByDisplayName(issuers: Issuer[]): Issuer[] {
   );
 }
 
-const POLL_INTERVAL_MS = 1500;
-// ~2 minutes of polling before giving up on a stuck saga.
-const MAX_POLLS = 80;
-
 @Injectable({ providedIn: 'root' })
 export class IssuersStore {
   private readonly service = inject(IssuersService);
@@ -46,12 +45,12 @@ export class IssuersStore {
 
   // "Ready" tab: the server truth, replaced wholesale on every load().
   private readonly readyIssuers = signal<Issuer[]>([]);
-  // "In progress" tab: client-tracked creations (in_progress + failed).
-  private readonly trackedCreations = signal<IssuerCreation[]>([]);
+  // "In progress" tab: client-tracked operations (in_progress + failed).
+  private readonly trackedOperations = signal<TrackedOperation[]>([]);
 
   readonly issuers = this.readyIssuers.asReadonly();
-  readonly creations = this.trackedCreations.asReadonly();
-  readonly inProgressCount = computed(() => this.trackedCreations().length);
+  readonly operations = this.trackedOperations.asReadonly();
+  readonly inProgressCount = computed(() => this.trackedOperations().length);
   readonly listLoading = signal(false);
   readonly listError = signal<string | null>(null);
 
@@ -72,56 +71,82 @@ export class IssuersStore {
     });
   }
 
+  // Insert or replace a single issuer in the ready list, keeping it sorted.
+  upsertIssuer(issuer: Issuer): void {
+    this.readyIssuers.update((list) =>
+      sortByDisplayName([issuer, ...list.filter((i) => i.id !== issuer.id)])
+    );
+  }
+
   create(input: CreateIssuerRequest): void {
-    const key = crypto.randomUUID();
-    this.trackedCreations.update((rows) => [
-      {
-        key,
-        taskId: null,
-        issuerId: null,
-        display_name: input.display_name,
-        description: input.description,
-        status: 'in_progress',
-        error: null
-      },
-      ...rows
-    ]);
-    this.startRequest(key, input);
+    const key = this.insertOperation({
+      kind: 'create',
+      label: input.display_name,
+      issuerId: null,
+      createInput: input
+    });
+    this.startCreate(key, input);
+  }
+
+  deactivate(issuer: Issuer): void {
+    const key = this.insertOperation({
+      kind: 'deactivate',
+      label: issuer.display_name,
+      issuerId: issuer.id,
+      createInput: null
+    });
+    this.startDeactivate(key, issuer.id);
   }
 
   retry(key: string): void {
-    const row = this.trackedCreations().find((r) => r.key === key);
-    if (!row) {
+    const op = this.find(key);
+    if (!op) {
       return;
     }
-    this.patchCreation(key, {
-      status: 'in_progress',
-      error: null,
-      taskId: null,
-      issuerId: null
-    });
-    this.startRequest(key, {
-      display_name: row.display_name,
-      description: row.description
-    });
+    this.patch(key, { status: 'in_progress', error: null, taskId: null });
+    if (op.kind === 'create' && op.createInput) {
+      this.startCreate(key, op.createInput);
+    } else if (op.kind === 'deactivate' && op.issuerId) {
+      this.startDeactivate(key, op.issuerId);
+    }
   }
 
   dismiss(key: string): void {
     this.stopPoll(key);
-    this.removeCreation(key);
+    this.removeOperation(key);
   }
 
-  private startRequest(key: string, input: CreateIssuerRequest): void {
+  private startCreate(key: string, input: CreateIssuerRequest): void {
     this.service.create(input).subscribe({
       next: ({ task_id, issuer_id }) => {
-        this.patchCreation(key, { taskId: task_id, issuerId: issuer_id });
-        this.poll(key, task_id, issuer_id);
+        this.patch(key, { taskId: task_id, issuerId: issuer_id });
+        this.poll(key, task_id);
       },
-      error: () => this.markFailed(key, this.t('issuer.creation.error_request'))
+      error: () =>
+        this.markFailed(key, this.t('issuer.operation.error_create_request'))
     });
   }
 
-  private poll(key: string, taskId: string, issuerId: string): void {
+  private startDeactivate(key: string, issuerId: string): void {
+    this.service.deactivate(issuerId).subscribe({
+      next: ({ task_id }) => {
+        if (task_id) {
+          this.patch(key, { taskId: task_id });
+          this.poll(key, task_id);
+        } else {
+          // Already deactivated server-side; no task to wait on.
+          this.finishSuccess(key);
+        }
+      },
+      error: () =>
+        this.markFailed(
+          key,
+          this.t('issuer.operation.error_deactivate_request')
+        )
+    });
+  }
+
+  private poll(key: string, taskId: string): void {
     let settled = false;
     const settle = (action: () => void) => {
       if (!settled) {
@@ -131,66 +156,83 @@ export class IssuersStore {
       this.stopPoll(key);
     };
 
-    const sub = timer(0, POLL_INTERVAL_MS)
-      .pipe(
-        switchMap(() => this.service.getTask(taskId)),
-        take(MAX_POLLS),
-        takeWhile(
-          (task) => task.state !== 'completed' && task.state !== 'failed',
-          true
+    const sub = pollOperationTask(this.service, taskId).subscribe({
+      next: (task) => {
+        if (task.state === 'completed') {
+          settle(() => this.finishSuccess(key));
+        } else if (task.state === 'failed') {
+          const message =
+            task.error_message ?? this.t('issuer.operation.error_generic');
+          settle(() => this.markFailed(key, message));
+        }
+      },
+      error: () =>
+        settle(() =>
+          this.markFailed(key, this.t('issuer.operation.error_polling'))
+        ),
+      complete: () =>
+        settle(() =>
+          this.markFailed(key, this.t('issuer.operation.error_timeout'))
         )
-      )
-      .subscribe({
-        next: (task) => {
-          if (task.state === 'completed') {
-            settle(() => this.finishSuccess(key, issuerId));
-          } else if (task.state === 'failed') {
-            const message =
-              task.error_message ?? this.t('issuer.creation.error_generic');
-            settle(() => this.markFailed(key, message));
-          }
-        },
-        error: () =>
-          settle(() => this.markFailed(key, this.t('issuer.creation.error_polling'))),
-        complete: () =>
-          settle(() => this.markFailed(key, this.t('issuer.creation.error_timeout')))
-      });
+    });
 
     this.polls.set(key, sub);
   }
 
-  private finishSuccess(key: string, issuerId: string): void {
+  private finishSuccess(key: string): void {
+    const op = this.find(key);
+    if (!op || !op.issuerId) {
+      return;
+    }
     // The DID and canonical state only exist server-side, so re-fetch rather
-    // than promote the optimistic data.
-    this.service.get(issuerId).subscribe({
+    // than promote any optimistic data.
+    this.service.get(op.issuerId).subscribe({
       next: (issuer) => {
-        this.readyIssuers.update((list) =>
-          sortByDisplayName([issuer, ...list.filter((i) => i.id !== issuer.id)])
-        );
-        this.removeCreation(key);
+        this.upsertIssuer(issuer);
+        this.removeOperation(key);
+        const toastKey =
+          op.kind === 'create'
+            ? 'issuer.operation.created_toast'
+            : 'issuer.operation.deactivated_toast';
         this.messages.add({
           severity: 'success',
-          summary: this.t('issuer.creation.toast_created', {
-            name: issuer.display_name
-          })
+          summary: this.t(toastKey, { name: issuer.display_name })
         });
       },
-      error: () => this.markFailed(key, this.t('issuer.creation.error_fetch'))
+      error: () => this.markFailed(key, this.t('issuer.operation.error_fetch'))
     });
   }
 
-  private markFailed(key: string, error: string): void {
-    this.patchCreation(key, { status: 'failed', error });
+  private insertOperation(
+    fields: Pick<
+      TrackedOperation,
+      'kind' | 'label' | 'issuerId' | 'createInput'
+    >
+  ): string {
+    const key = crypto.randomUUID();
+    this.trackedOperations.update((rows) => [
+      { key, status: 'in_progress', error: null, taskId: null, ...fields },
+      ...rows
+    ]);
+    return key;
   }
 
-  private patchCreation(key: string, change: Partial<IssuerCreation>): void {
-    this.trackedCreations.update((rows) =>
+  private markFailed(key: string, error: string): void {
+    this.patch(key, { status: 'failed', error });
+  }
+
+  private patch(key: string, change: Partial<TrackedOperation>): void {
+    this.trackedOperations.update((rows) =>
       rows.map((r) => (r.key === key ? { ...r, ...change } : r))
     );
   }
 
-  private removeCreation(key: string): void {
-    this.trackedCreations.update((rows) => rows.filter((r) => r.key !== key));
+  private removeOperation(key: string): void {
+    this.trackedOperations.update((rows) => rows.filter((r) => r.key !== key));
+  }
+
+  private find(key: string): TrackedOperation | undefined {
+    return this.trackedOperations().find((r) => r.key === key);
   }
 
   private stopPoll(key: string): void {

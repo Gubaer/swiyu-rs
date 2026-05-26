@@ -36,7 +36,7 @@ export class IssuersList implements OnInit {
   private readonly messages = inject(MessageService);
 
   protected readonly issuers = this.store.issuers;
-  protected readonly creations = this.store.creations;
+  protected readonly operations = this.store.operations;
   protected readonly inProgressCount = this.store.inProgressCount;
   protected readonly loading = this.store.listLoading;
   protected readonly error = this.store.listError;

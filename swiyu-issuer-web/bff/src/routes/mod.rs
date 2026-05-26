@@ -5,7 +5,7 @@ mod operation_tasks;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
@@ -25,6 +25,10 @@ pub fn router(state: AppState) -> Router {
             get(issuers::list_issuers).post(issuers::create_issuer),
         )
         .route("/api/issuers/{issuer_id}", get(issuers::get_issuer))
+        .route(
+            "/api/issuers/{issuer_id}/deactivate",
+            post(issuers::deactivate_issuer),
+        )
         .route(
             "/api/operation-tasks/{task_id}",
             get(operation_tasks::get_task),

@@ -56,6 +56,12 @@ impl MgmtApiClient {
         read_json(response).await
     }
 
+    pub async fn deactivate_issuer(&self, issuer_id: &str) -> Result<Value, CallError> {
+        let url = format!("{}/api/v1/issuers/{issuer_id}/deactivate", self.base_url);
+        let response = self.http.post(&url).send().await?;
+        read_json(response).await
+    }
+
     pub async fn get_operation_task(&self, task_id: &str) -> Result<Value, CallError> {
         let url = format!("{}/api/v1/operation-tasks/{task_id}", self.base_url);
         let response = self.http.get(&url).send().await?;

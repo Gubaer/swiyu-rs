@@ -26,3 +26,11 @@ pub async fn get_issuer(
     let payload = state.mgmt_api.get_issuer(&issuer_id).await?;
     Ok(Json(payload))
 }
+
+pub async fn deactivate_issuer(
+    State(state): State<AppState>,
+    Path(issuer_id): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    let payload = state.mgmt_api.deactivate_issuer(&issuer_id).await?;
+    Ok(Json(payload))
+}

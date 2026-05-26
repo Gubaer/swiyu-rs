@@ -39,6 +39,12 @@ export interface OperationTask {
   error_message: string | null;
 }
 
+export interface DeactivateIssuerResponse {
+  // null when the issuer was already deactivated and no task was needed.
+  task_id: string | null;
+  issuer_id: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class IssuersService {
   private readonly http = inject(HttpClient);
@@ -57,5 +63,12 @@ export class IssuersService {
 
   getTask(taskId: string): Observable<OperationTask> {
     return this.http.get<OperationTask>(`/api/operation-tasks/${taskId}`);
+  }
+
+  deactivate(issuerId: string): Observable<DeactivateIssuerResponse> {
+    return this.http.post<DeactivateIssuerResponse>(
+      `/api/issuers/${issuerId}/deactivate`,
+      {}
+    );
   }
 }

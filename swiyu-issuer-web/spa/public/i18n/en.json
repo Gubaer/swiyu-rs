@@ -14,7 +14,8 @@
       "col_status": "Status",
       "empty_ready": "No issuers yet for this tenant.",
       "empty_in_progress": "Nothing in progress.",
-      "status_in_progress": "Creating…",
+      "status_creating": "Creating…",
+      "status_deactivating": "Deactivating…",
       "status_failed": "Failed",
       "retry": "Retry",
       "dismiss": "Dismiss",
@@ -39,15 +40,22 @@
       "state": "State",
       "did": "DID",
       "description": "Description",
+      "deactivate": "Deactivate",
+      "deactivate_confirm_header": "Deactivate issuer?",
+      "deactivate_confirm_message": "“{{name}}” will be deactivated. This cannot be undone.",
+      "deactivate_confirm_accept": "Deactivate",
+      "deactivate_confirm_reject": "Cancel",
       "load_error": "Failed to load this issuer."
     },
-    "creation": {
-      "toast_created": "Issuer “{{name}}” created.",
-      "error_request": "Could not start issuer creation.",
-      "error_polling": "Lost track of the creation task.",
-      "error_timeout": "Creation is taking longer than expected.",
-      "error_generic": "Issuer creation failed.",
-      "error_fetch": "Issuer was created but could not be loaded."
+    "operation": {
+      "created_toast": "Issuer “{{name}}” created.",
+      "deactivated_toast": "Issuer “{{name}}” deactivated.",
+      "error_create_request": "Could not start issuer creation.",
+      "error_deactivate_request": "Could not start deactivation.",
+      "error_polling": "Lost track of the operation.",
+      "error_timeout": "The operation is taking longer than expected.",
+      "error_generic": "The operation failed.",
+      "error_fetch": "The operation finished but the issuer could not be loaded."
     }
   }
 }

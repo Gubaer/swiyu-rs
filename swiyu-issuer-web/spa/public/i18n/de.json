@@ -14,7 +14,8 @@
       "col_status": "Status",
       "empty_ready": "Noch keine Aussteller für diesen Mandanten.",
       "empty_in_progress": "Nichts in Bearbeitung.",
-      "status_in_progress": "Wird erstellt…",
+      "status_creating": "Wird erstellt…",
+      "status_deactivating": "Wird deaktiviert…",
       "status_failed": "Fehlgeschlagen",
       "retry": "Wiederholen",
       "dismiss": "Verwerfen",
@@ -39,15 +40,22 @@
       "state": "Status",
       "did": "DID",
       "description": "Beschreibung",
+      "deactivate": "Deaktivieren",
+      "deactivate_confirm_header": "Aussteller deaktivieren?",
+      "deactivate_confirm_message": "„{{name}}“ wird deaktiviert. Dies kann nicht rückgängig gemacht werden.",
+      "deactivate_confirm_accept": "Deaktivieren",
+      "deactivate_confirm_reject": "Abbrechen",
       "load_error": "Dieser Aussteller konnte nicht geladen werden."
     },
-    "creation": {
-      "toast_created": "Aussteller „{{name}}“ erstellt.",
-      "error_request": "Erstellung des Ausstellers konnte nicht gestartet werden.",
-      "error_polling": "Der Erstellungsvorgang konnte nicht weiterverfolgt werden.",
-      "error_timeout": "Die Erstellung dauert länger als erwartet.",
-      "error_generic": "Erstellung des Ausstellers fehlgeschlagen.",
-      "error_fetch": "Aussteller wurde erstellt, konnte aber nicht geladen werden."
+    "operation": {
+      "created_toast": "Aussteller „{{name}}“ erstellt.",
+      "deactivated_toast": "Aussteller „{{name}}“ deaktiviert.",
+      "error_create_request": "Erstellung des Ausstellers konnte nicht gestartet werden.",
+      "error_deactivate_request": "Deaktivierung konnte nicht gestartet werden.",
+      "error_polling": "Der Vorgang konnte nicht weiterverfolgt werden.",
+      "error_timeout": "Der Vorgang dauert länger als erwartet.",
+      "error_generic": "Der Vorgang ist fehlgeschlagen.",
+      "error_fetch": "Der Vorgang wurde abgeschlossen, aber der Aussteller konnte nicht geladen werden."
     }
   }
 }

@@ -1,3 +1,5 @@
+<p-confirmDialog />
+
 <section class="issuer-detail-page">
   <header class="page-header">
     <p-button
@@ -13,7 +15,17 @@
     <p-message severity="error" [text]="msg | transloco" />
   } @else if (issuer(); as issuer) {
     <p-card>
-      <h1 class="detail-title">{{ issuer.display_name }}</h1>
+      <div class="detail-heading">
+        <h1 class="detail-title">{{ issuer.display_name }}</h1>
+        <p-button
+          [label]="'issuer.detail.deactivate' | transloco"
+          icon="pi pi-ban"
+          severity="danger"
+          [outlined]="true"
+          [disabled]="issuer.state !== 'active'"
+          (onClick)="deactivate()"
+        />
+      </div>
       <dl class="detail-grid">
         <dt>{{ 'issuer.detail.state' | transloco }}</dt>
         <dd>
