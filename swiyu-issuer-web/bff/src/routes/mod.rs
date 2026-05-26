@@ -30,6 +30,10 @@ pub fn router(state: AppState) -> Router {
             post(issuers::deactivate_issuer),
         )
         .route(
+            "/api/issuers/{issuer_id}/rotate-keys",
+            post(issuers::rotate_keys),
+        )
+        .route(
             "/api/operation-tasks/{task_id}",
             get(operation_tasks::get_task),
         )

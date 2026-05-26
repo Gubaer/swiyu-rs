@@ -34,3 +34,12 @@ pub async fn deactivate_issuer(
     let payload = state.mgmt_api.deactivate_issuer(&issuer_id).await?;
     Ok(Json(payload))
 }
+
+pub async fn rotate_keys(
+    State(state): State<AppState>,
+    Path(issuer_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let payload = state.mgmt_api.rotate_keys(&issuer_id, body).await?;
+    Ok(Json(payload))
+}

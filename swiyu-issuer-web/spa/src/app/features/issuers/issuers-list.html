@@ -130,10 +130,16 @@
                   @if (op.status === 'in_progress') {
                     <span class="status-in-progress">
                       <i class="pi pi-spin pi-spinner"></i>
-                      @if (op.kind === 'create') {
-                        {{ 'issuer.list.status_creating' | transloco }}
-                      } @else {
-                        {{ 'issuer.list.status_deactivating' | transloco }}
+                      @switch (op.kind) {
+                        @case ('create') {
+                          {{ 'issuer.list.status_creating' | transloco }}
+                        }
+                        @case ('deactivate') {
+                          {{ 'issuer.list.status_deactivating' | transloco }}
+                        }
+                        @case ('rotate_keys') {
+                          {{ 'issuer.list.status_rotating' | transloco }}
+                        }
                       }
                     </span>
                   } @else {

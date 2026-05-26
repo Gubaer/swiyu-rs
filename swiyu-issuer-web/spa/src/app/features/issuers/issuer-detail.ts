@@ -85,6 +85,33 @@ export class IssuerDetail implements OnInit {
     });
   }
 
+  protected rotateKeys(): void {
+    const issuer = this.issuer();
+    if (!issuer || issuer.state !== 'active') {
+      return;
+    }
+    this.confirmation.confirm({
+      header: this.t('issuer.detail.rotate_confirm_header'),
+      message: this.t('issuer.detail.rotate_confirm_message', {
+        name: issuer.display_name
+      }),
+      icon: 'pi pi-exclamation-triangle',
+      acceptButtonProps: {
+        label: this.t('issuer.detail.rotate_confirm_accept')
+      },
+      rejectButtonProps: {
+        label: this.t('issuer.detail.rotate_confirm_reject'),
+        severity: 'secondary',
+        outlined: true
+      },
+      accept: () => {
+        // Tracked and polled by the store; visible in the "In progress" tab.
+        this.store.rotateKeys(issuer);
+        this.router.navigate(['/issuers']);
+      }
+    });
+  }
+
   private t(key: string, params?: Record<string, unknown>): string {
     return this.transloco.translate(key, params);
   }

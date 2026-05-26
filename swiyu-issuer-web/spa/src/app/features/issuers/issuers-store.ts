@@ -10,7 +10,7 @@ import { pollOperationTask } from './operation-task-poll';
 // Lives only for this browser session: the management API has no "list
 // operation-tasks" endpoint, so the only operations we can show are the ones
 // this tab initiated.
-export type OperationKind = 'create' | 'deactivate';
+export type OperationKind = 'create' | 'deactivate' | 'rotate_keys';
 export type OperationStatus = 'in_progress' | 'failed';
 
 export interface TrackedOperation {
@@ -27,6 +27,12 @@ export interface TrackedOperation {
   // Kept for retry of a failed create; null for deactivate.
   createInput: CreateIssuerRequest | null;
 }
+
+const SUCCESS_TOAST_KEYS: Record<OperationKind, string> = {
+  create: 'issuer.operation.created_toast',
+  deactivate: 'issuer.operation.deactivated_toast',
+  rotate_keys: 'issuer.operation.rotated_toast'
+};
 
 // Case-insensitive, locale-aware sort by display name. Returns a new array.
 function sortByDisplayName(issuers: Issuer[]): Issuer[] {
@@ -98,6 +104,16 @@ export class IssuersStore {
     this.startDeactivate(key, issuer.id);
   }
 
+  rotateKeys(issuer: Issuer): void {
+    const key = this.insertOperation({
+      kind: 'rotate_keys',
+      label: issuer.display_name,
+      issuerId: issuer.id,
+      createInput: null
+    });
+    this.startRotateKeys(key, issuer.id);
+  }
+
   retry(key: string): void {
     const op = this.find(key);
     if (!op) {
@@ -108,6 +124,8 @@ export class IssuersStore {
       this.startCreate(key, op.createInput);
     } else if (op.kind === 'deactivate' && op.issuerId) {
       this.startDeactivate(key, op.issuerId);
+    } else if (op.kind === 'rotate_keys' && op.issuerId) {
+      this.startRotateKeys(key, op.issuerId);
     }
   }
 
@@ -143,6 +161,17 @@ export class IssuersStore {
           key,
           this.t('issuer.operation.error_deactivate_request')
         )
+    });
+  }
+
+  private startRotateKeys(key: string, issuerId: string): void {
+    this.service.rotateKeys(issuerId).subscribe({
+      next: ({ task_id }) => {
+        this.patch(key, { taskId: task_id });
+        this.poll(key, task_id);
+      },
+      error: () =>
+        this.markFailed(key, this.t('issuer.operation.error_rotate_request'))
     });
   }
 
@@ -190,13 +219,11 @@ export class IssuersStore {
       next: (issuer) => {
         this.upsertIssuer(issuer);
         this.removeOperation(key);
-        const toastKey =
-          op.kind === 'create'
-            ? 'issuer.operation.created_toast'
-            : 'issuer.operation.deactivated_toast';
         this.messages.add({
           severity: 'success',
-          summary: this.t(toastKey, { name: issuer.display_name })
+          summary: this.t(SUCCESS_TOAST_KEYS[op.kind], {
+            name: issuer.display_name
+          })
         });
       },
       error: () => this.markFailed(key, this.t('issuer.operation.error_fetch'))

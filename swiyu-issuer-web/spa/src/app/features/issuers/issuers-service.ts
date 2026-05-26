@@ -45,6 +45,11 @@ export interface DeactivateIssuerResponse {
   issuer_id: string;
 }
 
+export interface RotateKeysResponse {
+  task_id: string;
+  issuer_id: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class IssuersService {
   private readonly http = inject(HttpClient);
@@ -69,6 +74,14 @@ export class IssuersService {
     return this.http.post<DeactivateIssuerResponse>(
       `/api/issuers/${issuerId}/deactivate`,
       {}
+    );
+  }
+
+  rotateKeys(issuerId: string): Observable<RotateKeysResponse> {
+    // "all" rotates every key role (authorized, authentication, assertion).
+    return this.http.post<RotateKeysResponse>(
+      `/api/issuers/${issuerId}/rotate-keys`,
+      { roles: ['all'] }
     );
   }
 }

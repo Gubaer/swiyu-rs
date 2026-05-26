@@ -62,6 +62,12 @@ impl MgmtApiClient {
         read_json(response).await
     }
 
+    pub async fn rotate_keys(&self, issuer_id: &str, body: Value) -> Result<Value, CallError> {
+        let url = format!("{}/api/v1/issuers/{issuer_id}/rotate-keys", self.base_url);
+        let response = self.http.post(&url).json(&body).send().await?;
+        read_json(response).await
+    }
+
     pub async fn get_operation_task(&self, task_id: &str) -> Result<Value, CallError> {
         let url = format!("{}/api/v1/operation-tasks/{task_id}", self.base_url);
         let response = self.http.get(&url).send().await?;

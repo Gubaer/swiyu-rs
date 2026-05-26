@@ -17,14 +17,24 @@
     <p-card>
       <div class="detail-heading">
         <h1 class="detail-title">{{ issuer.display_name }}</h1>
-        <p-button
-          [label]="'issuer.detail.deactivate' | transloco"
-          icon="pi pi-ban"
-          severity="danger"
-          [outlined]="true"
-          [disabled]="issuer.state !== 'active'"
-          (onClick)="deactivate()"
-        />
+        <div class="detail-actions">
+          <p-button
+            [label]="'issuer.detail.rotate_keys' | transloco"
+            icon="pi pi-sync"
+            severity="secondary"
+            [outlined]="true"
+            [disabled]="issuer.state !== 'active'"
+            (onClick)="rotateKeys()"
+          />
+          <p-button
+            [label]="'issuer.detail.deactivate' | transloco"
+            icon="pi pi-ban"
+            severity="danger"
+            [outlined]="true"
+            [disabled]="issuer.state !== 'active'"
+            (onClick)="deactivate()"
+          />
+        </div>
       </div>
       <dl class="detail-grid">
         <dt>{{ 'issuer.detail.state' | transloco }}</dt>
