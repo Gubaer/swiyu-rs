@@ -43,23 +43,46 @@
           >
             <ng-template #header>
               <tr>
-                <th>{{ 'issuer.list.col_display_name' | transloco }}</th>
-                <th>{{ 'issuer.list.col_state' | transloco }}</th>
-                <th>{{ 'issuer.list.col_did' | transloco }}</th>
+                <th style="width: 20rem">
+                  {{ 'issuer.list.col_display_name' | transloco }}
+                </th>
                 <th>{{ 'issuer.list.col_description' | transloco }}</th>
+                <th style="width: 16rem">
+                  {{ 'issuer.list.col_did' | transloco }}
+                </th>
+                <th style="width: 8rem">
+                  {{ 'issuer.list.col_state' | transloco }}
+                </th>
               </tr>
             </ng-template>
             <ng-template #body let-issuer>
               <tr>
                 <td>{{ issuer.display_name }}</td>
+                <td>{{ issuer.description }}</td>
+                <td>
+                  <div class="did-cell">
+                    <code
+                      class="did"
+                      [pTooltip]="issuer.did"
+                      tooltipPosition="top"
+                    >{{ issuer.did }}</code>
+                    <p-button
+                      icon="pi pi-copy"
+                      [text]="true"
+                      size="small"
+                      severity="secondary"
+                      [pTooltip]="'issuer.list.copy_did' | transloco"
+                      [ariaLabel]="'issuer.list.copy_did' | transloco"
+                      (onClick)="copyDid(issuer.did)"
+                    />
+                  </div>
+                </td>
                 <td>
                   <p-tag
                     [value]="issuer.state"
                     [severity]="issuer.state === 'active' ? 'success' : 'secondary'"
                   />
                 </td>
-                <td><code class="did">{{ issuer.did }}</code></td>
-                <td>{{ issuer.description }}</td>
               </tr>
             </ng-template>
             <ng-template #emptymessage>

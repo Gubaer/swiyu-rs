@@ -17,6 +17,9 @@
       "status_failed": "Failed",
       "retry": "Retry",
       "dismiss": "Dismiss",
+      "copy_did": "Copy DID",
+      "did_copied": "DID copied to clipboard.",
+      "did_copy_failed": "Could not copy the DID.",
       "load_error": "Failed to load issuers from the BFF."
     },
     "create": {

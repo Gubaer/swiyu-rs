@@ -17,10 +17,22 @@
   gap: 0.5rem;
 }
 
+.did-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .did {
+  display: inline-block;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  cursor: default;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
-  word-break: break-all;
 }
 
 .empty {

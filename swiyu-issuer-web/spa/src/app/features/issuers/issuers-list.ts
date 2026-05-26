@@ -1,7 +1,7 @@
 import { Component, OnInit, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
-import { MenuItem } from 'primeng/api';
+import { MenuItem, MessageService } from 'primeng/api';
 import { TableModule } from 'primeng/table';
 import { TagModule } from 'primeng/tag';
 import { MessageModule } from 'primeng/message';
@@ -9,6 +9,7 @@ import { ButtonModule } from 'primeng/button';
 import { MenuModule } from 'primeng/menu';
 import { TabsModule } from 'primeng/tabs';
 import { BadgeModule } from 'primeng/badge';
+import { TooltipModule } from 'primeng/tooltip';
 
 import { IssuersStore } from './issuers-store';
 
@@ -23,7 +24,8 @@ import { IssuersStore } from './issuers-store';
     ButtonModule,
     MenuModule,
     TabsModule,
-    BadgeModule
+    BadgeModule,
+    TooltipModule
   ],
   templateUrl: './issuers-list.html',
   styleUrl: './issuers-list.scss'
@@ -31,6 +33,7 @@ import { IssuersStore } from './issuers-store';
 export class IssuersList implements OnInit {
   private readonly store = inject(IssuersStore);
   private readonly transloco = inject(TranslocoService);
+  private readonly messages = inject(MessageService);
 
   protected readonly issuers = this.store.issuers;
   protected readonly creations = this.store.creations;
@@ -59,5 +62,22 @@ export class IssuersList implements OnInit {
 
   protected dismiss(key: string): void {
     this.store.dismiss(key);
+  }
+
+  protected async copyDid(did: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(did);
+      this.messages.add({
+        severity: 'success',
+        summary: this.transloco.translate('issuer.list.did_copied'),
+        life: 1500
+      });
+    } catch {
+      this.messages.add({
+        severity: 'error',
+        summary: this.transloco.translate('issuer.list.did_copy_failed'),
+        life: 2500
+      });
+    }
   }
 }

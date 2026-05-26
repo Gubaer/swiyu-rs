@@ -17,6 +17,9 @@
       "status_failed": "Fehlgeschlagen",
       "retry": "Wiederholen",
       "dismiss": "Verwerfen",
+      "copy_did": "DID kopieren",
+      "did_copied": "DID in die Zwischenablage kopiert.",
+      "did_copy_failed": "DID konnte nicht kopiert werden.",
       "load_error": "Aussteller konnten nicht vom BFF geladen werden."
     },
     "create": {
