@@ -10,6 +10,74 @@ use swiyu_issuer::domain::{TenantId, build_secret_encryption_engine_from_env};
 use swiyu_issuer::persistence;
 use uuid::Uuid;
 
+// A `--tenant` argument value identifying the target tenant.
+#[derive(Debug, Clone)]
+enum TenantRef {
+    // The tenant's own bare base58 id.
+    Id(TenantId),
+    // The tenant's business partner UUID. In 1:1 correspondence with the
+    // bare id, so either form identifies the same tenant.
+    PartnerId(Uuid),
+    // The dev tenant, identified at run time by the `DEV_TENANT_PARTNER_ID`
+    // env var. A convenience so the dev tenant need not be looked up.
+    Dev,
+}
+
+// A bare base58 id and a UUID are structurally distinct, so trying each
+// form in turn is unambiguous; the `dev` keyword matches neither.
+fn parse_tenant_ref(raw: &str) -> Result<TenantRef, String> {
+    if raw == "dev" {
+        return Ok(TenantRef::Dev);
+    }
+    if let Ok(id) = TenantId::from_bare(raw) {
+        return Ok(TenantRef::Id(id));
+    }
+    if let Ok(partner_id) = Uuid::parse_str(raw) {
+        return Ok(TenantRef::PartnerId(partner_id));
+    }
+    Err(
+        "expected 'dev', a bare base58 tenant id (e.g. '9hXq2vRtL8pK7f'), or the tenant's business partner UUID (e.g. '7355b9bb-d45a-4d42-82ea-0c30b3f2fa25')"
+            .to_string(),
+    )
+}
+
+async fn resolve_tenant_ref(
+    pool: &PgPool,
+    tenant_ref: TenantRef,
+) -> Result<TenantId, Box<dyn std::error::Error>> {
+    let (partner_id, is_dev) = match tenant_ref {
+        TenantRef::Id(id) => return Ok(id),
+        TenantRef::PartnerId(partner_id) => (partner_id, false),
+        TenantRef::Dev => (dev_tenant_partner_id()?, true),
+    };
+
+    let mut conn = pool.acquire().await?;
+    match persistence::tenants::find_by_partner_id(&mut conn, partner_id).await? {
+        Some(tenant) => {
+            if is_dev {
+                tracing::info!(
+                    "resolved dev tenant: bare id {}, UUID {}",
+                    tenant.id.bare(),
+                    partner_id
+                );
+            }
+            Ok(tenant.id)
+        }
+        None => Err(format!("no tenant with business partner id '{partner_id}'").into()),
+    }
+}
+
+fn dev_tenant_partner_id() -> Result<Uuid, Box<dyn std::error::Error>> {
+    let raw = env::var("DEV_TENANT_PARTNER_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .ok_or("--tenant dev requires DEV_TENANT_PARTNER_ID to be set")?;
+    let partner_id = raw
+        .parse::<Uuid>()
+        .map_err(|err| format!("DEV_TENANT_PARTNER_ID is not a valid UUID: {err}"))?;
+    Ok(partner_id)
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "swiyu-issuer-cli",
@@ -79,9 +147,10 @@ struct CreateArgs {
 
 #[derive(Args, Debug)]
 struct UpdateArgs {
-    /// Bare base58 tenant id (no `tenant_` prefix).
-    #[arg(long)]
-    tenant: String,
+    /// Tenant: `dev` for the dev tenant (`DEV_TENANT_PARTNER_ID`), its
+    /// bare base58 id (no `tenant_` prefix), or its business partner UUID.
+    #[arg(long, value_parser = parse_tenant_ref)]
+    tenant: TenantRef,
     /// Replacement SWIYU Business Partner UUID. Use only to correct
     /// a typo or copy-paste error from the ePortal; partner records
     /// are not expected to rotate in normal operation.
@@ -113,9 +182,10 @@ struct BootstrapDevFromEnvArgs {
         .args(["token", "token_stdin"])
 ))]
 struct ImportOauthRefreshTokenArgs {
-    /// Bare base58 tenant id (no `tenant_` prefix).
-    #[arg(long)]
-    tenant: String,
+    /// Tenant: `dev` for the dev tenant (`DEV_TENANT_PARTNER_ID`), its
+    /// bare base58 id (no `tenant_` prefix), or its business partner UUID.
+    #[arg(long, value_parser = parse_tenant_ref)]
+    tenant: TenantRef,
     /// The new refresh token value. Mutually exclusive with --token-stdin.
     #[arg(long)]
     token: Option<String>,
@@ -139,9 +209,10 @@ struct ImportOauthRefreshTokenArgs {
         .args(["client_secret", "client_secret_stdin"])
 ))]
 struct SetOauthCredentialsArgs {
-    /// Bare base58 tenant id (no `tenant_` prefix).
-    #[arg(long)]
-    tenant: String,
+    /// Tenant: `dev` for the dev tenant (`DEV_TENANT_PARTNER_ID`), its
+    /// bare base58 id (no `tenant_` prefix), or its business partner UUID.
+    #[arg(long, value_parser = parse_tenant_ref)]
+    tenant: TenantRef,
     /// OAuth2 client id (ePortal: "customer key").
     #[arg(long)]
     client_id: String,
@@ -168,22 +239,29 @@ enum ApiTokenCommand {
     /// Mint a new API token for the named tenant. Prints the bare wire form
     /// (`tok_…`) once on stdout; only the hash is persisted.
     Mint {
-        /// Bare base58 tenant id (no `tenant_` prefix).
-        #[arg(long)]
-        tenant: String,
+        /// Tenant: `dev` for the dev tenant (`DEV_TENANT_PARTNER_ID`), its
+        /// bare base58 id (no `tenant_` prefix), or its business partner
+        /// UUID.
+        #[arg(long, value_parser = parse_tenant_ref)]
+        tenant: TenantRef,
         /// Operator-supplied label; surfaces in audit logs once the audit
-        /// slice lands.
+        /// slice lands. Optional — defaults to a generated label naming
+        /// the tenant and date (see `mint_token`).
         #[arg(long)]
-        name: String,
+        name: Option<String>,
         /// Lifetime of the token, e.g. `30d`, `12h`, `90m`. Omit for a
         /// non-expiring token.
         #[arg(long)]
         expires_in: Option<String>,
+        /// Print only the bare `tok_…` secret on stdout, with no labels or
+        /// banner. For scripting, e.g. `TOKEN=$(… mint --token-only)`.
+        #[arg(long)]
+        token_only: bool,
     },
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::process::ExitCode {
     // Logs go to stderr so callers can capture the CLI's stdout (e.g.
     // `TENANT_ID=$(swiyu-issuer-cli tenant bootstrap-dev-from-env)` in
     // the compose entrypoint) without sqlx / tracing output bleeding in.
@@ -192,6 +270,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stderr)
         .init();
 
+    // Print failures via `Display` rather than letting the runtime
+    // render the `Box<dyn Error>` with `Debug`, which would show the
+    // wrapping variant names and quote string payloads.
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("Error: {err}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         TopCommand::Tenant { command } => match command {
@@ -204,7 +295,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tenant,
                     name,
                     expires_in,
-                } => mint_token(tenant, name, expires_in.as_deref()).await,
+                    token_only,
+                } => mint_token(tenant, name, expires_in.as_deref(), token_only).await,
             },
             TenantCommand::ImportOauthRefreshToken(args) => import_oauth_refresh_token(args).await,
             TenantCommand::SetOauthCredentials(args) => set_oauth_credentials(args).await,
@@ -237,12 +329,10 @@ async fn create_tenant(args: CreateArgs) -> Result<(), Box<dyn std::error::Error
 }
 
 async fn update_tenant(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let tenant_id = TenantId::from_bare(&args.tenant)
-        .map_err(|err| format!("--tenant is not a valid bare tenant id: {err}"))?;
-
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
     let pool: PgPool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
+    let tenant_id = resolve_tenant_ref(&pool, args.tenant).await?;
 
     cli::tenant::update(
         &pool,
@@ -306,28 +396,40 @@ async fn ensure_dev_issuer_from_env() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 async fn mint_token(
-    tenant: String,
-    name: String,
+    tenant: TenantRef,
+    name: Option<String>,
     expires_in: Option<&str>,
+    token_only: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tenant_id = TenantId::from_bare(&tenant)
-        .map_err(|err| format!("--tenant is not a valid bare tenant id: {err}"))?;
-    let expires_in = expires_in.map(parse_duration).transpose()?;
-    let expires_at = expires_in.map(|d| chrono::Utc::now() + d);
-
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL must be set")?;
     let pool: PgPool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
+    let tenant_id = resolve_tenant_ref(&pool, tenant).await?;
+
+    let name = name.unwrap_or_else(|| {
+        format!(
+            "API-Token for {}, generated {}",
+            tenant_id.bare(),
+            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ")
+        )
+    });
+    let expires_in = expires_in.map(parse_duration).transpose()?;
+    let expires_at = expires_in.map(|d| chrono::Utc::now() + d);
 
     let minted = cli::tenant::api_token::mint(&pool, tenant_id, name, expires_at).await?;
 
-    // Print the bare wire form on stdout exactly once. The reminder
-    // goes to stderr so a `| jq .` or other piping does not lose it.
-    println!("{}", minted.secret.as_wire());
-    eprintln!(
-        "save this token now; only its hash is persisted. id={} name={}",
-        minted.token.id, minted.token.name
-    );
+    // The secret is shown only here and never persisted in clear, so it
+    // is printed once for the operator to copy.
+    if token_only {
+        println!("{}", minted.secret.as_wire());
+    } else {
+        println!(
+            "Generated token. Use the secret as API token. Save it now; only its hash is persisted."
+        );
+        println!("id:     {}", minted.token.id);
+        println!("name:   {}", minted.token.name);
+        println!("secret: {}", minted.secret.as_wire());
+    }
 
     Ok(())
 }
@@ -335,9 +437,6 @@ async fn mint_token(
 async fn import_oauth_refresh_token(
     args: ImportOauthRefreshTokenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tenant_id = TenantId::from_bare(&args.tenant)
-        .map_err(|err| format!("--tenant is not a valid bare tenant id: {err}"))?;
-
     let raw_token = match (args.token, args.token_stdin) {
         (Some(value), false) => value,
         (None, true) => {
@@ -357,6 +456,7 @@ async fn import_oauth_refresh_token(
     let pool: PgPool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
     let engine = build_secret_encryption_engine_from_env()?;
+    let tenant_id = resolve_tenant_ref(&pool, args.tenant).await?;
 
     let outcome = cli::tenant::import_oauth_refresh_token(
         &pool,
@@ -369,12 +469,15 @@ async fn import_oauth_refresh_token(
 
     match outcome {
         cli::tenant::SeedOutcome::Wrote => {
-            eprintln!("oauth_refresh_token updated for tenant {}", args.tenant);
+            eprintln!(
+                "oauth_refresh_token updated for tenant {}",
+                tenant_id.bare()
+            );
         }
         cli::tenant::SeedOutcome::Skipped => {
             eprintln!(
                 "oauth_refresh_token already set for tenant {}; skipped (--only-if-empty)",
-                args.tenant
+                tenant_id.bare()
             );
         }
     }
@@ -384,9 +487,6 @@ async fn import_oauth_refresh_token(
 async fn set_oauth_credentials(
     args: SetOauthCredentialsArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tenant_id = TenantId::from_bare(&args.tenant)
-        .map_err(|err| format!("--tenant is not a valid bare tenant id: {err}"))?;
-
     let raw_secret = match (args.client_secret, args.client_secret_stdin) {
         (Some(value), false) => value,
         (None, true) => {
@@ -410,6 +510,7 @@ async fn set_oauth_credentials(
     let pool: PgPool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
     let engine = build_secret_encryption_engine_from_env()?;
+    let tenant_id = resolve_tenant_ref(&pool, args.tenant).await?;
 
     let outcome = cli::tenant::set_oauth_credentials(
         &pool,
@@ -425,13 +526,13 @@ async fn set_oauth_credentials(
         cli::tenant::SeedOutcome::Wrote => {
             eprintln!(
                 "oauth_client_id and oauth_client_secret updated for tenant {}",
-                args.tenant
+                tenant_id.bare()
             );
         }
         cli::tenant::SeedOutcome::Skipped => {
             eprintln!(
                 "oauth_client_id and oauth_client_secret already set for tenant {}; skipped (--only-if-empty)",
-                args.tenant
+                tenant_id.bare()
             );
         }
     }
@@ -480,5 +581,38 @@ mod tests {
     #[test]
     fn parse_duration_rejects_garbage() {
         assert!(parse_duration("notaduration").is_err());
+    }
+
+    #[test]
+    fn parse_tenant_ref_classifies_bare_id() {
+        let raw = "9hXq2vRtL8pK7f";
+        match parse_tenant_ref(raw).unwrap() {
+            TenantRef::Id(id) => assert_eq!(id.bare(), raw),
+            other => panic!("expected Id, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_tenant_ref_classifies_partner_uuid() {
+        let raw = "7355b9bb-d45a-4d42-82ea-0c30b3f2fa25";
+        match parse_tenant_ref(raw).unwrap() {
+            TenantRef::PartnerId(uuid) => assert_eq!(uuid.to_string(), raw),
+            other => panic!("expected PartnerId, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_tenant_ref_classifies_dev_keyword() {
+        match parse_tenant_ref("dev").unwrap() {
+            TenantRef::Dev => {}
+            other => panic!("expected Dev, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_tenant_ref_rejects_value_that_is_neither() {
+        // "test" is valid base58 but the wrong length for a tenant id,
+        // and is not a UUID either.
+        assert!(parse_tenant_ref("test").is_err());
     }
 }

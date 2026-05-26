@@ -124,19 +124,13 @@ docker compose up -d
 The first run pulls four images (Postgres, Vault, and the three
 `swiyu-issuer` images) and brings them up in dependency order.
 
-When `bootstrap-dev-tenant` finishes, it prints the bare tenant id.
-Surface it:
-
-```sh
-docker compose logs bootstrap-dev-tenant
-```
-
-Look for the line `bootstrap-dev-tenant: dev tenant id = <id>` and
-copy that id. Mint a bearer token for the management API:
+Once `bootstrap-dev-tenant` has finished, mint a bearer token for the
+management API. The `dev` keyword resolves the dev tenant from
+`DEV_TENANT_PARTNER_ID`, so there's no id to look up:
 
 ```sh
 docker compose run --rm swiyu-issuer-cli \
-    tenant api-token mint --tenant <id> --name explorer
+    tenant api-token mint --tenant dev --name explorer
 ```
 
 The CLI prints a `tok_<base58>` token. Save it and curl the health

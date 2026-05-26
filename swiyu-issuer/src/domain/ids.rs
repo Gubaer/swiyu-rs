@@ -41,7 +41,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::DomainError;
 
 const ID_BYTES: usize = 10;
-const MAX_BARE_LEN: usize = 32;
 
 fn generate_bare() -> String {
     let mut bytes = [0u8; ID_BYTES];
@@ -50,14 +49,25 @@ fn generate_bare() -> String {
 }
 
 fn validate_bare(s: &str) -> Result<(), DomainError> {
-    if s.is_empty() || s.len() > MAX_BARE_LEN {
-        return Err(DomainError::InvalidInput {
-            details: format!("identifier length out of range: {}", s.len()),
-        });
-    }
     if s.chars().any(|c| !is_base58_char(c)) {
         return Err(DomainError::InvalidInput {
             details: format!("identifier contains non-base58 character: {s}"),
+        });
+    }
+    // Every generated id is exactly ID_BYTES of CSPRNG output, so a
+    // structurally valid bare id must base58-decode back to that many
+    // bytes.
+    let decoded = bs58::decode(s)
+        .into_vec()
+        .map_err(|err| DomainError::InvalidInput {
+            details: format!("identifier is not valid base58: {err}"),
+        })?;
+    if decoded.len() != ID_BYTES {
+        return Err(DomainError::InvalidInput {
+            details: format!(
+                "identifier must decode to {ID_BYTES} bytes, got {}",
+                decoded.len()
+            ),
         });
     }
     Ok(())
@@ -222,6 +232,27 @@ mod tests {
     #[test]
     fn from_bare_rejects_empty_string() {
         assert!(CredentialOfferId::from_bare("").is_err());
+    }
+
+    #[test]
+    fn from_bare_rejects_base58_of_wrong_length() {
+        // "test" and "dev" are valid base58 but decode to 3 bytes, not
+        // the 10 a generated id carries. These are the human-typed
+        // labels that previously slipped through to a DB FK violation.
+        assert!(TenantId::from_bare("test").is_err());
+        assert!(TenantId::from_bare("dev").is_err());
+        // A single base58 char decodes to one byte: still rejected.
+        assert!(TenantId::from_bare("z").is_err());
+        // 11 random bytes encode to a too-long id and must be rejected.
+        let too_long = bs58::encode([0xABu8; ID_BYTES + 1]).into_string();
+        assert!(TenantId::from_bare(too_long).is_err());
+    }
+
+    #[test]
+    fn from_bare_accepts_exact_length() {
+        // Exactly ID_BYTES of payload round-trips through from_bare.
+        let bare = bs58::encode([0x42u8; ID_BYTES]).into_string();
+        assert!(TenantId::from_bare(bare).is_ok());
     }
 
     #[test]
