@@ -1,0 +1,51 @@
+<section class="issuer-create-page">
+  <header class="page-header">
+    <h1>{{ 'issuer.create.title' | transloco }}</h1>
+  </header>
+
+  <p-card>
+    <form [formGroup]="form" (ngSubmit)="onSubmit()" class="issuer-form">
+      <div class="form-field">
+        <label for="display_name">{{ 'issuer.create.display_name_label' | transloco }}</label>
+        <input
+          pInputText
+          id="display_name"
+          formControlName="display_name"
+          [placeholder]="'issuer.create.display_name_placeholder' | transloco"
+          [fluid]="true"
+        />
+        <small class="form-hint">{{ 'issuer.create.display_name_hint' | transloco }}</small>
+      </div>
+
+      <div class="form-field">
+        <label for="description">{{ 'issuer.create.description_label' | transloco }}</label>
+        <textarea
+          pTextarea
+          id="description"
+          formControlName="description"
+          rows="3"
+          [autoResize]="true"
+          [fluid]="true"
+          [placeholder]="'issuer.create.description_placeholder' | transloco"
+        ></textarea>
+      </div>
+
+      <p class="form-note">{{ 'issuer.create.did_note' | transloco }}</p>
+
+      <div class="form-actions">
+        <p-button
+          [label]="'issuer.create.cancel' | transloco"
+          severity="secondary"
+          [text]="true"
+          routerLink="/issuers"
+        />
+        <p-button
+          [label]="'issuer.create.submit' | transloco"
+          icon="pi pi-check"
+          type="submit"
+          [disabled]="form.invalid"
+        />
+      </div>
+    </form>
+  </p-card>
+</section>

@@ -1,0 +1,42 @@
+{
+  "issuer": {
+    "list": {
+      "title": "Issuers",
+      "create_button": "Create issuer",
+      "new_menu_item": "New issuer",
+      "tab_ready": "Ready",
+      "tab_in_progress": "In progress",
+      "col_display_name": "Display name",
+      "col_state": "State",
+      "col_did": "DID",
+      "col_description": "Description",
+      "col_status": "Status",
+      "empty_ready": "No issuers yet for this tenant.",
+      "empty_in_progress": "Nothing in progress.",
+      "status_in_progress": "Creating…",
+      "status_failed": "Failed",
+      "retry": "Retry",
+      "dismiss": "Dismiss",
+      "load_error": "Failed to load issuers from the BFF."
+    },
+    "create": {
+      "title": "Create issuer",
+      "display_name_label": "Display name",
+      "display_name_placeholder": "e.g. Acme University",
+      "display_name_hint": "Shown in lists and wallets. Required.",
+      "description_label": "Description",
+      "description_placeholder": "Optional internal note about this issuer",
+      "did_note": "The DID is generated automatically when the issuer is created.",
+      "cancel": "Cancel",
+      "submit": "Create"
+    },
+    "creation": {
+      "toast_created": "Issuer “{{name}}” created.",
+      "error_request": "Could not start issuer creation.",
+      "error_polling": "Lost track of the creation task.",
+      "error_timeout": "Creation is taking longer than expected.",
+      "error_generic": "Issuer creation failed.",
+      "error_fetch": "Issuer was created but could not be loaded."
+    }
+  }
+}

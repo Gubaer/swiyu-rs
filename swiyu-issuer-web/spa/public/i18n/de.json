@@ -1,0 +1,42 @@
+{
+  "issuer": {
+    "list": {
+      "title": "Aussteller",
+      "create_button": "Aussteller erstellen",
+      "new_menu_item": "Neuer Aussteller",
+      "tab_ready": "Bereit",
+      "tab_in_progress": "In Bearbeitung",
+      "col_display_name": "Anzeigename",
+      "col_state": "Status",
+      "col_did": "DID",
+      "col_description": "Beschreibung",
+      "col_status": "Status",
+      "empty_ready": "Noch keine Aussteller für diesen Mandanten.",
+      "empty_in_progress": "Nichts in Bearbeitung.",
+      "status_in_progress": "Wird erstellt…",
+      "status_failed": "Fehlgeschlagen",
+      "retry": "Wiederholen",
+      "dismiss": "Verwerfen",
+      "load_error": "Aussteller konnten nicht vom BFF geladen werden."
+    },
+    "create": {
+      "title": "Aussteller erstellen",
+      "display_name_label": "Anzeigename",
+      "display_name_placeholder": "z. B. Acme University",
+      "display_name_hint": "Wird in Listen und Wallets angezeigt. Erforderlich.",
+      "description_label": "Beschreibung",
+      "description_placeholder": "Optionale interne Notiz zu diesem Aussteller",
+      "did_note": "Die DID wird beim Erstellen des Ausstellers automatisch generiert.",
+      "cancel": "Abbrechen",
+      "submit": "Erstellen"
+    },
+    "creation": {
+      "toast_created": "Aussteller „{{name}}“ erstellt.",
+      "error_request": "Erstellung des Ausstellers konnte nicht gestartet werden.",
+      "error_polling": "Der Erstellungsvorgang konnte nicht weiterverfolgt werden.",
+      "error_timeout": "Die Erstellung dauert länger als erwartet.",
+      "error_generic": "Erstellung des Ausstellers fehlgeschlagen.",
+      "error_fetch": "Aussteller wurde erstellt, konnte aber nicht geladen werden."
+    }
+  }
+}

@@ -1,44 +1,141 @@
 <section class="issuers-page">
   <header class="page-header">
-    <h1>Issuers</h1>
+    <h1>{{ 'issuer.list.title' | transloco }}</h1>
+    <div class="page-header-actions">
+      <p-button
+        [label]="'issuer.list.create_button' | transloco"
+        icon="pi pi-plus"
+        routerLink="/issuers/create"
+      />
+      <p-button
+        icon="pi pi-ellipsis-v"
+        [text]="true"
+        severity="secondary"
+        aria-label="More actions"
+        (onClick)="actionsMenu.toggle($event)"
+      />
+      <p-menu #actionsMenu [model]="actions" [popup]="true" appendTo="body" />
+    </div>
   </header>
 
   @if (error(); as msg) {
     <p-message severity="error" [text]="msg" />
   } @else {
-    <p-table
-      [value]="issuers()"
-      [loading]="loading()"
-      dataKey="id"
-      [paginator]="false"
-      styleClass="p-datatable-sm"
-    >
-      <ng-template #header>
-        <tr>
-          <th>Display name</th>
-          <th>State</th>
-          <th>DID</th>
-          <th>Description</th>
-        </tr>
-      </ng-template>
-      <ng-template #body let-issuer>
-        <tr>
-          <td>{{ issuer.display_name }}</td>
-          <td>
-            <p-tag
-              [value]="issuer.state"
-              [severity]="issuer.state === 'active' ? 'success' : 'secondary'"
-            />
-          </td>
-          <td><code class="did">{{ issuer.did }}</code></td>
-          <td>{{ issuer.description }}</td>
-        </tr>
-      </ng-template>
-      <ng-template #emptymessage>
-        <tr>
-          <td colspan="4" class="empty">No issuers yet for this tenant.</td>
-        </tr>
-      </ng-template>
-    </p-table>
+    <p-tabs value="ready">
+      <p-tablist>
+        <p-tab value="ready">{{ 'issuer.list.tab_ready' | transloco }}</p-tab>
+        <p-tab value="in-progress">
+          {{ 'issuer.list.tab_in_progress' | transloco }}
+          @if (inProgressCount() > 0) {
+            <p-badge [value]="inProgressCount()" severity="info" class="ml-2" />
+          }
+        </p-tab>
+      </p-tablist>
+
+      <p-tabpanels>
+        <p-tabpanel value="ready">
+          <p-table
+            [value]="issuers()"
+            [loading]="loading()"
+            dataKey="id"
+            [paginator]="false"
+            styleClass="p-datatable-sm"
+          >
+            <ng-template #header>
+              <tr>
+                <th>{{ 'issuer.list.col_display_name' | transloco }}</th>
+                <th>{{ 'issuer.list.col_state' | transloco }}</th>
+                <th>{{ 'issuer.list.col_did' | transloco }}</th>
+                <th>{{ 'issuer.list.col_description' | transloco }}</th>
+              </tr>
+            </ng-template>
+            <ng-template #body let-issuer>
+              <tr>
+                <td>{{ issuer.display_name }}</td>
+                <td>
+                  <p-tag
+                    [value]="issuer.state"
+                    [severity]="issuer.state === 'active' ? 'success' : 'secondary'"
+                  />
+                </td>
+                <td><code class="did">{{ issuer.did }}</code></td>
+                <td>{{ issuer.description }}</td>
+              </tr>
+            </ng-template>
+            <ng-template #emptymessage>
+              <tr>
+                <td colspan="4" class="empty">
+                  {{ 'issuer.list.empty_ready' | transloco }}
+                </td>
+              </tr>
+            </ng-template>
+          </p-table>
+        </p-tabpanel>
+
+        <p-tabpanel value="in-progress">
+          <p-table
+            [value]="creations()"
+            dataKey="key"
+            [paginator]="false"
+            styleClass="p-datatable-sm"
+          >
+            <ng-template #header>
+              <tr>
+                <th>{{ 'issuer.list.col_display_name' | transloco }}</th>
+                <th>{{ 'issuer.list.col_status' | transloco }}</th>
+                <th></th>
+              </tr>
+            </ng-template>
+            <ng-template #body let-creation>
+              <tr>
+                <td>{{ creation.display_name }}</td>
+                <td>
+                  @if (creation.status === 'in_progress') {
+                    <span class="status-in-progress">
+                      <i class="pi pi-spin pi-spinner"></i>
+                      {{ 'issuer.list.status_in_progress' | transloco }}
+                    </span>
+                  } @else {
+                    <p-tag
+                      severity="danger"
+                      [value]="'issuer.list.status_failed' | transloco"
+                    />
+                    @if (creation.error) {
+                      <small class="status-error">{{ creation.error }}</small>
+                    }
+                  }
+                </td>
+                <td class="row-actions">
+                  @if (creation.status === 'failed') {
+                    <p-button
+                      [label]="'issuer.list.retry' | transloco"
+                      icon="pi pi-refresh"
+                      size="small"
+                      [text]="true"
+                      (onClick)="retry(creation.key)"
+                    />
+                    <p-button
+                      [label]="'issuer.list.dismiss' | transloco"
+                      icon="pi pi-times"
+                      size="small"
+                      severity="secondary"
+                      [text]="true"
+                      (onClick)="dismiss(creation.key)"
+                    />
+                  }
+                </td>
+              </tr>
+            </ng-template>
+            <ng-template #emptymessage>
+              <tr>
+                <td colspan="3" class="empty">
+                  {{ 'issuer.list.empty_in_progress' | transloco }}
+                </td>
+              </tr>
+            </ng-template>
+          </p-table>
+        </p-tabpanel>
+      </p-tabpanels>
+    </p-tabs>
   }
 </section>
