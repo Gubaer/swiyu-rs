@@ -3,6 +3,15 @@
     <h1>{{ 'issuer.list.title' | transloco }}</h1>
     <div class="page-header-actions">
       <p-button
+        icon="pi pi-refresh"
+        severity="secondary"
+        [text]="true"
+        [loading]="loading()"
+        [pTooltip]="'issuer.list.refresh' | transloco"
+        [ariaLabel]="'issuer.list.refresh' | transloco"
+        (onClick)="refresh()"
+      />
+      <p-button
         [label]="'issuer.list.create_button' | transloco"
         icon="pi pi-plus"
         routerLink="/issuers/create"

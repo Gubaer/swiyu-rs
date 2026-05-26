@@ -3,6 +3,7 @@
     "list": {
       "title": "Aussteller",
       "create_button": "Aussteller erstellen",
+      "refresh": "Aktualisieren",
       "new_menu_item": "Neuer Aussteller",
       "tab_ready": "Bereit",
       "tab_in_progress": "In Bearbeitung",

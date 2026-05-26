@@ -3,6 +3,7 @@
     "list": {
       "title": "Issuers",
       "create_button": "Create issuer",
+      "refresh": "Refresh",
       "new_menu_item": "New issuer",
       "tab_ready": "Ready",
       "tab_in_progress": "In progress",

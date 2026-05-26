@@ -56,6 +56,10 @@ export class IssuersList implements OnInit {
       });
   }
 
+  protected refresh(): void {
+    this.store.load();
+  }
+
   protected retry(key: string): void {
     this.store.retry(key);
   }
