@@ -51,7 +51,18 @@
       "rotate_confirm_message": "New keys will be generated for “{{name}}” and the current keys replaced.",
       "rotate_confirm_accept": "Rotate keys",
       "rotate_confirm_reject": "Cancel",
-      "load_error": "Failed to load this issuer."
+      "load_error": "Failed to load this issuer.",
+      "did_log_title": "DID log",
+      "did_log_version": "Version",
+      "did_log_entry_hash": "Entry hash",
+      "did_log_timestamp": "Timestamp",
+      "did_log_state": "State",
+      "did_log_active": "Active",
+      "did_log_deactivated": "Deactivated",
+      "did_log_empty": "No DID log entries.",
+      "did_log_error": "Failed to load the DID log.",
+      "did_log_entry_title": "DID log entry — version {{version}}",
+      "close": "Close"
     },
     "operation": {
       "created_toast": "Issuer “{{name}}” created.",

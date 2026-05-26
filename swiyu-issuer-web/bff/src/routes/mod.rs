@@ -8,6 +8,8 @@ use axum::Router;
 use axum::routing::{get, post};
 use tower_http::trace::TraceLayer;
 
+use swiyu_registries::identifier::IdentifierRegistryClient;
+
 use crate::config::Config;
 use crate::upstream::MgmtApiClient;
 
@@ -15,6 +17,7 @@ use crate::upstream::MgmtApiClient;
 pub struct AppState {
     pub config: Arc<Config>,
     pub mgmt_api: MgmtApiClient,
+    pub identifier_registry: Arc<IdentifierRegistryClient>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -25,6 +28,10 @@ pub fn router(state: AppState) -> Router {
             get(issuers::list_issuers).post(issuers::create_issuer),
         )
         .route("/api/issuers/{issuer_id}", get(issuers::get_issuer))
+        .route(
+            "/api/issuers/{issuer_id}/did-log",
+            get(issuers::get_did_log),
+        )
         .route(
             "/api/issuers/{issuer_id}/deactivate",
             post(issuers::deactivate_issuer),

@@ -43,3 +43,79 @@
   font-size: 0.85rem;
   word-break: break-all;
 }
+
+.did-log-card {
+  display: block;
+  margin-top: 1.5rem;
+}
+
+.did-log-card td {
+  cursor: default;
+}
+
+.entry-hash {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+// Render the version link inline like a cell value, without button padding.
+.did-log-card ::ng-deep .version-link.p-button {
+  padding: 0;
+}
+
+.json-view {
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+// highlight.js token colours. The highlighted spans are injected via
+// [innerHTML], so they don't carry this component's scoping attribute;
+// ::ng-deep (kept under .json-view) is required to reach them.
+.json-view ::ng-deep {
+  .hljs-attr {
+    color: #0451a5;
+  }
+  .hljs-string {
+    color: #0a7d22;
+  }
+  .hljs-number {
+    color: #098658;
+  }
+  .hljs-literal {
+    color: #0000ff;
+  }
+}
+
+:host-context(.app-dark) .json-view ::ng-deep {
+  .hljs-attr {
+    color: #79c0ff;
+  }
+  .hljs-string {
+    color: #a5d6ff;
+  }
+  .hljs-number {
+    color: #d2a8ff;
+  }
+  .hljs-literal {
+    color: #ff7b72;
+  }
+}
+
+.detail-subtitle {
+  margin: 0 0 1rem 0;
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+
+.empty {
+  text-align: center;
+  color: var(--p-text-muted-color);
+  padding: 2rem 0;
+}

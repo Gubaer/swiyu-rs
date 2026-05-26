@@ -52,5 +52,85 @@
         <dd>{{ issuer.description }}</dd>
       </dl>
     </p-card>
+
+    <p-card class="did-log-card">
+      <h2 class="detail-subtitle">{{ 'issuer.detail.did_log_title' | transloco }}</h2>
+      @if (didLogError(); as msg) {
+        <p-message severity="error" [text]="msg | transloco" />
+      } @else {
+        <p-table
+          [value]="didLog()"
+          [loading]="didLogLoading()"
+          dataKey="versionId"
+          [paginator]="false"
+          styleClass="p-datatable-sm"
+        >
+          <ng-template #header>
+            <tr>
+              <th style="width: 6rem">
+                {{ 'issuer.detail.did_log_version' | transloco }}
+              </th>
+              <th>{{ 'issuer.detail.did_log_entry_hash' | transloco }}</th>
+              <th>{{ 'issuer.detail.did_log_timestamp' | transloco }}</th>
+              <th style="width: 10rem">
+                {{ 'issuer.detail.did_log_state' | transloco }}
+              </th>
+            </tr>
+          </ng-template>
+          <ng-template #body let-entry>
+            <tr>
+              <td>
+                <p-button
+                  [label]="(entry.version ?? entry.versionId).toString()"
+                  [link]="true"
+                  styleClass="version-link"
+                  (onClick)="openEntry(entry)"
+                />
+              </td>
+              <td><code class="entry-hash">{{ entryHash(entry.versionId) }}</code></td>
+              <td>{{ entry.versionTime }}</td>
+              <td>
+                <p-tag
+                  [value]="
+                    (entry.deactivated
+                      ? 'issuer.detail.did_log_deactivated'
+                      : 'issuer.detail.did_log_active'
+                    ) | transloco
+                  "
+                  [severity]="entry.deactivated ? 'secondary' : 'success'"
+                />
+              </td>
+            </tr>
+          </ng-template>
+          <ng-template #emptymessage>
+            <tr>
+              <td colspan="4" class="empty">
+                {{ 'issuer.detail.did_log_empty' | transloco }}
+              </td>
+            </tr>
+          </ng-template>
+        </p-table>
+      }
+    </p-card>
+
+    <p-dialog
+      [header]="entryDialogHeader()"
+      [visible]="entryDialogVisible()"
+      (visibleChange)="entryDialogVisible.set($event)"
+      [modal]="true"
+      [dismissableMask]="true"
+      [style]="{ width: '64rem' }"
+      [breakpoints]="{ '960px': '90vw' }"
+    >
+      <pre class="json-view"><code class="hljs language-json" [innerHTML]="highlightedEntry()"></code></pre>
+      <ng-template #footer>
+        <p-button
+          [label]="'issuer.detail.close' | transloco"
+          icon="pi pi-times"
+          severity="secondary"
+          (onClick)="entryDialogVisible.set(false)"
+        />
+      </ng-template>
+    </p-dialog>
   }
 </section>

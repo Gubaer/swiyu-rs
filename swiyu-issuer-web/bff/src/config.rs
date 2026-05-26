@@ -19,6 +19,9 @@ pub struct Config {
     pub bff_port: u16,
     pub mgmtapi_url: String,
     pub mgmtapi_token: String,
+    // Only used if identifier-registry write APIs are added later;
+    // DID-log fetches resolve through the DID's own `log_url`.
+    pub identifier_registry_url: String,
     pub dev_user_id: String,
     pub dev_tenant_name: String,
 }
@@ -29,6 +32,7 @@ impl Config {
             bff_port: parse_port("BFF_PORT", 3000)?,
             mgmtapi_url: required("MGMTAPI_URL")?,
             mgmtapi_token: required("MGMTAPI_TOKEN")?,
+            identifier_registry_url: optional("IDENTIFIER_REGISTRY_URL", ""),
             dev_user_id: optional("DEV_USER_ID", "test"),
             dev_tenant_name: optional("DEV_TENANT_NAME", "dev"),
         })

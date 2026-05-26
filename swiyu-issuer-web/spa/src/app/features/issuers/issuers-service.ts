@@ -50,6 +50,19 @@ export interface RotateKeysResponse {
   issuer_id: string;
 }
 
+export interface DidLogEntry {
+  version: number | null;
+  versionId: string;
+  versionTime: string;
+  deactivated: boolean;
+  // The raw log entry, kept for a future per-version JSON view.
+  entry: unknown;
+}
+
+export interface DidLogResponse {
+  entries: DidLogEntry[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class IssuersService {
   private readonly http = inject(HttpClient);
@@ -83,5 +96,9 @@ export class IssuersService {
       `/api/issuers/${issuerId}/rotate-keys`,
       { roles: ['all'] }
     );
+  }
+
+  getDidLog(issuerId: string): Observable<DidLogResponse> {
+    return this.http.get<DidLogResponse>(`/api/issuers/${issuerId}/did-log`);
   }
 }

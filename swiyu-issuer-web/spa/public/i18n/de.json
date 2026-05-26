@@ -51,7 +51,18 @@
       "rotate_confirm_message": "Für „{{name}}“ werden neue Schlüssel generiert und die aktuellen ersetzt.",
       "rotate_confirm_accept": "Schlüssel rotieren",
       "rotate_confirm_reject": "Abbrechen",
-      "load_error": "Dieser Aussteller konnte nicht geladen werden."
+      "load_error": "Dieser Aussteller konnte nicht geladen werden.",
+      "did_log_title": "DID-Log",
+      "did_log_version": "Version",
+      "did_log_entry_hash": "Entry-Hash",
+      "did_log_timestamp": "Zeitstempel",
+      "did_log_state": "Status",
+      "did_log_active": "Aktiv",
+      "did_log_deactivated": "Deaktiviert",
+      "did_log_empty": "Keine DID-Log-Einträge.",
+      "did_log_error": "DID-Log konnte nicht geladen werden.",
+      "did_log_entry_title": "DID-Log-Eintrag – Version {{version}}",
+      "close": "Schließen"
     },
     "operation": {
       "created_toast": "Aussteller „{{name}}“ erstellt.",

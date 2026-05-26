@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
+use swiyu_registries::common::RegistryError;
 
 use crate::upstream::CallError;
 
@@ -10,6 +11,14 @@ use crate::upstream::CallError;
 pub enum AppError {
     #[error("upstream call failed: {0}")]
     Upstream(#[from] CallError),
+    #[error("identifier registry call failed: {0}")]
+    Registry(#[from] RegistryError),
+    #[error("issuer record has no DID")]
+    MissingDid,
+    #[error("issuer DID could not be parsed")]
+    InvalidDid,
+    #[error("DID log could not be parsed")]
+    InvalidDidLog,
 }
 
 impl IntoResponse for AppError {
@@ -22,11 +31,26 @@ impl IntoResponse for AppError {
                 let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
                 (status, [(CONTENT_TYPE, "application/json")], body).into_response()
             }
-            Self::Upstream(CallError::Transport(_)) => (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": "upstream call failed" })),
-            )
-                .into_response(),
+            Self::Upstream(CallError::Transport(_)) => gateway_error("upstream call failed"),
+            // Forward the registry's HTTP status (notably 404 for an unknown
+            // identifier); treat transport/decode failures as a gateway error.
+            Self::Registry(RegistryError::HttpStatus { status, .. }) => {
+                let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+                (
+                    status,
+                    Json(json!({ "error": "identifier registry error" })),
+                )
+                    .into_response()
+            }
+            Self::Registry(_) => gateway_error("identifier registry unavailable"),
+            // The mgmt API or registry handed us data we could not use.
+            Self::MissingDid | Self::InvalidDid | Self::InvalidDidLog => {
+                gateway_error("could not resolve the DID log")
+            }
         }
     }
+}
+
+fn gateway_error(message: &str) -> Response {
+    (StatusCode::BAD_GATEWAY, Json(json!({ "error": message }))).into_response()
 }

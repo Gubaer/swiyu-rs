@@ -3296,6 +3296,8 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "swiyu-core",
+ "swiyu-registries",
  "thiserror 2.0.18",
  "tokio",
  "tower",
