@@ -25,6 +25,15 @@ export interface IssuerCreation {
   error: string | null;
 }
 
+// Case-insensitive, locale-aware sort by display name. Returns a new array.
+function sortByDisplayName(issuers: Issuer[]): Issuer[] {
+  return [...issuers].sort((a, b) =>
+    a.display_name.localeCompare(b.display_name, undefined, {
+      sensitivity: 'base'
+    })
+  );
+}
+
 const POLL_INTERVAL_MS = 1500;
 // ~2 minutes of polling before giving up on a stuck saga.
 const MAX_POLLS = 80;
@@ -53,7 +62,7 @@ export class IssuersStore {
     this.listError.set(null);
     this.service.list().subscribe({
       next: (resp) => {
-        this.readyIssuers.set(resp.items);
+        this.readyIssuers.set(sortByDisplayName(resp.items));
         this.listLoading.set(false);
       },
       error: () => {
@@ -155,10 +164,9 @@ export class IssuersStore {
     // than promote the optimistic data.
     this.service.get(issuerId).subscribe({
       next: (issuer) => {
-        this.readyIssuers.update((list) => [
-          issuer,
-          ...list.filter((i) => i.id !== issuer.id)
-        ]);
+        this.readyIssuers.update((list) =>
+          sortByDisplayName([issuer, ...list.filter((i) => i.id !== issuer.id)])
+        );
         this.removeCreation(key);
         this.messages.add({
           severity: 'success',
