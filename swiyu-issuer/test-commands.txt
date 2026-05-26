@@ -13,8 +13,7 @@
 # own dev token after bootstrapping their dev tenant:
 #
 #   swiyu-issuer-cli tenant bootstrap-dev-from-env   # creates tenant, prints id
-#   swiyu-issuer-cli tenant api-token mint \
-#     --tenant <bare-tenant-id> --name local-dev    # prints tok_... once
+#   swiyu-issuer-cli tenant api-token mint --tenant dev   # prints tok_... once
 #
 # Export the token + your issuer id for the snippets below:
 #
@@ -223,8 +222,14 @@ http POST :8081/i/$ISSUER/credential \
 # -----------------------------------------------------------------------------
 # Mint a fresh token (CLI; no HTTP)
 # -----------------------------------------------------------------------------
-# Prints a tok_... wire form once on stdout; only the hash is persisted.
+# Prints id/name/secret once; only the hash is persisted.
+#   cargo run --bin swiyu-issuer-cli -- tenant api-token mint --tenant dev
 #   cargo run --bin swiyu-issuer-cli -- tenant api-token mint \
-#     --tenant <bare-tenant-id> --name local-dev
-#   cargo run --bin swiyu-issuer-cli -- tenant api-token mint \
-#     --tenant <bare-tenant-id> --name short-lived --expires-in 1h
+#     --tenant dev --name short-lived --expires-in 1h
+#
+# With --token-only it prints just the bare tok_... for scripting:
+#   TOK=$(cargo run -q --bin swiyu-issuer-cli -- \
+#     tenant api-token mint --tenant dev --token-only)
+#
+# --tenant also accepts a bare tenant id or a business partner UUID;
+# --name is optional and defaults to a generated label.

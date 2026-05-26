@@ -293,6 +293,8 @@ services:
       SECRET_ENCRYPTION_DEV_MASTER_KEY: ${SECRET_ENCRYPTION_DEV_MASTER_KEY:-ZGV2LXNlY3JldC1tYW5hZ2VtZW50LW1hc3Rlci1rZXk=}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root}
+      # Lets `tenant api-token mint --tenant dev` resolve the dev tenant.
+      DEV_TENANT_PARTNER_ID: ${DEV_TENANT_PARTNER_ID:-}
       RUST_LOG: ${RUST_LOG:-info,swiyu_issuer=debug}
 
 volumes:
