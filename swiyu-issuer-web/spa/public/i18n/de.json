@@ -33,6 +33,13 @@
       "cancel": "Abbrechen",
       "submit": "Erstellen"
     },
+    "detail": {
+      "back": "Zurück zu den Ausstellern",
+      "state": "Status",
+      "did": "DID",
+      "description": "Beschreibung",
+      "load_error": "Dieser Aussteller konnte nicht geladen werden."
+    },
     "creation": {
       "toast_created": "Aussteller „{{name}}“ erstellt.",
       "error_request": "Erstellung des Ausstellers konnte nicht gestartet werden.",

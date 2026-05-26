@@ -17,6 +17,20 @@
   gap: 0.5rem;
 }
 
+.issuers-page td {
+  cursor: default;
+}
+
+.issuer-link {
+  color: var(--p-primary-color);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.issuer-link:hover {
+  text-decoration: underline;
+}
+
 .did-cell {
   display: flex;
   align-items: center;

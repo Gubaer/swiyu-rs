@@ -57,7 +57,12 @@
             </ng-template>
             <ng-template #body let-issuer>
               <tr>
-                <td>{{ issuer.display_name }}</td>
+                <td>
+                  <a
+                    class="issuer-link"
+                    [routerLink]="['/issuers', issuer.id]"
+                  >{{ issuer.display_name }}</a>
+                </td>
                 <td>{{ issuer.description }}</td>
                 <td>
                   <div class="did-cell">

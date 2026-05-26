@@ -16,6 +16,11 @@ export const routes: Routes = [
         path: 'issuers/create',
         loadComponent: () =>
           import('./features/issuers/issuer-create').then((m) => m.IssuerCreate)
+      },
+      {
+        path: 'issuers/:id',
+        loadComponent: () =>
+          import('./features/issuers/issuer-detail').then((m) => m.IssuerDetail)
       }
     ]
   }

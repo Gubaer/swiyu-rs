@@ -33,6 +33,13 @@
       "cancel": "Cancel",
       "submit": "Create"
     },
+    "detail": {
+      "back": "Back to issuers",
+      "state": "State",
+      "did": "DID",
+      "description": "Description",
+      "load_error": "Failed to load this issuer."
+    },
     "creation": {
       "toast_created": "Issuer “{{name}}” created.",
       "error_request": "Could not start issuer creation.",

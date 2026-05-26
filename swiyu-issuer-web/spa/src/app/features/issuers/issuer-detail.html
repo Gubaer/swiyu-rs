@@ -1,0 +1,34 @@
+<section class="issuer-detail-page">
+  <header class="page-header">
+    <p-button
+      icon="pi pi-arrow-left"
+      [label]="'issuer.detail.back' | transloco"
+      severity="secondary"
+      [text]="true"
+      routerLink="/issuers"
+    />
+  </header>
+
+  @if (error(); as msg) {
+    <p-message severity="error" [text]="msg | transloco" />
+  } @else if (issuer(); as issuer) {
+    <p-card>
+      <h1 class="detail-title">{{ issuer.display_name }}</h1>
+      <dl class="detail-grid">
+        <dt>{{ 'issuer.detail.state' | transloco }}</dt>
+        <dd>
+          <p-tag
+            [value]="issuer.state"
+            [severity]="issuer.state === 'active' ? 'success' : 'secondary'"
+          />
+        </dd>
+
+        <dt>{{ 'issuer.detail.did' | transloco }}</dt>
+        <dd><code class="did">{{ issuer.did }}</code></dd>
+
+        <dt>{{ 'issuer.detail.description' | transloco }}</dt>
+        <dd>{{ issuer.description }}</dd>
+      </dl>
+    </p-card>
+  }
+</section>
