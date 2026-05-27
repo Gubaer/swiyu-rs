@@ -9,10 +9,14 @@ RUN apk add --no-cache musl-dev
 
 WORKDIR /build
 
-# Workspace manifest plus both crates. swiyu-didtool depends on swiyu-core
-# via a path dependency, so both must be present in the build context.
+# Cargo loads the entire workspace before building any single member, so every
+# member listed in the root Cargo.toml must be present even though we only build
+# swiyu-didtool. swiyu-issuer is copied for that reason alone — `-p swiyu-didtool`
+# resolves but never compiles it.
 COPY Cargo.toml Cargo.lock ./
 COPY swiyu-core swiyu-core
+COPY swiyu-registries swiyu-registries
+COPY swiyu-issuer swiyu-issuer
 COPY swiyu-didtool swiyu-didtool
 
 # Cache the cargo registry and target dir across builds. Cache mounts are
