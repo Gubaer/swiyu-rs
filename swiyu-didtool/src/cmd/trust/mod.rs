@@ -60,14 +60,7 @@ pub enum TrustError {
 /// spin up a transient current-thread tokio runtime to drive the single call.
 pub(crate) fn fetch_statements(base_url: &str, did: &DID) -> Result<Vec<String>, TrustError> {
     let client = TrustRegistryClient::new(base_url.to_string())?;
-    // A current-thread runtime only fails to build on OS resource exhaustion,
-    // which is an environment failure rather than a condition this command can
-    // act on; there is no useful recovery, so we treat it as unreachable.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("building a current-thread tokio runtime");
-    Ok(runtime.block_on(client.fetch_trust_statements(did))?)
+    Ok(crate::cmd::block_on(client.fetch_trust_statements(did))?)
 }
 
 // ── Test fixtures (cfg(test) only, shared across submodules) ─────────────────

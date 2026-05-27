@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 reqwest = { version = "0.13", features = ["blocking", "json", "rustls", "webpki-roots"], default-features = false }
 swiyu-core = { path = "../swiyu-core" }
-swiyu-registries = { path = "../swiyu-registries", features = ["trust"], default-features = false }
+swiyu-registries = { path = "../swiyu-registries", features = ["identifier", "trust"], default-features = false }
 tokio = { version = "1", features = ["rt", "net", "time"] }
 base64 = { version = "0.22", features = ["alloc"] }
 blake3 = "1"
