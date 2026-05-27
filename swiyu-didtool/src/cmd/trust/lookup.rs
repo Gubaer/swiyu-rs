@@ -1,12 +1,9 @@
-use tracing::debug;
-
 use swiyu_core::truststatement::TrustStatement;
 
-use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
 use crate::keystore::KeyStore;
 
-use super::{TrustError, build_endpoint};
+use super::TrustError;
 
 // Re-export the shared error type as `LookupError` for clarity at call sites.
 pub use super::TrustError as LookupError;
@@ -29,24 +26,17 @@ pub fn cmd_lookup(store: &KeyStore, args: LookupArgs) -> Result<LookupOutcome, L
         .trust_registry_url
         .ok_or(TrustError::TrustRegistryUrlMissing)?;
     let did = resolve_did(store, &args.did)?;
-    let endpoint = build_endpoint(&base_url, &did);
-    debug!("GET {endpoint}");
-
     let did_str = did.to_string();
-    let body = match fetch_text(&endpoint)? {
-        FetchOutcome::NotFound => {
-            eprintln!("no trust statements found for {did_str}");
-            return Ok(LookupOutcome::NoStatements);
-        }
-        FetchOutcome::Ok(body) => body,
-    };
 
-    process_body(&did_str, &body, args.raw)
+    let array = super::fetch_statements(&base_url, &did)?;
+    process_statements(&did_str, array, args.raw)
 }
 
-fn process_body(did: &str, body: &str, raw: bool) -> Result<LookupOutcome, LookupError> {
-    let array: Vec<String> = serde_json::from_str(body).map_err(|_| TrustError::ResponseShape)?;
-
+fn process_statements(
+    did: &str,
+    array: Vec<String>,
+    raw: bool,
+) -> Result<LookupOutcome, LookupError> {
     if array.is_empty() {
         eprintln!("no trust statements found for {did}");
         return Ok(LookupOutcome::NoStatements);
@@ -120,22 +110,15 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn process_body_empty_array_returns_no_statements() {
-        let outcome = process_body("did:tdw:abc", "[]", false).unwrap();
+    fn process_statements_empty_returns_no_statements() {
+        let outcome = process_statements("did:tdw:abc", Vec::new(), false).unwrap();
         assert!(matches!(outcome, LookupOutcome::NoStatements));
     }
 
     #[test]
-    fn process_body_non_array_is_response_shape_error() {
-        let err = process_body("did:tdw:abc", "{}", false).unwrap_err();
-        assert!(matches!(err, TrustError::ResponseShape));
-    }
-
-    #[test]
-    fn process_body_one_statement_returns_found() {
+    fn process_statements_one_statement_returns_found() {
         let jwt = build_jwt(json!({}), vec![is_state_actor_disclosure(true)]);
-        let body = serde_json::to_string(&vec![jwt]).unwrap();
-        let outcome = process_body("did:tdw:abc", &body, false).unwrap();
+        let outcome = process_statements("did:tdw:abc", vec![jwt], false).unwrap();
         assert!(matches!(outcome, LookupOutcome::Found));
     }
 }
