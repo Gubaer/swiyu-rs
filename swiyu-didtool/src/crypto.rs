@@ -40,8 +40,6 @@ pub fn generate_eddsa_key_pair() -> (Ed25519SigningKey, Ed25519VerifyingKey) {
 }
 
 /// Writes an ECDSA private key to a file in PKCS#8 PEM format.
-///
-/// On Unix the file is created with mode 0600 (owner read/write only).
 pub fn write_private_key_ecdsa(key: &EcdsaSigningKey, path: &Path) -> CryptoResult<()> {
     let pem = key
         .to_pkcs8_pem(LineEnding::LF)
@@ -76,8 +74,6 @@ pub fn read_public_key_ecdsa(path: &Path) -> CryptoResult<EcdsaVerifyingKey> {
 }
 
 /// Writes an EdDSA private key to a file in PKCS#8 PEM format.
-///
-/// On Unix the file is created with mode 0600 (owner read/write only).
 pub fn write_private_key_eddsa(key: &Ed25519SigningKey, path: &Path) -> CryptoResult<()> {
     let pem = key
         .to_pkcs8_pem(LineEnding::LF)

@@ -1,8 +1,8 @@
+mod cmd;
 // crypto functions are called from keystore; rustc doesn't trace through test-only call chains
 #[allow(dead_code)]
 mod crypto;
 // keystore items used only in tests (generate, commit, …) are intentionally kept for future commands
-mod cmd;
 #[allow(dead_code)]
 mod keystore;
 mod oauth2;

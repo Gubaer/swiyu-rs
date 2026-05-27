@@ -1,14 +1,13 @@
 //! OAuth2 `refresh_token` grant against the SWIYU token endpoint.
 //!
-//! SWIYU partner Anwendungen cannot use the `client_credentials` grant (the API
+//! SWIYU partner applications cannot use the `client_credentials` grant (the API
 //! gateway forbids it), so the only way to obtain a registry access token is to
 //! exchange a refresh token seeded from the ePortal. This module performs that
 //! one exchange and returns the resulting [`AccessToken`].
 //!
 //! It is deliberately stateless: the rotated refresh token the endpoint returns
 //! is discarded, not persisted. didtool reads the seed from `SWIYU_REFRESH_TOKEN`
-//! on every run. (swiyu-issuer persists and rotates the refresh token in its
-//! tenant database; didtool, a CLI with no database, does not.)
+//! on every run.
 
 use std::time::Duration;
 
@@ -31,8 +30,7 @@ pub enum OAuth2Error {
     Decode(String),
 }
 
-/// The four OAuth2 inputs the `refresh_token` grant needs, read from the
-/// environment. Secrets are wrapped so they are overwritten on drop.
+/// The four OAuth2 inputs the `refresh_token` grant needs, read from the environment.
 pub(crate) struct OAuthCredentials {
     token_url: String,
     client_id: String,
