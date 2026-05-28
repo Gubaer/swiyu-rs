@@ -73,6 +73,42 @@ impl MgmtApiClient {
         let response = self.http.get(&url).send().await?;
         read_json(response).await
     }
+
+    pub async fn list_credential_offers(
+        &self,
+        issuer_id: &str,
+        limit: Option<u32>,
+        cursor: Option<&str>,
+    ) -> Result<Value, CallError> {
+        let url = format!(
+            "{}/api/v1/issuers/{issuer_id}/credential-offers",
+            self.base_url
+        );
+        // Only attach query params that are actually present; otherwise the
+        // upstream sees `?limit=` (empty string) and rejects it as malformed.
+        let mut query: Vec<(&str, String)> = Vec::new();
+        if let Some(limit) = limit {
+            query.push(("limit", limit.to_string()));
+        }
+        if let Some(cursor) = cursor {
+            query.push(("cursor", cursor.to_string()));
+        }
+        let response = self.http.get(&url).query(&query).send().await?;
+        read_json(response).await
+    }
+
+    pub async fn get_credential_offer(
+        &self,
+        issuer_id: &str,
+        offer_id: &str,
+    ) -> Result<Value, CallError> {
+        let url = format!(
+            "{}/api/v1/issuers/{issuer_id}/credential-offers/{offer_id}",
+            self.base_url
+        );
+        let response = self.http.get(&url).send().await?;
+        read_json(response).await
+    }
 }
 
 async fn read_json(response: reqwest::Response) -> Result<Value, CallError> {

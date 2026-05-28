@@ -1,3 +1,4 @@
+mod credential_offers;
 mod issuers;
 mod me;
 mod operation_tasks;
@@ -43,6 +44,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/operation-tasks/{task_id}",
             get(operation_tasks::get_task),
+        )
+        .route(
+            "/api/issuers/{issuer_id}/credential-offers",
+            get(credential_offers::list_credential_offers),
+        )
+        .route(
+            "/api/issuers/{issuer_id}/credential-offers/{offer_id}",
+            get(credential_offers::get_credential_offer),
         )
         .with_state(state)
         .layer(TraceLayer::new_for_http())
