@@ -5,6 +5,8 @@ use swiyu_core::did::{DID, DIDError};
 use swiyu_core::diddoc::DIDDocError;
 use swiyu_core::statuslist::StatusListError;
 use swiyu_core::truststatement::TrustStatementError;
+use swiyu_registries::common::RegistryError;
+use swiyu_registries::trust::TrustRegistryClient;
 
 use crate::cmd::ResolveError;
 use crate::cmd::http::FetchError;
@@ -23,8 +25,6 @@ pub enum TrustError {
     TrustRegistryUrlMissing,
     #[error("--trust-issuer or SWIYU_TRUST_ISSUER_DID is required")]
     TrustIssuerMissing,
-    #[error("trust registry response is not a JSON array of JWT strings")]
-    ResponseShape,
     #[error("trust statement #{n} is malformed: {source}")]
     Statement {
         n: usize,
@@ -40,6 +40,8 @@ pub enum TrustError {
     #[error(transparent)]
     StatusList(#[from] StatusListError),
     #[error(transparent)]
+    Registry(#[from] RegistryError),
+    #[error(transparent)]
     Fetch(#[from] FetchError),
     #[error(transparent)]
     Resolve(#[from] ResolveError),
@@ -51,12 +53,14 @@ pub enum TrustError {
     KeyStore(#[from] KeyStoreError),
 }
 
-pub(crate) fn build_endpoint(base_url: &str, did: &DID) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    format!(
-        "{trimmed}/api/v1/truststatements/identity/{}",
-        did.url_path_segment()
-    )
+/// Fetches the trust statements for `did` from the registry at `base_url`,
+/// returning the raw JWT strings (empty when the registry has none).
+///
+/// `swiyu-registries`' client is async; didtool is otherwise synchronous, so we
+/// spin up a transient current-thread tokio runtime to drive the single call.
+pub(crate) fn fetch_statements(base_url: &str, did: &DID) -> Result<Vec<String>, TrustError> {
+    let client = TrustRegistryClient::new(base_url.to_string())?;
+    Ok(crate::cmd::block_on(client.fetch_trust_statements(did))?)
 }
 
 // ── Test fixtures (cfg(test) only, shared across submodules) ─────────────────
@@ -117,29 +121,4 @@ pub(crate) fn build_jwt(payload_extra: Value, disclosures: Vec<serde_json::Value
 #[cfg(test)]
 pub(crate) fn is_state_actor_disclosure(b: bool) -> serde_json::Value {
     serde_json::json!(["rIPBffSxmopF09SQ2-gjaQ", "isStateActor", b])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_endpoint_percent_encodes_did() {
-        let did: DID = "did:tdw:Q123:host.example.com:api:v1:did:abc"
-            .parse()
-            .unwrap();
-        let url = build_endpoint("https://trust-reg.example.com/", &did);
-        assert_eq!(
-            url,
-            "https://trust-reg.example.com/api/v1/truststatements/identity/did%3Atdw%3AQ123%3Ahost.example.com%3Aapi%3Av1%3Adid%3Aabc"
-        );
-    }
-
-    #[test]
-    fn build_endpoint_handles_trailing_slash() {
-        let did: DID = "did:tdw:abc:example.com".parse().unwrap();
-        let with_slash = build_endpoint("https://x/", &did);
-        let without = build_endpoint("https://x", &did);
-        assert_eq!(with_slash, without);
-    }
 }

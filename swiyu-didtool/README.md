@@ -66,8 +66,10 @@ Available tags:
 - `<version>-swiyu-beta` (e.g. `0.1.4-swiyu-beta`) — pinned to a specific release.
 
 The image bakes in the SWIYU Beta registry URLs, so users only need to supply
-`SWIYU_PARTNER_ID` and `SWIYU_ACCESS_TOKEN`. The key store persists in the named
-Docker volume `didtool-keys`; reset it with `docker volume rm didtool-keys`.
+`SWIYU_PARTNER_ID` and the OAuth2 credentials (`SWIYU_TOKEN_URL`,
+`SWIYU_CLIENT_ID`, `SWIYU_CLIENT_SECRET`, `SWIYU_REFRESH_TOKEN`). The key store
+persists in the named Docker volume `didtool-keys`; reset it with
+`docker volume rm didtool-keys`.
 
 Drop this shell function into `~/.bashrc` / `~/.zshrc` so the rest of the
 examples below work the same as a native install:
@@ -76,7 +78,8 @@ examples below work the same as a native install:
 didtool() {
     docker run --rm -it \
         -v didtool-keys:/data \
-        -e SWIYU_PARTNER_ID -e SWIYU_ACCESS_TOKEN \
+        -e SWIYU_PARTNER_ID \
+        -e SWIYU_TOKEN_URL -e SWIYU_CLIENT_ID -e SWIYU_CLIENT_SECRET -e SWIYU_REFRESH_TOKEN \
         -e SWIYU_IDENTIFIER_REGISTRY_URL \
         -e SWIYU_TRUST_REGISTRY_URL \
         -e SWIYU_TRUST_ISSUER_DID \
@@ -90,7 +93,8 @@ PowerShell equivalent for `$PROFILE`:
 function didtool {
     docker run --rm -it `
         -v didtool-keys:/data `
-        -e SWIYU_PARTNER_ID -e SWIYU_ACCESS_TOKEN `
+        -e SWIYU_PARTNER_ID `
+        -e SWIYU_TOKEN_URL -e SWIYU_CLIENT_ID -e SWIYU_CLIENT_SECRET -e SWIYU_REFRESH_TOKEN `
         -e SWIYU_IDENTIFIER_REGISTRY_URL `
         -e SWIYU_TRUST_REGISTRY_URL `
         -e SWIYU_TRUST_ISSUER_DID `

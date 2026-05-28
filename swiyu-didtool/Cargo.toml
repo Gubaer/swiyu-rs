@@ -1,6 +1,6 @@
 [package]
 name = "swiyu-didtool"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 license = "MIT"
 
@@ -9,8 +9,10 @@ name = "didtool"
 path = "src/main.rs"
 
 [dependencies]
-reqwest = { version = "0.13", features = ["blocking", "json", "rustls", "webpki-roots"], default-features = false }
+reqwest = { version = "0.13", features = ["blocking", "form", "json", "rustls", "webpki-roots"], default-features = false }
 swiyu-core = { path = "../swiyu-core" }
+swiyu-registries = { path = "../swiyu-registries", features = ["identifier", "trust"], default-features = false }
+tokio = { version = "1", features = ["rt", "net", "time"] }
 base64 = { version = "0.22", features = ["alloc"] }
 blake3 = "1"
 bs58 = "0.5"
@@ -32,3 +34,5 @@ tracing-subscriber = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+wiremock = "0.6"

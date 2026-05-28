@@ -17,7 +17,7 @@ use crate::cmd::http::{FetchOutcome, fetch_text};
 use crate::cmd::{iso8601, resolve_did};
 use crate::keystore::KeyStore;
 
-use super::{TrustError, build_endpoint};
+use super::TrustError;
 
 pub use super::TrustError as VerifyError;
 
@@ -39,16 +39,9 @@ pub fn cmd_verify(store: &KeyStore, args: VerifyArgs) -> Result<VerifyOutcome, V
         .ok_or(TrustError::TrustRegistryUrlMissing)?;
     let expected_issuer = args.trust_issuer.ok_or(TrustError::TrustIssuerMissing)?;
     let did = resolve_did(store, &args.did)?;
-    let endpoint = build_endpoint(&base_url, &did);
-    debug!("GET {endpoint}");
     let did_str = did.to_string();
 
-    let array: Vec<String> = match fetch_text(&endpoint)? {
-        FetchOutcome::NotFound => Vec::new(),
-        FetchOutcome::Ok(body) => {
-            serde_json::from_str(&body).map_err(|_| TrustError::ResponseShape)?
-        }
-    };
+    let array = super::fetch_statements(&base_url, &did)?;
 
     if array.is_empty() {
         print_header(&did_str, &expected_issuer);
