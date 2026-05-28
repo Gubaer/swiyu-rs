@@ -15,25 +15,16 @@ import { TableModule } from 'primeng/table';
 import { TagModule } from 'primeng/tag';
 import { ButtonModule } from 'primeng/button';
 import { TooltipModule } from 'primeng/tooltip';
-import { IconFieldModule } from 'primeng/iconfield';
-import { InputIconModule } from 'primeng/inputicon';
-import { InputTextModule } from 'primeng/inputtext';
 import { MessageModule } from 'primeng/message';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
 
 import { Issuer } from '../issuers/issuers-service';
 import { IssuersStore } from '../issuers/issuers-store';
-
-// Throwaway mock for the offers section — the offers wiring lands in a
-// follow-up.
-interface MockOffer {
-  id: string;
-  vct: string;
-  state: 'pending' | 'issued' | 'cancelled' | 'expired';
-  created_at: string;
-  expires_at: string;
-  issued_at: string | null;
-}
+import {
+  CredentialOfferState,
+  CredentialOfferSummary
+} from './credential-offers-service';
+import { CredentialOffersStore } from './credential-offers-store';
 
 @Component({
   selector: 'app-credential-offers-list',
@@ -45,9 +36,6 @@ interface MockOffer {
     TagModule,
     ButtonModule,
     TooltipModule,
-    IconFieldModule,
-    InputIconModule,
-    InputTextModule,
     MessageModule,
     ProgressSpinnerModule
   ],
@@ -55,13 +43,19 @@ interface MockOffer {
   styleUrl: './credential-offers-list.scss'
 })
 export class CredentialOffersList {
-  private readonly store = inject(IssuersStore);
+  private readonly issuersStore = inject(IssuersStore);
+  private readonly offersStore = inject(CredentialOffersStore);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
 
-  protected readonly issuers = this.store.issuers;
-  protected readonly issuersLoading = this.store.listLoading;
-  protected readonly issuersError = this.store.listError;
+  protected readonly issuers = this.issuersStore.issuers;
+  protected readonly issuersLoading = this.issuersStore.listLoading;
+  protected readonly issuersError = this.issuersStore.listError;
+
+  protected readonly offers = this.offersStore.items;
+  protected readonly offersLoading = this.offersStore.loading;
+  protected readonly offersError = this.offersStore.error;
+  protected readonly hasMore = this.offersStore.hasMore;
 
   // URL is the source of truth for the current selection. `selectedIssuer`
   // is a view onto (store list × ?issuerId=), and user picks write back to
@@ -82,11 +76,10 @@ export class CredentialOffersList {
   protected readonly issuerSuggestions = signal<Issuer[]>([]);
 
   constructor() {
-    this.store.load();
+    this.issuersStore.load();
 
     // If there is exactly one issuer and the URL doesn't already name one,
-    // adopt it as the selection. Writes through the URL so the
-    // `selectedIssuer` computed re-evaluates from the same source.
+    // adopt it as the selection.
     effect(() => {
       if (this.issuersLoading()) {
         return;
@@ -100,6 +93,18 @@ export class CredentialOffersList {
       }
       const only = list[0];
       untracked(() => this.setIssuerInUrl(only.id, true));
+    });
+
+    // Drive the offers store from the current selection. `loadFor` resets
+    // state every call, so this is also what clears the table when the
+    // selection is cleared (the load just runs against `null`-guarded code).
+    effect(() => {
+      const issuer = this.selectedIssuer();
+      if (!issuer) {
+        untracked(() => this.offersStore.clear());
+        return;
+      }
+      untracked(() => this.offersStore.loadFor(issuer.id));
     });
   }
 
@@ -124,55 +129,19 @@ export class CredentialOffersList {
   }
 
   protected reloadIssuers(): void {
-    this.store.load();
+    this.issuersStore.load();
   }
 
-  private setIssuerInUrl(id: string | null, replaceUrl: boolean): void {
-    this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: { issuerId: id },
-      queryParamsHandling: 'merge',
-      replaceUrl
-    });
+  protected refreshOffers(): void {
+    this.offersStore.refresh();
   }
 
-  protected readonly offers = signal<MockOffer[]>([
-    {
-      id: 'offer_aB7xKp9qR2tL5n',
-      vct: 'urn:swiyu:driving-licence:v1',
-      state: 'pending',
-      created_at: '2026-05-28T09:14:00Z',
-      expires_at: '2026-05-29T09:14:00Z',
-      issued_at: null
-    },
-    {
-      id: 'offer_cD8yLq0rS3uM6o',
-      vct: 'urn:swiyu:driving-licence:v1',
-      state: 'issued',
-      created_at: '2026-05-27T17:42:00Z',
-      expires_at: '2026-05-28T17:42:00Z',
-      issued_at: '2026-05-27T17:50:11Z'
-    },
-    {
-      id: 'offer_eF9zMr1sT4vN7p',
-      vct: 'urn:swiyu:driving-licence:v1',
-      state: 'cancelled',
-      created_at: '2026-05-26T12:00:00Z',
-      expires_at: '2026-05-27T12:00:00Z',
-      issued_at: null
-    },
-    {
-      id: 'offer_gH0aNs2tU5wO8q',
-      vct: 'urn:swiyu:driving-licence:v1',
-      state: 'expired',
-      created_at: '2026-05-20T08:30:00Z',
-      expires_at: '2026-05-21T08:30:00Z',
-      issued_at: null
-    }
-  ]);
+  protected loadMoreOffers(): void {
+    this.offersStore.loadMore();
+  }
 
   protected stateSeverity(
-    state: MockOffer['state']
+    state: CredentialOfferState
   ): 'info' | 'success' | 'secondary' | 'warn' {
     switch (state) {
       case 'pending':
@@ -184,5 +153,18 @@ export class CredentialOffersList {
       case 'expired':
         return 'warn';
     }
+  }
+
+  protected trackByOfferId(_index: number, offer: CredentialOfferSummary): string {
+    return offer.id;
+  }
+
+  private setIssuerInUrl(id: string | null, replaceUrl: boolean): void {
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { issuerId: id },
+      queryParamsHandling: 'merge',
+      replaceUrl
+    });
   }
 }
