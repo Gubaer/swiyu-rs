@@ -23,7 +23,12 @@ export class AppMenu {
     {
       label: 'swiyu issuer',
       items: [
-        { label: 'Issuers', icon: 'pi pi-fw pi-id-card', routerLink: ['/issuers'] }
+        { label: 'Issuers', icon: 'pi pi-fw pi-id-card', routerLink: ['/issuers'] },
+        {
+          label: 'Credential Offers',
+          icon: 'pi pi-fw pi-send',
+          routerLink: ['/credential-offers']
+        }
       ]
     }
   ];

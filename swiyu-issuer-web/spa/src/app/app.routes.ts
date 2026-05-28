@@ -21,6 +21,13 @@ export const routes: Routes = [
         path: 'issuers/:id',
         loadComponent: () =>
           import('./features/issuers/issuer-detail').then((m) => m.IssuerDetail)
+      },
+      {
+        path: 'credential-offers',
+        loadComponent: () =>
+          import('./features/credential-offers/credential-offers-list').then(
+            (m) => m.CredentialOffersList
+          )
       }
     ]
   }
