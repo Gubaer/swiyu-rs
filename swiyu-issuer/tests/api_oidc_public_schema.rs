@@ -15,7 +15,7 @@ use chrono::{Duration, Utc};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use swiyu_issuer::api_oidc::{AppState, Config, router};
+use swiyu_issuer::api_oidc::{AppState, Config, CorsAllowedOrigins, router};
 use swiyu_issuer::domain::{AnySigningEngine, CredentialTypeId, DevSigningEngine, TenantId};
 use swiyu_issuer::persistence;
 use swiyu_issuer::test_support::fixtures::SAMPLE_BASE_URL;
@@ -30,6 +30,7 @@ fn build_state(pool: PgPool) -> AppState {
             issuer_base_url: SAMPLE_BASE_URL.into(),
             access_token_ttl: Duration::seconds(300),
             c_nonce_ttl: Duration::seconds(300),
+            cors_allowed_origins: CorsAllowedOrigins::Any,
         },
         Arc::new(engine),
     )

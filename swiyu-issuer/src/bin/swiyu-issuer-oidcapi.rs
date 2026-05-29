@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use chrono::Duration;
-use swiyu_issuer::api_oidc::{AppState, Config, router};
+use swiyu_issuer::api_oidc::{AppState, Config, CorsAllowedOrigins, router};
 use swiyu_issuer::domain::{
     AnySecretEncryptionEngine, build_secret_encryption_engine_from_env,
     build_signing_engine_from_env,
@@ -31,6 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let c_nonce_ttl =
         read_duration_env("C_NONCE_TTL_SECONDS", Config::DEFAULT_C_NONCE_TTL_SECONDS)?;
+    let cors_allowed_origins = read_cors_allowed_origins_env()?;
 
     let pool = persistence::connect(&database_url).await?;
     persistence::run_migrations(&pool).await?;
@@ -47,6 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             issuer_base_url,
             access_token_ttl,
             c_nonce_ttl,
+            cors_allowed_origins,
         },
         engine,
     );
@@ -75,6 +77,37 @@ fn read_duration_env(
         return Err(format!("{key} must be positive, got {seconds}").into());
     }
     Ok(Duration::seconds(seconds))
+}
+
+/// Parses `OIDC_CORS_ALLOWED_ORIGINS` into the browser-origin policy
+/// for the OIDC endpoints. Unset or `*` allows any origin (the dev
+/// default); otherwise the value is a comma-separated allowlist of
+/// exact origins (e.g. `https://wallet.example,https://demo.example`).
+/// A malformed entry fails fast at startup.
+fn read_cors_allowed_origins_env() -> Result<CorsAllowedOrigins, Box<dyn std::error::Error>> {
+    let raw = match env::var("OIDC_CORS_ALLOWED_ORIGINS") {
+        Ok(value) => value,
+        Err(_) => return Ok(CorsAllowedOrigins::Any),
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "*" {
+        return Ok(CorsAllowedOrigins::Any);
+    }
+    let mut origins = Vec::new();
+    for entry in trimmed.split(',') {
+        let origin = entry.trim();
+        if origin.is_empty() {
+            continue;
+        }
+        let value = origin.parse().map_err(|err| {
+            format!("OIDC_CORS_ALLOWED_ORIGINS entry {origin:?} is not a valid origin: {err}")
+        })?;
+        origins.push(value);
+    }
+    if origins.is_empty() {
+        return Ok(CorsAllowedOrigins::Any);
+    }
+    Ok(CorsAllowedOrigins::List(origins))
 }
 
 async fn shutdown_signal() {

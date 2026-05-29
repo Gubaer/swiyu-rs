@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use swiyu_issuer::api_oidc::{AppState, Config, router};
+use swiyu_issuer::api_oidc::{AppState, Config, CorsAllowedOrigins, router};
 use swiyu_issuer::domain::{
     AccessTokenSecret, AnySigningEngine, CredentialOffer, CredentialType, DevSigningEngine, Issuer,
     IssuerId, KeyRole, NonceSecret, PreAuthCode, RevocationMode, SigningEngine, TenantId,
@@ -33,6 +33,7 @@ fn build_state(pool: PgPool) -> AppState {
             issuer_base_url: SAMPLE_BASE_URL.into(),
             access_token_ttl: Duration::seconds(300),
             c_nonce_ttl: Duration::seconds(300),
+            cors_allowed_origins: CorsAllowedOrigins::Any,
         },
         Arc::new(engine),
     )

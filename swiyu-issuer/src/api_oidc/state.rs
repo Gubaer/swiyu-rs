@@ -1,9 +1,23 @@
 use std::sync::Arc;
 
+use axum::http::HeaderValue;
 use sqlx::PgPool;
 
 use crate::domain::AnySigningEngine;
 use crate::state::ValidatorCache;
+
+/// Which browser origins the OIDC endpoints answer CORS requests for.
+pub enum CorsAllowedOrigins {
+    /// Answer any origin with `Access-Control-Allow-Origin: *`. The
+    /// dev default when `OIDC_CORS_ALLOWED_ORIGINS` is unset. Safe
+    /// because the OID4VCI pre-authorized-code flow carries its token
+    /// in the `Authorization` header, never in cookies, so credentials
+    /// are not allowed and the `*`-with-credentials hazard does not
+    /// apply.
+    Any,
+    /// Answer only these exact origins (e.g. `https://wallet.example`).
+    List(Vec<HeaderValue>),
+}
 
 pub struct Config {
     /// Public base URL the wallet sees. The metadata document
@@ -23,6 +37,9 @@ pub struct Config {
     /// equal to `access_token_ttl`; rotated independently when batch
     /// credential issuance arrives.
     pub c_nonce_ttl: chrono::Duration,
+
+    /// Browser origins the OIDC endpoints serve CORS requests for.
+    pub cors_allowed_origins: CorsAllowedOrigins,
 }
 
 impl Config {
