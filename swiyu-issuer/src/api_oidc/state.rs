@@ -25,7 +25,11 @@ pub struct Config {
     /// `credential_endpoint`, and the like. Both binaries
     /// (`swiyu-issuer-mgmtapi` and `swiyu-issuer-oidcapi`) must
     /// agree on it; a reverse proxy in front of the two is the
-    /// canonical layout.
+    /// canonical layout. The binary resolves it from
+    /// `ISSUER_OIDC_HTTP_URL` (falling back to `ISSUER_BASE_URL`) so a
+    /// split-port dev stack names this OIDC server rather than the
+    /// management API. See
+    /// [`resolve_oidc_public_url`][crate::config::resolve_oidc_public_url].
     pub issuer_base_url: String,
 
     /// Lifetime of an access token minted at `POST /token`. Mirrors

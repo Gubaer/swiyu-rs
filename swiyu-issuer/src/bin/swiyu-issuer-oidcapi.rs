@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use chrono::Duration;
 use swiyu_issuer::api_oidc::{AppState, Config, CorsAllowedOrigins, router};
+use swiyu_issuer::config::resolve_oidc_public_url;
 use swiyu_issuer::domain::{
     AnySecretEncryptionEngine, build_secret_encryption_engine_from_env,
     build_signing_engine_from_env,
@@ -23,8 +24,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr: SocketAddr = env::var("BIND_ADDR_OIDC")
         .unwrap_or_else(|_| "0.0.0.0:8081".to_string())
         .parse()?;
-    let issuer_base_url =
-        env::var("ISSUER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    // The base the wallet sees: it goes into the offer body's
+    // `credential_issuer` and the metadata endpoints, so it must name
+    // this OIDC server, not the management API.
+    let issuer_base_url = resolve_oidc_public_url(
+        env::var("ISSUER_OIDC_HTTP_URL").ok(),
+        env::var("ISSUER_BASE_URL").ok(),
+    );
     let access_token_ttl = read_duration_env(
         "ACCESS_TOKEN_TTL_SECONDS",
         Config::DEFAULT_ACCESS_TOKEN_TTL_SECONDS,

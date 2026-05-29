@@ -7,6 +7,7 @@ use chrono::Duration;
 use rand_core::OsRng;
 use reqwest::Client;
 use swiyu_issuer::api_management::{AppState, Config, router};
+use swiyu_issuer::config::resolve_oidc_public_url;
 use swiyu_issuer::domain::{
     AnySecretEncryptionEngine, ProviderRegistry, build_secret_encryption_engine_from_env,
     build_signing_engine_from_env,
@@ -46,8 +47,12 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr: SocketAddr = env::var("BIND_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
         .parse()?;
-    let issuer_base_url =
-        env::var("ISSUER_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+    // The deeplink points the wallet at the OIDC endpoints, which in a
+    // split-port dev stack are not on this binary's port.
+    let issuer_base_url = resolve_oidc_public_url(
+        env::var("ISSUER_OIDC_HTTP_URL").ok(),
+        env::var("ISSUER_BASE_URL").ok(),
+    );
     let registry_url = env::var("SWIYU_IDENTIFIER_REGISTRY_URL")
         .map_err(|_| "SWIYU_IDENTIFIER_REGISTRY_URL must be set")?;
     let status_registry_url = env::var("SWIYU_STATUS_REGISTRY_URL")
