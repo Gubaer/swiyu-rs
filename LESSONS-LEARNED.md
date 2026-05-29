@@ -7,7 +7,7 @@
 
 ## Commits
 
-- When the user asks for a commit, always add the assistant as Co-Author (`Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`) in the commit message trailer.
+- When the user asks for a commit, always add the assistant as Co-Author in the commit message trailer.
 
 ## Doc Comments
 
