@@ -20,14 +20,18 @@ use crate::worker::backoff::{MAX_TASK_AGE_HOURS, backoff_delay};
 ///
 /// Every protected registry call in the worker funnels through one of
 /// the `*_with_refresh` helpers in [`crate::worker::registry_facades`],
-/// so every caller faces the same five-arm `Err` mapping. Centralising
-/// it here keeps the per-step bodies focused on their happy paths and
-/// ensures the error-code vocabulary stays consistent across sagas.
+/// so every caller faces the same `Err` mapping. Centralising it here
+/// keeps the per-step bodies focused on their happy paths and ensures
+/// the error-code vocabulary stays consistent across sagas.
 ///
 /// The two `registry_*` codes are caller-supplied because the
 /// identifier registry uses `registry_unavailable` / `registry_rejected`
 /// while the status registry uses `status_registry_unavailable` /
-/// `status_registry_rejected`. The token-side codes are fixed.
+/// `status_registry_rejected`. The token-side codes are fixed:
+/// `tenant_missing_oauth_credentials` and `credential_decryption_failed`
+/// are terminal config faults, `token_unavailable` is the retryable
+/// transient, and `token_rejected` covers a token the auth server
+/// refused.
 pub fn from_token_aware_error(
     error: TokenAwareError,
     registry_retry_code: &str,
@@ -48,6 +52,17 @@ pub fn from_token_aware_error(
                 error_message: msg,
             }
         }
+        // A deterministic decrypt failure (key mismatch, wrong key
+        // version, malformed ciphertext, failed auth tag) will fail
+        // identically on every retry, so fail terminally rather than
+        // burning the 24-hour backoff window. A transient backend
+        // outage stays retryable and falls through to the arm below.
+        TokenAwareError::Token(TokenProviderError::Persistence(PersistenceError::Encryption(
+            ref e,
+        ))) if !e.is_retryable() => StepOutcome::Terminal {
+            error_code: "credential_decryption_failed".into(),
+            error_message: e.to_string(),
+        },
         TokenAwareError::Token(e) if e.is_retryable() => StepOutcome::Retry {
             error_code: "token_unavailable".into(),
             error_message: e.to_string(),
@@ -139,4 +154,44 @@ async fn fail_through_aggregate(
             details: format!("try_fail: {e}"),
         })?;
     operation_tasks::set_terminal_state(conn, task).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::secret_encryption_engine::SecretEncryptionError;
+
+    fn encryption_token_error(inner: SecretEncryptionError) -> TokenAwareError {
+        TokenAwareError::Token(TokenProviderError::Persistence(
+            PersistenceError::Encryption(inner),
+        ))
+    }
+
+    #[test]
+    fn deterministic_decrypt_failure_is_terminal() {
+        let outcome = from_token_aware_error(
+            encryption_token_error(SecretEncryptionError::Tampered),
+            "registry_unavailable",
+            "registry_rejected",
+        );
+        match outcome {
+            StepOutcome::Terminal { error_code, .. } => {
+                assert_eq!(error_code, "credential_decryption_failed");
+            }
+            other => panic!("expected Terminal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transient_decrypt_backend_outage_is_retryable() {
+        let outcome = from_token_aware_error(
+            encryption_token_error(SecretEncryptionError::Backend("vault down".into())),
+            "registry_unavailable",
+            "registry_rejected",
+        );
+        match outcome {
+            StepOutcome::Retry { error_code, .. } => assert_eq!(error_code, "token_unavailable"),
+            other => panic!("expected Retry, got {other:?}"),
+        }
+    }
 }

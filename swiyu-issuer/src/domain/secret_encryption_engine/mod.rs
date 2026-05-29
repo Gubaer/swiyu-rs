@@ -83,6 +83,19 @@ pub enum SecretEncryptionError {
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
+impl SecretEncryptionError {
+    /// Whether retrying the same decrypt/encrypt call could plausibly
+    /// succeed. Only a transient [`Backend`][Self::Backend] fault (e.g.
+    /// the Vault transit engine momentarily unreachable) is retryable.
+    /// A missing or mismatched key, a wrong key version, malformed
+    /// ciphertext, or a failed authentication tag are deterministic:
+    /// they fail identically on every retry until the stored ciphertext
+    /// or the key configuration changes, so retrying only burns backoff.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::Backend(_))
+    }
+}
+
 // Invariant: a symmetric key never leaves the engine. Callers pass
 // plaintext in and get a `Ciphertext` back; key material stays internal
 // to each backend.
