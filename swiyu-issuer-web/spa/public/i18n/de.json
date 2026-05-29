@@ -76,5 +76,43 @@
       "error_generic": "Der Vorgang ist fehlgeschlagen.",
       "error_fetch": "Der Vorgang wurde abgeschlossen, aber der Aussteller konnte nicht geladen werden."
     }
+  },
+  "credential_offer": {
+    "create": {
+      "title": "Neues Credential-Angebot",
+      "step_select_title": "Aussteller & Typ",
+      "step_edit_title": "Claims & Gültigkeit",
+      "step_result_title": "Ergebnis",
+      "issuer_label": "Aussteller",
+      "issuer_placeholder": "Aussteller auswählen",
+      "type_label": "Credential-Typ",
+      "type_placeholder": "Credential-Typ auswählen",
+      "type_empty": "Diesem Aussteller sind keine Credential-Typen zugewiesen.",
+      "no_issuers": "Noch keine Aussteller. Erstellen Sie zuerst einen, bevor Sie Credential-Angebote ausstellen.",
+      "claims_label": "Claims",
+      "claims_hint": "Aus dem Schema mit Platzhalterwerten vorausgefüllt – ersetzen Sie jeden Wert vor dem Absenden.",
+      "claims_invalid": "Beheben Sie die markierten Schema-Fehler vor dem Absenden.",
+      "claims_error_at": "Zeile {{line}}: {{message}}",
+      "expires_label": "Gültig für (Sekunden)",
+      "expires_hint": "Wie lange die Vorautorisierung gültig bleibt. 60–3600, Standard 600.",
+      "back": "Zurück",
+      "next": "Weiter",
+      "cancel": "Abbrechen",
+      "submit": "Angebot erstellen",
+      "submitting": "Wird erstellt…",
+      "schema_loading": "Schema wird geladen…",
+      "submit_error": "Das Credential-Angebot konnte nicht erstellt werden.",
+      "result_warning": "Der Vorautorisierungscode wird nur einmal angezeigt und kann später nicht abgerufen werden. Kopieren Sie ihn jetzt.",
+      "result_id": "Angebots-ID",
+      "result_expires": "Gültig bis",
+      "result_pre_auth": "Vorautorisierungscode",
+      "result_deeplink": "Angebots-Deeplink",
+      "result_qr_hint": "Zum Einlösen mit einer Wallet scannen.",
+      "copy": "Kopieren",
+      "copied": "In die Zwischenablage kopiert.",
+      "copy_failed": "Kopieren in die Zwischenablage fehlgeschlagen.",
+      "create_another": "Weiteres erstellen",
+      "back_to_offers": "Zurück zu den Angeboten"
+    }
   }
 }

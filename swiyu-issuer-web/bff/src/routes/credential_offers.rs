@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -34,6 +35,21 @@ pub async fn get_credential_offer(
         .get_credential_offer(&issuer_id, &offer_id)
         .await?;
     Ok(Json(payload))
+}
+
+// Forward the create response verbatim: it carries the one-time pre-auth code
+// and deeplink, which the SPA can never re-fetch. Unlike the list endpoint, we
+// strip nothing here.
+pub async fn create_credential_offer(
+    State(state): State<AppState>,
+    Path(issuer_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<(StatusCode, Json<Value>), AppError> {
+    let payload = state
+        .mgmt_api
+        .create_credential_offer(&issuer_id, body)
+        .await?;
+    Ok((StatusCode::CREATED, Json(payload)))
 }
 
 // Drop the per-item `claims` blob from a list response so the SPA's table view

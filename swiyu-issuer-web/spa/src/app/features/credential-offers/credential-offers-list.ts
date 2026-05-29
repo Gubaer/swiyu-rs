@@ -1,11 +1,4 @@
-import {
-  Component,
-  computed,
-  effect,
-  inject,
-  signal,
-  untracked
-} from '@angular/core';
+import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -20,10 +13,7 @@ import { ProgressSpinnerModule } from 'primeng/progressspinner';
 
 import { Issuer } from '../issuers/issuers-service';
 import { IssuersStore } from '../issuers/issuers-store';
-import {
-  CredentialOfferState,
-  CredentialOfferSummary
-} from './credential-offers-service';
+import { CredentialOfferState, CredentialOfferSummary } from './credential-offers-service';
 import { CredentialOffersStore } from './credential-offers-store';
 
 @Component({
@@ -37,10 +27,10 @@ import { CredentialOffersStore } from './credential-offers-store';
     ButtonModule,
     TooltipModule,
     MessageModule,
-    ProgressSpinnerModule
+    ProgressSpinnerModule,
   ],
   templateUrl: './credential-offers-list.html',
-  styleUrl: './credential-offers-list.scss'
+  styleUrl: './credential-offers-list.scss',
 })
 export class CredentialOffersList {
   private readonly issuersStore = inject(IssuersStore);
@@ -62,7 +52,7 @@ export class CredentialOffersList {
   // the URL via `onIssuerChange`.
   private readonly issuerIdParam = toSignal(
     this.route.queryParamMap.pipe(map((p) => p.get('issuerId'))),
-    { initialValue: null }
+    { initialValue: null },
   );
 
   protected readonly selectedIssuer = computed<Issuer | null>(() => {
@@ -122,9 +112,8 @@ export class CredentialOffersList {
     this.issuerSuggestions.set(
       all.filter(
         (issuer) =>
-          issuer.display_name.toLowerCase().includes(q) ||
-          issuer.did.toLowerCase().includes(q)
-      )
+          issuer.display_name.toLowerCase().includes(q) || issuer.did.toLowerCase().includes(q),
+      ),
     );
   }
 
@@ -136,13 +125,18 @@ export class CredentialOffersList {
     this.offersStore.refresh();
   }
 
+  protected createOffer(): void {
+    const issuer = this.selectedIssuer();
+    this.router.navigate(['/credential-offers/new'], {
+      queryParams: issuer ? { issuerId: issuer.id } : {},
+    });
+  }
+
   protected loadMoreOffers(): void {
     this.offersStore.loadMore();
   }
 
-  protected stateSeverity(
-    state: CredentialOfferState
-  ): 'info' | 'success' | 'secondary' | 'warn' {
+  protected stateSeverity(state: CredentialOfferState): 'info' | 'success' | 'secondary' | 'warn' {
     switch (state) {
       case 'pending':
         return 'info';
@@ -164,7 +158,7 @@ export class CredentialOffersList {
       relativeTo: this.route,
       queryParams: { issuerId: id },
       queryParamsHandling: 'merge',
-      replaceUrl
+      replaceUrl,
     });
   }
 }

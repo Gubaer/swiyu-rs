@@ -33,6 +33,12 @@
             "styles": [
               "src/assets/styles.scss",
               "src/assets/tailwind.css"
+            ],
+            "loader": {
+              ".ttf": "file"
+            },
+            "allowedCommonJsDependencies": [
+              "qrcode"
             ]
           },
           "configurations": {

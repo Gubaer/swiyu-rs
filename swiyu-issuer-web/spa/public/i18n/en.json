@@ -76,5 +76,43 @@
       "error_generic": "The operation failed.",
       "error_fetch": "The operation finished but the issuer could not be loaded."
     }
+  },
+  "credential_offer": {
+    "create": {
+      "title": "New credential offer",
+      "step_select_title": "Issuer & type",
+      "step_edit_title": "Claims & lifetime",
+      "step_result_title": "Result",
+      "issuer_label": "Issuer",
+      "issuer_placeholder": "Select an issuer",
+      "type_label": "Credential type",
+      "type_placeholder": "Select a credential type",
+      "type_empty": "This issuer has no assigned credential types.",
+      "no_issuers": "No issuers yet. Create one before issuing credential offers.",
+      "claims_label": "Claims",
+      "claims_hint": "Pre-filled from the schema with placeholder values — replace every value before submitting.",
+      "claims_invalid": "Fix the highlighted schema errors before submitting.",
+      "claims_error_at": "Line {{line}}: {{message}}",
+      "expires_label": "Expires in (seconds)",
+      "expires_hint": "How long the pre-authorization stays valid. 60–3600, default 600.",
+      "back": "Back",
+      "next": "Next",
+      "cancel": "Cancel",
+      "submit": "Create offer",
+      "submitting": "Creating…",
+      "schema_loading": "Loading schema…",
+      "submit_error": "Could not create the credential offer.",
+      "result_warning": "The pre-authorization code is shown once and cannot be retrieved later. Copy it now.",
+      "result_id": "Offer ID",
+      "result_expires": "Expires at",
+      "result_pre_auth": "Pre-authorization code",
+      "result_deeplink": "Offer deeplink",
+      "result_qr_hint": "Scan with a wallet to claim the credential.",
+      "copy": "Copy",
+      "copied": "Copied to clipboard.",
+      "copy_failed": "Could not copy to clipboard.",
+      "create_another": "Create another",
+      "back_to_offers": "Back to offers"
+    }
   }
 }

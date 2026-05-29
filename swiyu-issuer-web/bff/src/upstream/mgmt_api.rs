@@ -109,6 +109,43 @@ impl MgmtApiClient {
         let response = self.http.get(&url).send().await?;
         read_json(response).await
     }
+
+    pub async fn create_credential_offer(
+        &self,
+        issuer_id: &str,
+        body: Value,
+    ) -> Result<Value, CallError> {
+        let url = format!(
+            "{}/api/v1/issuers/{issuer_id}/credential-offers",
+            self.base_url
+        );
+        let response = self.http.post(&url).json(&body).send().await?;
+        read_json(response).await
+    }
+
+    pub async fn list_credential_types(&self, issuer_id: &str) -> Result<Value, CallError> {
+        let url = format!(
+            "{}/api/v1/issuers/{issuer_id}/credential-types",
+            self.base_url
+        );
+        let response = self.http.get(&url).send().await?;
+        read_json(response).await
+    }
+
+    pub async fn get_credential_type_schema(
+        &self,
+        credential_type_id: &str,
+    ) -> Result<Value, CallError> {
+        // Upstream serves the schema as `application/schema+json`; `read_json`
+        // parses the body regardless of content-type, so a JSON Schema document
+        // deserializes the same as any other JSON response.
+        let url = format!(
+            "{}/api/v1/credential-types/{credential_type_id}/schema",
+            self.base_url
+        );
+        let response = self.http.get(&url).send().await?;
+        read_json(response).await
+    }
 }
 
 async fn read_json(response: reqwest::Response) -> Result<Value, CallError> {
