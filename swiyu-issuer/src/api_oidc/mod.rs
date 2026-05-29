@@ -9,19 +9,23 @@ mod token;
 
 pub use error::OidcError;
 pub use oauth_error::OAuthError;
-pub use state::{AppState, Config};
+pub use state::{AppState, Config, CorsAllowedOrigins};
 
 use crate::domain::{CredentialTypeId, IssuerId};
 
 pub(super) const PRE_AUTHORIZED_GRANT_TYPE: &str =
     "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 
+use std::time::Duration;
+
 use axum::Router;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode, header};
 use axum::routing::{get, post};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 pub fn router(state: AppState) -> Router {
+    let cors = build_cors_layer(&state.config.cors_allowed_origins);
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -43,8 +47,26 @@ pub fn router(state: AppState) -> Router {
             "/schemas/{credential_type_id}",
             get(schemas::get_public_schema),
         )
+        .layer(cors)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
+}
+
+fn build_cors_layer(allowed_origins: &CorsAllowedOrigins) -> CorsLayer {
+    let allow_origin = match allowed_origins {
+        CorsAllowedOrigins::Any => AllowOrigin::any(),
+        CorsAllowedOrigins::List(origins) => AllowOrigin::list(origins.iter().cloned()),
+    };
+    // Named explicitly because the Fetch `*` wildcard does not cover
+    // `Authorization`, which the credential endpoint requires.
+    let allow_headers = [header::AUTHORIZATION, header::CONTENT_TYPE];
+    // No `allow_credentials`: the flow's bearer token rides in the
+    // `Authorization` header, not cookies, which keeps `Any` safe.
+    CorsLayer::new()
+        .allow_origin(allow_origin)
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers(allow_headers)
+        .max_age(Duration::from_secs(600))
 }
 
 pub(super) fn parse_issuer_id(raw: &str) -> Result<IssuerId, OidcError> {
