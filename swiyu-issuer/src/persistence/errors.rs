@@ -12,6 +12,6 @@ pub enum PersistenceError {
     DataIntegrity { details: String },
     #[error("database error")]
     Db(#[from] sqlx::Error),
-    #[error("encryption error")]
+    #[error("encryption error: {0}")]
     Encryption(#[from] SecretEncryptionError),
 }
