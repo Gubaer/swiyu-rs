@@ -62,10 +62,7 @@ mod tests {
 
     #[test]
     fn credential_signing_alg_values_round_trips() {
-        assert_eq!(
-            credential_signing_alg_values_supported(),
-            json!(["ES256"])
-        );
+        assert_eq!(credential_signing_alg_values_supported(), json!(["ES256"]));
     }
 
     #[test]
