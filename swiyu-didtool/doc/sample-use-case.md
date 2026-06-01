@@ -52,12 +52,12 @@ After logging in, follow the steps in the [SWIYU onboarding guide][swiyu-onboard
 
 A business partner for kacon gmbh is created in the Base Registry and assigned a unique **Business Partner ID** (e.g. `45ff7b48-446f-11f1-b925-a734ec758462`). Write it down, we will use it in later steps.
 
-Next, follow the manual steps described in *Get API keys to access swiyu APIs* of the same guide. Of the credentials you obtain, only the **Access Token** is used in the rest of this tutorial. Save it and treat it as a secret.
+Next, follow the manual steps described in *Get API keys to access swiyu APIs* of the same guide. Of the credentials you obtain, you need the **Client ID**, the **Client Secret**, and the **Renewal Token** (refresh token) — didtool exchanges the refresh token for a short-lived access token on every run, so you do not paste an access token by hand. Save these and treat the secret and refresh token as secrets.
 
 ## Configure `didtool`
 
 * copy `.env.example` to `.env`
-* edit `.env` and fill in the values for `SWIYU_PARTNER_ID` and `SWIYU_ACCESS_TOKEN` from the previous steps
+* edit `.env` and fill in `SWIYU_PARTNER_ID` and the OAuth2 credentials `SWIYU_TOKEN_URL`, `SWIYU_CLIENT_ID`, `SWIYU_CLIENT_SECRET`, and `SWIYU_REFRESH_TOKEN` from the previous steps
 
 If you work with `direnv`, it automatically populates environment variables from `.env`. Otherwise, source `.env` manually:
 

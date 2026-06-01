@@ -13,3 +13,6 @@ pub mod identifier;
 
 #[cfg(feature = "status")]
 pub mod status;
+
+#[cfg(feature = "trust")]
+pub mod trust;

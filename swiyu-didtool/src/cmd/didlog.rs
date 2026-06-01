@@ -93,7 +93,7 @@ pub fn cmd_show(store: &KeyStore, args: ShowArgs) -> Result<(), LogError> {
         return Err(LogError::ForceWithoutOut);
     }
     let loaded = load_log(store, args.did, args.input)?;
-    let format = decide_format(args.out.is_some(), args.raw, args.pretty);
+    let format = Format::from_flags(args.out.is_some(), args.raw, args.pretty);
     write_show(&loaded, format, args.out.as_deref(), args.force)
 }
 
@@ -107,7 +107,7 @@ pub fn cmd_entry(store: &KeyStore, args: EntryArgs) -> Result<(), LogError> {
     let selector = parse_selector(args.at.as_deref().unwrap_or("latest"))?;
     let loaded = load_log(store, args.did, args.input)?;
     let idx = resolve_selector(selector, &loaded.log)?;
-    let format = decide_format(args.out.is_some(), args.raw, args.pretty);
+    let format = Format::from_flags(args.out.is_some(), args.raw, args.pretty);
     write_entry(&loaded, idx, format, args.out.as_deref(), args.force)
 }
 
@@ -157,15 +157,15 @@ pub(crate) fn load_log(
     })
 }
 
-/// Verifies the loaded DID log against the chain integrity rules of did:tdw 0.3.
-///
-/// `target_did` is the DID the user explicitly asked to resolve (`--did`); when
-/// present, the log MUST authenticate as that DID. When absent (a `--input`
-/// load), the log is verified against the DID it announces in its own genesis
-/// state — this catches accidental tampering but does not provide cryptographic
-/// provenance against an adversary who can rewrite the local file.
-///
-/// did:webvh logs are skipped (verifier not yet implemented).
+// Verifies the loaded DID log against the chain integrity rules of did:tdw 0.3.
+//
+// `target_did` is the DID the user explicitly asked to resolve (`--did`); when
+// present, the log MUST authenticate as that DID. When absent (a `--input`
+// load), the log is verified against the DID it announces in its own genesis
+// state — this catches accidental tampering but does not provide cryptographic
+// provenance against an adversary who can rewrite the local file.
+//
+// did:webvh logs are skipped (verifier not yet implemented).
 fn verify_loaded_log(log: &DIDLog, target_did: Option<&DID>) -> Result<(), LogError> {
     let is_tdw = log
         .entries()
@@ -199,13 +199,12 @@ fn collect_raw_lines(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Fetches a DID log via HTTPS. A 404 response is *not* "absent" here — a
-/// missing log is a hard error, so we map it to the same `HttpStatus` shape
-/// the previous version produced.
 fn fetch_log(url: &str) -> Result<String, LogError> {
     debug!("GET {url}");
     match crate::cmd::http::fetch_text(url)? {
         FetchOutcome::Ok(text) => Ok(text),
+        // A missing DID log is a hard error here — unlike a trust-registry
+        // lookup, where 404 means "absent" — so surface it as a 404 HttpStatus.
         FetchOutcome::NotFound => Err(LogError::Fetch(FetchError::HttpStatus {
             url: url.to_string(),
             status: 404,
@@ -260,15 +259,17 @@ enum Format {
     Pretty,
 }
 
-fn decide_format(to_file: bool, raw: bool, pretty: bool) -> Format {
-    if raw {
-        Format::Raw
-    } else if pretty {
-        Format::Pretty
-    } else if to_file {
-        Format::Raw
-    } else {
-        Format::Pretty
+impl Format {
+    fn from_flags(to_file: bool, raw: bool, pretty: bool) -> Format {
+        if raw {
+            Format::Raw
+        } else if pretty {
+            Format::Pretty
+        } else if to_file {
+            Format::Raw
+        } else {
+            Format::Pretty
+        }
     }
 }
 
@@ -334,8 +335,10 @@ fn print_list(store: &KeyStore, log: &DIDLog) -> Result<(), LogError> {
     Ok(())
 }
 
-/// Returns the DID id from the most recent log entry whose state is a full document.
-/// Skips `Patch` states, falling back to earlier entries (the genesis is always `Value`).
+/// Returns the DID `id`, read from the newest log entry that stores a full DID
+/// document. Entries that store only a JSON-Patch delta don't contain the
+/// document, so they're skipped; the search always succeeds because the genesis
+/// entry is always a full document, never a patch.
 pub(crate) fn current_did(log: &DIDLog) -> Option<String> {
     for entry in log.entries().iter().rev() {
         if let DIDDocState::Value(doc) = entry.did_doc_state()
@@ -484,15 +487,15 @@ mod tests {
     }
 
     #[test]
-    fn decide_format_defaults() {
-        assert_eq!(decide_format(false, false, false), Format::Pretty);
-        assert_eq!(decide_format(true, false, false), Format::Raw);
+    fn from_flags_defaults() {
+        assert_eq!(Format::from_flags(false, false, false), Format::Pretty);
+        assert_eq!(Format::from_flags(true, false, false), Format::Raw);
     }
 
     #[test]
-    fn decide_format_overrides() {
-        assert_eq!(decide_format(false, true, false), Format::Raw);
-        assert_eq!(decide_format(true, false, true), Format::Pretty);
+    fn from_flags_overrides() {
+        assert_eq!(Format::from_flags(false, true, false), Format::Raw);
+        assert_eq!(Format::from_flags(true, false, true), Format::Pretty);
     }
 
     #[test]

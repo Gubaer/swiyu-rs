@@ -15,6 +15,21 @@ use swiyu_core::did::{DID, DIDError};
 
 use crate::keystore::{KeyStore, KeyStoreEntry, KeyStoreError};
 
+/// Drives a single async call to completion from didtool's otherwise
+/// synchronous command code, used to invoke the async `swiyu-registries`
+/// clients. Spins up a transient current-thread tokio runtime per call.
+///
+/// Building a current-thread runtime only fails on OS resource exhaustion,
+/// which is an environment failure this command cannot act on; there is no
+/// useful recovery, so we treat it as unreachable.
+pub(crate) fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("building a current-thread tokio runtime")
+        .block_on(future)
+}
+
 /// Formats a Unix timestamp as a UTC ISO-8601 string with `Z` suffix
 /// (e.g. `2026-04-29T18:23:00Z`). Falls back to the raw integer rendered as
 /// a string if the timestamp is out of range.

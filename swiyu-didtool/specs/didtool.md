@@ -216,15 +216,20 @@ Calls the SWIYU identifier registry API to allocate a new DID space, then uses t
 constructed and signed, it is uploaded back to the registry via a PUT request, completing the
 registration in a single command. Use `--no-publish` to skip the PUT (e.g. for dry-run
 testing) — the POST that allocates the DID space still runs, since the URL must exist before
-the SCID and proof can be computed. Requires `SWIYU_ACCESS_TOKEN` to be set in the
-environment — it is intentionally not accepted as a flag to keep it out of shell history and
-process listings.
+the SCID and proof can be computed. Authenticates by exchanging `SWIYU_REFRESH_TOKEN` for a
+short-lived access token at `SWIYU_TOKEN_URL` (the OAuth2 `refresh_token` grant; the SWIYU
+gateway forbids `client_credentials`). The OAuth2 values are accepted as env vars only, to keep
+the secrets out of shell history and process listings. The rotated refresh token the endpoint
+returns is not persisted — re-seed `SWIYU_REFRESH_TOKEN` from the ePortal once it ages out.
 
 | Flag | Env var | Description |
 |---|---|---|
 | `--partner-id <id>` | `SWIYU_PARTNER_ID` | Business partner ID |
 | `--registry-url <url>` | `SWIYU_IDENTIFIER_REGISTRY_URL` | Base URL of the identifier registry API |
-| _(no flag)_ | `SWIYU_ACCESS_TOKEN` | Bearer token for the registry API; env var only |
+| _(no flag)_ | `SWIYU_TOKEN_URL` | OAuth2 token endpoint (https); env var only |
+| _(no flag)_ | `SWIYU_CLIENT_ID` | Partner OAuth2 client id; env var only |
+| _(no flag)_ | `SWIYU_CLIENT_SECRET` | Partner OAuth2 client secret; env var only |
+| _(no flag)_ | `SWIYU_REFRESH_TOKEN` | Renewal token seeded from the ePortal; env var only |
 
 The API calls made are:
 
@@ -879,7 +884,7 @@ fi
 - Pagination. Trust statements per entity are expected to be a small handful; no
   `?limit` / `?offset` handling.
 - Caching. Each invocation hits the registry.
-- Authentication. The endpoint is public; `SWIYU_ACCESS_TOKEN` is not used.
+- Authentication. The endpoint is public; no access token or OAuth2 credentials are used.
 
 ### `didtool trust verify`
 
@@ -1044,7 +1049,7 @@ code. No stack traces or internal details are shown to the user.
 | I/O error writing export file          | 1         | `error: cannot write '<file>': <io error>`                     |
 | Wrong key type for role                | 1         | `error: --<role>-key: expected <expected> key, got <actual>`   |
 | authentication and assertion keys identical | 1    | `error: --authentication-key and --assertion-key must differ`  |
-| SWIYU_ACCESS_TOKEN not set             | 1         | `error: SWIYU_ACCESS_TOKEN is not set`                         |
+| OAuth2 credential env var not set      | 1         | `error: SWIYU_REFRESH_TOKEN is not set` (or the missing var)   |
 | SWIYU API request failed               | 1         | `error: registry API error: HTTP <status>`                     |
 | DID created locally but registry upload failed | 1 | `error: DID created and saved locally, but registry upload failed (HTTP <status>) — retry manually with the file at <path>` |
 | Both `--did` and `--input` given       | 1         | `error: --did and --input are mutually exclusive`              |

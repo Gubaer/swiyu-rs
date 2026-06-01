@@ -1,10 +1,11 @@
+mod cmd;
 // crypto functions are called from keystore; rustc doesn't trace through test-only call chains
 #[allow(dead_code)]
 mod crypto;
 // keystore items used only in tests (generate, commit, …) are intentionally kept for future commands
-mod cmd;
 #[allow(dead_code)]
 mod keystore;
+mod oauth2;
 mod swiyu;
 
 use std::path::PathBuf;
@@ -655,7 +656,7 @@ fn is_uuid(s: &str) -> bool {
     dash_positions.iter().all(|&i| b[i] == b'-') && hex_positions.all(|i| b[i].is_ascii_hexdigit())
 }
 
-fn is_https_url(s: &str) -> bool {
+pub(crate) fn is_https_url(s: &str) -> bool {
     s.strip_prefix("https://")
         .map(|rest| !rest.split('/').next().unwrap_or("").is_empty())
         .unwrap_or(false)
