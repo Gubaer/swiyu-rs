@@ -9,11 +9,6 @@ infrastructure built on `did:tdw` / `did:webvh` decentralized identifiers.
   update, deactivate, and inspect DIDs against the SWIYU Identifier Registry.
   Manages a local key store with the generated DIDs and their key pairs.
 
-- **[`swiyu-issuer`](./swiyu-issuer/README.md)** — credential issuer service for SWIYU,
-  including OAuth2 token lifecycle, credential issuance, and status list
-  management. Docker images and an explorer deploy bundle are published from
-  this crate.
-
 - **`swiyu-core`** — library with the underlying primitives: DID parsing,
   DID-log entries, SCID + entryHash derivation, JsonWebKey types, and
   Data Integrity Proof signing.
@@ -37,6 +32,13 @@ currently no registry endpoint we can target for `did:webvh`, so changes to
 those paths should be treated as unverified until a test backend becomes
 available.
 
+## See also
+
+- **[swiyu-issuer](https://github.com/Gubaer/swiyu-issuer)** — credential issuer
+  service for SWIYU (OAuth2 token lifecycle, credential issuance, status list
+  management) plus its web frontend. It consumes `swiyu-core` and
+  `swiyu-registries` from this workspace and lives in its own repository.
+
 ## Contributing
 
 Issues and pull requests welcome.
@@ -51,10 +53,4 @@ Licensed under the [MIT License](./LICENSE).
 SWIYU DID Toolbox and informed the design of this project; protocol behavior
 was cross-checked against it during development.
 
-[swiyu-issuer-generic][swiyu-issuer-generic] is the SWIYU generic credential
-issuer (Java/Spring); it informed the design of the `swiyu-issuer` crate and
-its API and credential-issuance flows were cross-checked against it during
-development.
-
 [swiyu-did-toolbox]: https://github.com/swiyu-admin-ch/didtoolbox-java
-[swiyu-issuer-generic]: https://github.com/swiyu-admin-ch/swiyu-issuer

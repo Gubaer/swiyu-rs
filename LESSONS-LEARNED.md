@@ -14,7 +14,6 @@
 - When referring to a field name or identifier in a doc comment, use a bare backtick identifier: `` `kid` ``, not `` `"kid"` ``.
 - When a doc comment references another item (method, field, type, variant), use an intra-doc link, not plain backticks. Prefer the shortcut form `` [`name`][Type::name] `` over the full-path form `` [`Type::name`] `` — the visible text stays a bare identifier so the prose reads naturally, while the link still resolves. Reserve full-path link text for the rare case where the type qualification adds disambiguation a reader needs. Verify links with `RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" cargo doc -p <crate> --no-deps --document-private-items` after any docs change.
 - Don't link every mention. Link the first reference in a paragraph; leave subsequent prose mentions of the same item as plain backticks. State-machine vocabulary (`Pending`, `InProgress`, etc.) used as English nouns in flowing prose stays plain backticks; link only the items a reader would want to navigate to (methods, error variants, cross-module symbols).
-- Doc comments (`///`) are welcome on `pub` items in `swiyu-issuer/src/domain/` — structs, enums, methods, fields, variants — even though CLAUDE.md's general rule discourages them outside external public APIs. The domain module is the internal-API surface that the rest of the crate (mgmtapi/oidcapi/cli bin targets, persistence, handlers) consumes, so doc comments are load-bearing for that audience. Keep the top-line on the struct or enum short (one sentence naming the thing); put the substantive content — invariants, denormalisation reasons, what each variant permits or rejects — on the individual fields or enum variants. `# Errors` sections on `try_*` methods are valuable. Module-level `//!` headers stay disallowed; design rationale at file scope lives in a regular `//` block at the top.
 
 ## Spec file references in comments
 
@@ -23,7 +22,3 @@
 ## Markdown line wrapping
 
 - In Markdown spec files, do not hard-wrap prose paragraphs. Each paragraph is one long line; the editor or renderer handles soft-wrap. Tables, code blocks, and headings stay on their own lines as Markdown requires; list items each occupy one logical line (continuation text on the same line, not indented onto the next).
-
-## sqlx migration naming
-
-- In `swiyu-issuer/migrations/`, files use the convention `<DATE>_<SEQ>_<description>.sql` (e.g. `20260507_000003_issued_credentials.sql`). sqlx parses **only the leading numeric run before the first underscore** as the migration version — the `_000003` sequence number is part of the description, not the version. Two files with the same date prefix collide on `_sqlx_migrations.version` and fail at apply time with a `23505` duplicate-key error inside every `sqlx::test`. When adding a migration, pick a date prefix no existing migration uses. The sequence number is human-ordering only.

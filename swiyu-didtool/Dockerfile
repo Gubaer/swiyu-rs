@@ -11,12 +11,10 @@ WORKDIR /build
 
 # Cargo loads the entire workspace before building any single member, so every
 # member listed in the root Cargo.toml must be present even though we only build
-# swiyu-didtool. swiyu-issuer is copied for that reason alone — `-p swiyu-didtool`
-# resolves but never compiles it.
+# swiyu-didtool.
 COPY Cargo.toml Cargo.lock ./
 COPY swiyu-core swiyu-core
 COPY swiyu-registries swiyu-registries
-COPY swiyu-issuer swiyu-issuer
 COPY swiyu-didtool swiyu-didtool
 
 # Cache the cargo registry and target dir across builds. Cache mounts are
