@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::{get, post};
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use swiyu_registries::identifier::IdentifierRegistryClient;
@@ -23,7 +24,9 @@ pub struct AppState {
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let spa_dir = state.config.spa_dir.clone();
+
+    let api = Router::new()
         .route("/api/me", get(me::get_me))
         .route(
             "/api/issuers",
@@ -63,6 +66,18 @@ pub fn router(state: AppState) -> Router {
             "/api/credential-types/{credential_type_id}/schema",
             get(credential_types::get_credential_type_schema),
         )
-        .with_state(state)
-        .layer(TraceLayer::new_for_http())
+        .with_state(state);
+
+    // With SPA_DIR set, the BFF also serves the built SPA (single-container
+    // prod), falling back to index.html for client-side routes. Unset means
+    // `ng serve` owns the SPA and only `/api` is served here.
+    let app = match spa_dir {
+        Some(dir) => {
+            let index = format!("{dir}/index.html");
+            api.fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(index)))
+        }
+        None => api,
+    };
+
+    app.layer(TraceLayer::new_for_http())
 }

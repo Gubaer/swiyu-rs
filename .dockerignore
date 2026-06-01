@@ -1,9 +1,15 @@
 target/
 **/target/
 
-.env
+**/.env
 .env.local
 .env.*.local
+
+# SPA build artefacts and deps — rebuilt inside the image; copying the host
+# copies bloats the context and can clobber the in-image `npm ci` output.
+**/node_modules/
+swiyu-issuer-web/spa/.angular/
+swiyu-issuer-web/spa/dist/
 
 .git/
 .gitignore

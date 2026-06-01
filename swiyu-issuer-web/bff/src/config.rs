@@ -24,6 +24,10 @@ pub struct Config {
     pub identifier_registry_url: String,
     pub dev_user_id: String,
     pub dev_tenant_name: String,
+    // Directory of built SPA assets to serve as a static fallback. When
+    // unset (the dev workflow, where `ng serve` serves the SPA and proxies
+    // `/api` here), the BFF serves only the `/api` routes.
+    pub spa_dir: Option<String>,
 }
 
 impl Config {
@@ -35,6 +39,7 @@ impl Config {
             identifier_registry_url: optional("IDENTIFIER_REGISTRY_URL", ""),
             dev_user_id: optional("DEV_USER_ID", "test"),
             dev_tenant_name: optional("DEV_TENANT_NAME", "dev"),
+            spa_dir: optional_present("SPA_DIR"),
         })
     }
 }
@@ -49,6 +54,13 @@ fn required(name: &'static str) -> Result<String, ConfigError> {
 
 fn optional(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_string())
+}
+
+fn optional_present(name: &str) -> Option<String> {
+    match env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Some(value),
+        _ => None,
+    }
 }
 
 fn parse_port(name: &'static str, default: u16) -> Result<u16, ConfigError> {

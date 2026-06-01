@@ -44,7 +44,9 @@ async fn main() -> Result<(), StartupError> {
         identifier_registry: Arc::new(identifier_registry),
     };
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // Bind all interfaces: in the single-container deployment the BFF must
+    // be reachable from outside the container, not just loopback.
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "swiyu-issuer-web-bff listening");
 
