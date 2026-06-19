@@ -11,11 +11,12 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
+use std::str::FromStr;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
+use crate::sd_jwt::{Disclosure, DisclosureError};
 use crate::statuslist::{StatusListError, StatusListPointer};
 
 #[derive(Debug)]
@@ -194,39 +195,44 @@ impl TrustStatement {
         let mut is_state_actor: Option<bool> = None;
 
         for d in disclosure_strs {
-            let bytes = URL_SAFE_NO_PAD
-                .decode(d)
-                .map_err(|e| TrustStatementError::Base64 {
-                    segment: "disclosure",
-                    reason: e.to_string(),
-                })?;
-            let value: Value =
-                serde_json::from_slice(&bytes).map_err(|e| TrustStatementError::Json {
-                    segment: "disclosure",
-                    reason: e.to_string(),
-                })?;
-            let arr = value
-                .as_array()
-                .ok_or(TrustStatementError::DisclosureNotArray)?;
-
-            let hash_b64 = URL_SAFE_NO_PAD.encode(Sha256::digest(d.as_bytes()));
-            if !sd_set.contains(&hash_b64) {
-                continue;
-            }
-
-            // Object-property disclosure: [salt, name, value]. Array-element
-            // disclosures ([salt, value], length 2) are intentionally ignored —
-            // TrustStatementIdentityV1 doesn't use them.
-            if arr.len() != 3 {
-                continue;
-            }
-            let name = match arr[1].as_str() {
-                Some(s) => s,
-                None => continue,
+            let disclosure = match Disclosure::from_str(d) {
+                Ok(disclosure) => disclosure,
+                // Malformed encoding, JSON, or a non-array disclosure fails the
+                // whole statement — the behaviour before extraction moved into
+                // `Disclosure`.
+                Err(DisclosureError::Base64(reason)) => {
+                    return Err(TrustStatementError::Base64 {
+                        segment: "disclosure",
+                        reason,
+                    });
+                }
+                Err(DisclosureError::Json(reason)) => {
+                    return Err(TrustStatementError::Json {
+                        segment: "disclosure",
+                        reason,
+                    });
+                }
+                Err(DisclosureError::NotArray) => {
+                    return Err(TrustStatementError::DisclosureNotArray);
+                }
+                // Off-profile shapes — the two-element array-element form, any
+                // other arity, or a non-string salt/name — are skipped:
+                // TrustStatementIdentityV1 only uses object-property disclosures.
+                Err(
+                    DisclosureError::WrongLength { .. }
+                    | DisclosureError::SaltNotString
+                    | DisclosureError::NameNotString,
+                ) => continue,
             };
-            match name {
+
+            // Only disclosures the signed `_sd` array commits to are authorised.
+            if !sd_set.contains(&disclosure.digest()) {
+                continue;
+            }
+
+            match disclosure.name() {
                 "entityName" => {
-                    if let Some(map) = arr[2].as_object() {
+                    if let Some(map) = disclosure.value().as_object() {
                         for (lang, val) in map {
                             if let Some(s) = val.as_str() {
                                 entity_name.insert(lang.clone(), s.to_string());
@@ -235,7 +241,7 @@ impl TrustStatement {
                     }
                 }
                 "isStateActor" => {
-                    if let Some(b) = arr[2].as_bool() {
+                    if let Some(b) = disclosure.value().as_bool() {
                         is_state_actor = Some(b);
                     }
                 }
@@ -290,15 +296,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn build_jwt(payload_extra: Value, disclosures: Vec<Value>) -> String {
+    fn build_jwt(payload_extra: Value, disclosures: Vec<Disclosure>) -> String {
         let mut sd_hashes: Vec<String> = Vec::new();
         let mut encoded_disclosures: Vec<String> = Vec::new();
         for d in &disclosures {
-            let json = serde_json::to_string(d).unwrap();
-            let enc = URL_SAFE_NO_PAD.encode(json.as_bytes());
-            let hash = URL_SAFE_NO_PAD.encode(Sha256::digest(enc.as_bytes()));
-            sd_hashes.push(hash);
-            encoded_disclosures.push(enc);
+            sd_hashes.push(d.digest());
+            encoded_disclosures.push(d.to_string());
         }
 
         let mut payload = json!({
@@ -341,12 +344,12 @@ mod tests {
         out
     }
 
-    fn entity_name_disclosure(map: Value) -> Value {
-        json!(["UmcUADYUuaTR5Icmlod4hw", "entityName", map])
+    fn entity_name_disclosure(map: Value) -> Disclosure {
+        Disclosure::new("UmcUADYUuaTR5Icmlod4hw", "entityName", map)
     }
 
-    fn is_state_actor_disclosure(b: bool) -> Value {
-        json!(["rIPBffSxmopF09SQ2-gjaQ", "isStateActor", b])
+    fn is_state_actor_disclosure(b: bool) -> Disclosure {
+        Disclosure::new("rIPBffSxmopF09SQ2-gjaQ", "isStateActor", json!(b))
     }
 
     #[test]
@@ -390,9 +393,8 @@ mod tests {
     #[test]
     fn try_from_jwt_drops_disclosures_with_mismatched_hash() {
         let mut jwt = build_jwt(json!({}), vec![is_state_actor_disclosure(false)]);
-        let bogus = json!(["salt", "secretClaim", "should-be-ignored"]);
-        let bogus_enc = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&bogus).unwrap());
-        jwt = format!("{jwt}{bogus_enc}~");
+        let bogus = Disclosure::new("salt", "secretClaim", json!("should-be-ignored"));
+        jwt = format!("{jwt}{bogus}~");
         let s = TrustStatement::try_from_jwt(&jwt).unwrap();
         assert!(s.entity_name.is_empty());
         assert_eq!(s.is_state_actor, Some(false));
