@@ -14,4 +14,7 @@ multihash = "0.19.4"
 multihash-codetable = { version = "0.2", features = ["sha2"] }
 p256 = { version = "0.13", features = ["ecdsa"] }
 serde_jcs = "0.2"
+# pinned to 0.10: ed25519-dalek 2 and p256 0.13 require sha2 ^0.10, so bumping to
+# 0.11 would not remove 0.10 from the tree, only duplicate it. Move to 0.11 together
+# with the ed25519-dalek 3 / p256 0.14 crypto upgrade.
 sha2 = "0.10"
