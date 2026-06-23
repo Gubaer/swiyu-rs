@@ -1,10 +1,4 @@
 mod cmd;
-// crypto functions are called from keystore; rustc doesn't trace through test-only call chains
-#[allow(dead_code)]
-mod crypto;
-// keystore items used only in tests (generate, commit, …) are intentionally kept for future commands
-#[allow(dead_code)]
-mod keystore;
 mod oauth2;
 mod swiyu;
 
@@ -14,7 +8,11 @@ use std::process;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use swiyu_core::didlog::LogEntryFormat;
 
-use keystore::{KeyRole, KeyStore};
+// The key store and crypto core live in the library crate. Re-importing them
+// here puts `keystore` and `crypto` in the crate root so the `cmd` submodules
+// keep resolving `crate::keystore` / `crate::crypto` unchanged.
+use swiyu_didtool::crypto;
+use swiyu_didtool::keystore::{self, KeyRole, KeyStore};
 
 #[derive(Parser)]
 #[command(name = "didtool", about = "Manage did:tdw and did:webvh identities")]

@@ -4,36 +4,63 @@ version = "0.3.2"
 edition = "2024"
 license = "MIT"
 
+[lib]
+name = "swiyu_didtool"
+path = "src/lib.rs"
+
 [[bin]]
 name = "didtool"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+# Everything the `didtool` binary needs beyond the key store / crypto core:
+# CLI parsing, the blocking HTTP client and the async runtime that drives it,
+# the registry clients, and the OIDC/JWT encoding helpers the subcommands use.
+cli = [
+    "dep:clap",
+    "dep:reqwest",
+    "dep:tokio",
+    "dep:swiyu-registries",
+    "dep:base64",
+    "dep:bs58",
+    "dep:chrono",
+    "dep:serde_json",
+    "dep:serde_jcs",
+    "dep:sha2",
+    "dep:tracing-subscriber",
+]
 
 [dependencies]
-reqwest = { version = "0.13", features = ["blocking", "form", "json", "rustls", "webpki-roots"], default-features = false }
+# Library core (key store + key crypto): always compiled.
 swiyu-core = { path = "../swiyu-core" }
-swiyu-registries = { path = "../swiyu-registries", features = ["identifier", "trust"], default-features = false }
-tokio = { version = "1", features = ["rt", "net", "time"] }
-base64 = { version = "0.22", features = ["alloc"] }
 blake3 = "1"
-bs58 = "0.5"
-chrono = { version = "0.4", features = ["clock"] }
-clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 pkcs8 = { version = "0.10", features = ["pem"] }
 # pinned to 0.8: ed25519-dalek and p256 depend on rand_core 0.6, incompatible with rand 0.9+
 rand = "0.8"
-serde_json = "1"
-serde_jcs = "0.2"
+thiserror = "2"
+tracing = "0.1"
+zeroize = { version = "1", features = ["derive"] }
+
+# CLI-only: optional, pulled in by the `cli` feature (enabled by default).
+clap = { version = "4", features = ["derive", "env"], optional = true }
+reqwest = { version = "0.13", features = ["blocking", "form", "json", "rustls", "webpki-roots"], default-features = false, optional = true }
+tokio = { version = "1", features = ["rt", "net", "time"], optional = true }
+swiyu-registries = { path = "../swiyu-registries", features = ["identifier", "trust"], default-features = false, optional = true }
+base64 = { version = "0.22", features = ["alloc"], optional = true }
+bs58 = { version = "0.5", optional = true }
+chrono = { version = "0.4", features = ["clock"], optional = true }
+serde_json = { version = "1", optional = true }
+serde_jcs = { version = "0.2", optional = true }
 # pinned to 0.10: ed25519-dalek 2 and p256 0.13 require sha2 ^0.10, so bumping to
 # 0.11 would not remove 0.10 from the tree, only duplicate it. Move to 0.11 together
 # with the ed25519-dalek 3 / p256 0.14 crypto upgrade.
-sha2 = "0.10"
-thiserror = "2"
-zeroize = { version = "1", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
+sha2 = { version = "0.10", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

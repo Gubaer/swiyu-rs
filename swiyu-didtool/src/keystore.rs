@@ -54,7 +54,7 @@ pub type KeyStoreResult<T> = Result<T, KeyStoreError>;
 
 pub use swiyu_core::KeyRole;
 
-pub(crate) fn key_role_file_stem(role: KeyRole) -> &'static str {
+pub fn key_role_file_stem(role: KeyRole) -> &'static str {
     match role {
         KeyRole::Authorized => "authorized",
         KeyRole::Authentication => "authentication",
